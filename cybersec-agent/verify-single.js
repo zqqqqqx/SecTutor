@@ -1,7 +1,12 @@
 /* 校验单文件 sec-tutor.html：用 jsdom 加载内联脚本，确认可运行、可搜索、无异常 */
 const fs = require("fs");
 const path = require("path");
-const { JSDOM, VirtualConsole } = require("C:/Users/ZQX/.workbuddy/binaries/node/workspace/node_modules/jsdom");
+// jsdom 可移植加载：优先用本地依赖（npm install 后 / CI 环境），找不到再回退到本机托管运行时路径（离线开发环境）
+function loadJsdom() {
+  try { return require("jsdom"); }
+  catch (e) { return require("C:/Users/ZQX/.workbuddy/binaries/node/workspace/node_modules/jsdom"); }
+}
+const { JSDOM, VirtualConsole } = loadJsdom();
 
 const dir = __dirname;
 const html = fs.readFileSync(path.join(dir, "sec-tutor.html"), "utf8");

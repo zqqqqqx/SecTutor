@@ -1,0 +1,34 @@
+# SecTutor 前端 CI：测试 + 单文件构建
+#
+# 后端 CI 由 sectutor-backend/.github/workflows/scan.yml 负责（单测 + Docker 镜像构建 + Trivy 扫描门禁）。
+
+name: Frontend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Test & build (cybersec-agent)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cybersec-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cybersec-agent/package-lock.json
+      - name: Install deps
+        run: npm install
+      - name: Unit tests (jsdom self-test + quiz data validation)
+        run: npm test
+      - name: Build single-file bundle + verify
+        run: npm run build
