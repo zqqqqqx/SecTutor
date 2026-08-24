@@ -1,0 +1,56 @@
+{
+  "name": "sectutor",
+  "version": "1.0.0",
+  "description": "SecTutor 网络安全实战训练桌面应用（内嵌后端，系统托盘常驻，按钮一键启停）",
+  "main": "main.js",
+  "author": {
+    "name": "SecTutor",
+    "email": "dev@sectutor.local"
+  },
+  "homepage": "https://sectutor.local",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.sectutor.desktop",
+    "productName": "SecTutor",
+    "copyright": "Copyright © 2026 SecTutor",
+    "icon": "assets/icon.ico",
+    "directories": {
+      "output": "dist"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "electronVersion": "31.7.7",
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "assets/**"
+    ],
+    "extraResources": [
+      { "from": "../sectutor-backend", "to": "sectutor-backend", "filter": ["**/*", "!**/node_modules/.cache/**"] },
+      { "from": "../cybersec-agent", "to": "cybersec-agent", "filter": ["**/*", "!sec-tutor.html"] },
+      { "from": "assets/icon.png", "to": "icon.png" }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "artifactName": "SecTutor-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "allowElevation": false
+    }
+  }
+}

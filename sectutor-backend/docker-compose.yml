@@ -1,0 +1,24 @@
+# SecTutor 后端编排（自托管 / 隔离主机）
+#
+# 注意：后端通过挂载宿主 docker.sock 在该 Docker 主机上动态创建/销毁靶机容器
+# （DinD 模式）。这是本平台最简部署形态，仅适用于你完全掌控的隔离主机，
+# 切勿与业务 / 生产容器混部。Windows 上请将 docker.sock 路径替换为
+# //./pipe/docker_engine（Compose 在 Windows 上通常用命名管道，可按需调整挂载）。
+version: "3.8"
+
+services:
+  backend:
+    build: .
+    image: sectutor/backend:latest
+    ports:
+      - "8787:8787"
+    environment:
+      - DOCKER_SIMULATE=0            # 生产务必置 0，启用真实 Docker
+      - PUBLIC_HOST=localhost        # 用户访问靶机时使用的 host（改成你的域名/IP）
+      - MAX_ENVS_PER_OWNER=2         # 每用户并发环境上限（防资源耗尽）
+      - ABS_TTL_MS=1800000           # 绝对 TTL：30 分钟强制回收
+      - IDLE_TTL_MS=600000           # 空闲 TTL：10 分钟无活动回收
+    volumes:
+      # 让后端能在宿主机上创建/销毁独立靶机容器
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped

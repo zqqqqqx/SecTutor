@@ -1,0 +1,7 @@
+{
+  "name": "lab-nosql",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "start": "node app.js" },
+  "dependencies": { "express": "^4.19.2" }
+}

@@ -1,0 +1,40 @@
+# SecTutor 后端 CI（GitLab 版）—— 镜像构建 + Trivy 漏洞扫描门禁 + 单元测试
+#
+# 与 .github/workflows/scan.yml 语义一致，对齐本仓库 scripts/build-images.js 与 scan-images.js：
+#   - build:images  docker build 5 个授权靶机镜像
+#   - scan:images   调 Trivy 扫描 HIGH/CRITICAL，发现即退出码 1 → 流水线失败
+#   - npm test      仿真冒烟 + 配额单测 + 压力测试 + Redis 降级/契约（无需 Docker）
+#
+# 构建/扫描使用 docker:dind 服务以提供 Docker 守护进程；test 阶段仅用 node 镜像。
+# 本仓库在隔离开发环境中无法实跑 Docker/GitLab Runner，以下为可交付流水线定义。
+
+stages:
+  - test
+  - build-scan
+
+variables:
+  DOCKER_DRIVER: overlay2
+
+test:
+  stage: test
+  image: node:20
+  script:
+    - npm ci
+    - npm test   # 无需 Docker：smoke(仿真) + quota + stress + redis 降级/契约
+
+build-and-scan:
+  stage: build-scan
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - apk add --no-cache nodejs npm curl
+    - npm ci
+  script:
+    - npm run build:images   # 依赖 docker:dind 服务构建 5 个靶机镜像
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - trivy --version
+    - npm run scan:images    # 含 HIGH/CRITICAL 门禁，失败即阻断发布

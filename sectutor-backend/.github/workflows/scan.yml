@@ -1,0 +1,55 @@
+# SecTutor 后端 CI —— 镜像构建 + Trivy 漏洞扫描门禁 + 单元测试
+#
+# 设计对齐本仓库 scripts/build-images.js 与 scripts/scan-images.js：
+#   - build:images  依次 docker build 5 个授权靶机镜像（仅用预置模板，绝不允许运行时拉任意镜像）
+#   - scan:images   调用 Trivy 扫描 HIGH/CRITICAL，发现即退出码 1 → 流水线失败、禁止上线
+#   - npm test      仿真模式冒烟 + 配额单测 + 压力测试 + Redis 降级/契约（均无需 Docker）
+#
+# 注意：构建/扫描需在「具备 Docker 守护进程」的 runner 上运行（GitHub 默认 ubuntu-latest 自带 Docker）。
+# 本仓库在隔离开发环境中无法实跑 Docker/GitHub Runner，以下为可交付的流水线定义，
+# 需在接入 GitHub 的真实仓库中生效。
+
+name: Image Scan CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit / API tests (no Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test   # smoke(仿真) + quota + stress + redis 降级/契约
+
+  build-and-scan:
+    name: Build & Trivy scan images
+    runs-on: ubuntu-latest
+    needs: test          # 先过单测，再花时间构建/扫描镜像
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build lab images
+        run: npm run build:images   # 依次 docker build 5 个授权靶机镜像
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy --version
+      - name: Scan images (gate: HIGH/CRITICAL blocks merge)
+        run: npm run scan:images     # 内部调 trivy；发现 HIGH/CRITICAL 退出码 1 → 失败

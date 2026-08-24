@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SecTutor 审计看板</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #1a2233; --panel2: #222c42;
+    --text: #e6ebf5; --muted: #8a97b1; --line: #2c3852;
+    --green: #34d399; --blue: #60a5fa; --orange: #fbbf24;
+    --red: #f87171; --purple: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .token-box { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+  .token-box input {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    padding: 6px 10px; border-radius: 6px; width: 260px;
+  }
+  .token-box button {
+    background: var(--blue); color: #07142b; border: none; padding: 6px 12px;
+    border-radius: 6px; cursor: pointer; font-weight: 600;
+  }
+  .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card .num { font-size: 26px; font-weight: 700; line-height: 1.1; }
+  .card .lbl { color: var(--muted); margin-top: 4px; font-size: 12px; }
+  .section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 22px; }
+  .section h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; color: var(--muted); }
+  .bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
+  .bar { flex: 1; background: var(--blue); border-radius: 2px 2px 0 0; min-height: 2px; position: relative; }
+  .bar:hover::after {
+    content: attr(data-c); position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 10px; color: var(--text); white-space: nowrap;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; }
+  td.mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .b-create { background: rgba(52,211,153,.15); color: var(--green); }
+  .b-destroy { background: rgba(96,165,250,.15); color: var(--blue); }
+  .b-reclaim { background: rgba(251,191,36,.15); color: var(--orange); }
+  .b-denied { background: rgba(248,113,113,.15); color: var(--red); }
+  .b-error { background: rgba(192,132,252,.15); color: var(--purple); }
+  .empty { color: var(--muted); padding: 20px; text-align: center; }
+  .warn { color: var(--red); padding: 10px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔐 SecTutor 审计看板</h1>
+  <span class="meta" id="updated">尚未加载</span>
+  <div class="token-box">
+    <input id="token" placeholder="后端鉴权令牌" />
+    <button id="save">保存令牌</button>
+  </div>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="section">
+    <h2>事件趋势（近 30 分钟，按分钟）</h2>
+    <div class="bars" id="bars"><div class="empty">暂无数据</div></div>
+  </div>
+
+  <div class="section">
+    <h2>最近事件</h2>
+    <table>
+      <thead><tr><th>时间</th><th>类型</th><th>用户</th><th>环境 ID</th><th>测试点</th><th>详情</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="empty">暂无事件</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const TYPE_LABEL = { create: '创建', create_denied: '配额拒绝', destroy: '销毁', reclaim: '回收', error: '错误' };
+
+function loadToken() {
+  const t = localStorage.getItem('sectutor_audit_token') || 'sectutor-dev-token';
+  document.getElementById('token').value = t;
+  return t;
+}
+function getToken() { return document.getElementById('token').value.trim(); }
+document.getElementById('save').onclick = () => {
+  localStorage.setItem('sectutor_audit_token', getToken());
+  poll();
+};
+
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + getToken() } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function renderCards(summary, live) {
+  const b = summary.byType;
+  const cards = [
+    { num: summary.total, lbl: '审计事件总数' },
+    { num: b.create || 0, lbl: '创建', color: 'var(--green)' },
+    { num: b.destroy || 0, lbl: '销毁', color: 'var(--blue)' },
+    { num: b.reclaim || 0, lbl: 'TTL 回收', color: 'var(--orange)' },
+    { num: b.create_denied || 0, lbl: '配额拒绝', color: 'var(--red)' },
+    { num: b.error || 0, lbl: '创建错误', color: 'var(--purple)' },
+    { num: live != null ? live : '—', lbl: '当前在线环境' },
+  ];
+  document.getElementById('cards').innerHTML = cards.map(c =>
+    `<div class="card"><div class="num" style="color:${c.color || 'var(--text)'}">${c.num}</div><div class="lbl">${c.lbl}</div></div>`
+  ).join('');
+}
+
+function renderBars(buckets) {
+  const max = Math.max(1, ...buckets.map(b => b.count));
+  const el = document.getElementById('bars');
+  if (!buckets.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  el.innerHTML = buckets.map(b =>
+    `<div class="bar" data-c="${b.count}" style="height:${Math.round((b.count / max) * 100)}%" title="${b.count} 事件"></div>`
+  ).join('');
+}
+
+function renderRows(events) {
+  const tb = document.getElementById('rows');
+  if (!events.length) { tb.innerHTML = '<tr><td colspan="6" class="empty">暂无事件</td></tr>'; return; }
+  tb.innerHTML = events.map(e => {
+    const cls = 'b-' + (e.type === 'create_denied' ? 'denied' : e.type);
+    return `<tr>
+      <td class="mono">${fmtTime(e.ts)}</td>
+      <td><span class="badge ${cls}">${TYPE_LABEL[e.type] || e.type}</span></td>
+      <td>${e.owner || '—'}</td>
+      <td class="mono">${e.envId || '—'}</td>
+      <td>${e.labId || '—'}</td>
+      <td class="mono">${e.detail || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function poll() {
+  try {
+    const [auditData, statsData] = await Promise.all([
+      getJSON('/api/audit?limit=200'),
+      getJSON('/api/stats').catch(() => null),
+    ]);
+    renderCards(auditData.summary, statsData && statsData.stats ? statsData.stats.total : null);
+    renderBars(auditData.summary.buckets);
+    renderRows(auditData.events);
+    document.getElementById('updated').textContent = '更新于 ' + fmtTime(Date.now());
+  } catch (e) {
+    document.getElementById('updated').textContent = '加载失败：' + e.message + '（请检查令牌）';
+  }
+}
+
+loadToken();
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>

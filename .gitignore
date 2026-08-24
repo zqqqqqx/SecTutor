@@ -1,0 +1,25 @@
+# ===== 工作区记忆与个人数据（绝不发布）=====
+.workbuddy/
+
+# ===== 依赖与构建产物 =====
+node_modules/
+dist/
+out/
+build/
+
+# ===== 安装包与二进制 =====
+*.exe
+*.msi
+*.blockmap
+latest.yml
+
+# ===== 日志 =====
+*.log
+protocol-debug.log
+
+# ===== 运行时 / 临时 / 系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.swp

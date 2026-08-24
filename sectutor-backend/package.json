@@ -1,0 +1,22 @@
+{
+  "name": "sectutor-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SecTutor 临时靶场后端：为每个测试点动态创建/回收隔离的临时演练环境（Docker 编排）。",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "start:sim": "node -r ./scripts/sim-flag.js src/index.js",
+    "dev:fe": "node -r ./scripts/sim-flag.js -r ./scripts/fe-flag.js src/index.js",
+    "test": "node test/smoke.js && node test/quota.test.js && node test/stress.js && node test/redis-fallback.test.js && node test/redis-quota.contract.js && node test/audit.test.js && node test/runtime.contract.js && node test/proxy.integration.js && node test/edgecases.js && node test/cors.test.js",
+    "build:images": "node scripts/build-images.js",
+    "scan:images": "node scripts/scan-images.js"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.2",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

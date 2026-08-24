@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEC TUTOR · 知识体系（充实版预览）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e14; --bg2:#0e141d; --panel:#111824; --panel2:#0c121b;
+    --line:rgba(0,229,255,.14); --line-strong:rgba(255,43,214,.30);
+    --txt:#d7e6f2; --muted:#7d93a8; --muted2:#56697d;
+    --mag:#ff2bd6; --cyan:#00e5ff;
+    --ok:#36d399; --warn:#ffb454; --bad:#ff5d6c; --info:#3aa0ff;
+    --r:7px;
+    --glow-mag:0 0 14px rgba(255,43,214,.55);
+    --glow-cyan:0 0 14px rgba(0,229,255,.50);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(900px 500px at 82% -8%, rgba(255,43,214,.10), transparent 60%),
+      radial-gradient(900px 600px at 4% 108%, rgba(0,229,255,.10), transparent 60%),
+      var(--bg);
+    color:var(--txt);
+    font-family:"Rajdhani","Segoe UI",system-ui,sans-serif;font-size:15px;
+    -webkit-font-smoothing:antialiased;display:flex;min-height:100vh;overflow:hidden;
+  }
+  .mono{font-family:"Consolas",ui-monospace,monospace}
+  .display{font-family:"Orbitron",sans-serif;letter-spacing:.04em}
+
+  /* left rail (same chrome as preview-4) */
+  .rail{width:84px;flex:0 0 84px;background:linear-gradient(180deg,var(--panel2),var(--bg2));
+    border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;
+    padding:14px 0;gap:6px;position:relative;z-index:5}
+  .rail-logo{width:46px;height:46px;border-radius:12px;margin-bottom:10px;
+    background:linear-gradient(135deg,var(--mag),var(--cyan));display:grid;place-items:center;
+    box-shadow:var(--glow-mag);font-family:"Orbitron";font-weight:900;font-size:19px;color:#06121a}
+  .rail-sep{width:34px;height:1px;background:var(--line);margin:4px 0 8px}
+  .rail-item{position:relative;width:56px;height:50px;border-radius:11px;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);
+    cursor:pointer;border:1px solid transparent;transition:.16s}
+  .rail-item svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round;transition:.16s}
+  .rail-item .rl{font-size:10px;font-weight:600}
+  .rail-item:hover{color:var(--cyan);background:rgba(0,229,255,.07);border-color:var(--line);transform:translateY(-1px)}
+  .rail-item.active{color:var(--txt);background:rgba(255,43,214,.10);border-color:var(--line-strong);
+    box-shadow:inset 3px 0 0 var(--mag), var(--glow-mag)}
+  .rail-item.active svg{stroke:url(#ng);filter:drop-shadow(0 0 6px rgba(255,43,214,.6))}
+  .rail-item::after{content:attr(data-tip);position:absolute;left:64px;top:50%;
+    transform:translateY(-50%) translateX(-6px);white-space:nowrap;background:var(--panel);
+    color:var(--txt);border:1px solid var(--line-strong);padding:5px 10px;border-radius:8px;
+    font-size:12px;font-weight:600;opacity:0;pointer-events:none;transition:.16s;box-shadow:var(--glow-cyan);z-index:20}
+  .rail-item:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}
+  .rail-sp{flex:1}
+  .rail-foot{display:flex;flex-direction:column;align-items:center;gap:10px}
+
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .topbar{height:60px;flex:0 0 60px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(17,24,36,.9),rgba(12,18,27,.7));backdrop-filter:blur(6px);
+    display:flex;align-items:center;gap:16px;padding:0 22px}
+  .crumb{display:flex;align-items:center;gap:10px}
+  .crumb .dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:var(--glow-cyan);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .crumb b{font-family:"Orbitron";font-weight:700;letter-spacing:.06em;font-size:15px;
+    background:linear-gradient(90deg,var(--mag),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .crumb span{color:var(--muted);font-size:13px;font-weight:600}
+  .sp{flex:1}
+  .eng-status{display:flex;align-items:center;gap:14px}
+  .eng{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--muted)}
+  .eng i{width:7px;height:7px;border-radius:50%}
+  .eng.on i{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .eng.off i{background:var(--muted2)}
+  .icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--muted);cursor:pointer;position:relative;display:grid;place-items:center;transition:.16s}
+  .icon-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .icon-btn:hover{color:var(--cyan);border-color:var(--line-strong);box-shadow:var(--glow-cyan);transform:translateY(-1px)}
+  .icon-btn .notif{position:absolute;top:-4px;right:-4px;min-width:17px;height:17px;border-radius:9px;
+    background:var(--mag);color:#1a0306;font-size:10px;font-weight:800;display:grid;place-items:center;box-shadow:var(--glow-mag)}
+
+  /* ============ KNOWLEDGE PAGE ============ */
+  .kb{flex:1;overflow:auto;padding:22px 24px}
+  /* stats row */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+  .stat{background:linear-gradient(160deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:12px;padding:15px 18px;position:relative;overflow:hidden}
+  .stat::before{content:"";position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,var(--mag),var(--cyan))}
+  .stat .k{color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.04em;display:flex;align-items:center;gap:6px}
+  .stat .k svg{width:14px;height:14px;stroke:var(--cyan);fill:none;stroke-width:1.8}
+  .stat .v{font-family:"Orbitron";font-weight:900;font-size:27px;margin-top:5px;
+    background:linear-gradient(90deg,var(--cyan),var(--mag));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat .s{font-size:12px;color:var(--muted2);margin-top:2px}
+
+  .kb-body{display:grid;grid-template-columns:262px 1fr;gap:20px;align-items:start}
+  /* left navigator */
+  .navpanel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:12px;padding:16px;position:sticky;top:0}
+  .navpanel h3{font-family:"Orbitron";font-weight:700;font-size:13px;letter-spacing:.05em;color:var(--txt);
+    margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .navpanel h3::before{content:"";width:4px;height:15px;border-radius:2px;background:linear-gradient(180deg,var(--mag),var(--cyan))}
+  .dom{display:flex;align-items:center;gap:12px;padding:10px;border-radius:10px;cursor:pointer;
+    border:1px solid transparent;transition:.16s;margin-bottom:6px}
+  .dom:hover{background:rgba(0,229,255,.06);border-color:var(--line)}
+  .dom.active{background:rgba(255,43,214,.08);border-color:var(--line-strong);box-shadow:var(--glow-mag)}
+  .ring{width:42px;height:42px;border-radius:50%;flex:0 0 42px;display:grid;place-items:center;
+    background:conic-gradient(var(--c) calc(var(--p)*1%), rgba(255,255,255,.06) 0);position:relative}
+  .ring::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--panel2)}
+  .ring b{position:relative;z-index:2;font-family:"Orbitron";font-weight:700;font-size:12px;color:var(--c)}
+  .dom .meta{flex:1;min-width:0}
+  .dom .meta .nm{font-weight:700;font-size:14px}
+  .dom .meta .ct{font-size:11.5px;color:var(--muted);font-family:"Consolas"}
+  .filters{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  .filters .fl{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:9px;letter-spacing:.04em}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font-size:12px;font-weight:600;padding:5px 11px;border-radius:20px;cursor:pointer;
+    border:1px solid var(--line);color:var(--muted);background:var(--panel2);transition:.16s}
+  .chip:hover{color:var(--cyan);border-color:var(--line-strong)}
+  .chip.on{background:linear-gradient(135deg,rgba(255,43,214,.18),rgba(0,229,255,.18));
+    color:var(--txt);border-color:var(--line-strong)}
+  .path-btn{margin-top:16px;width:100%;justify-content:center;
+    background:linear-gradient(135deg,var(--mag),#c81fff);color:#fff;border:none;
+    border-radius:var(--r);padding:11px;font-family:"Rajdhani";font-weight:700;font-size:13.5px;
+    cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:var(--glow-mag);transition:.16s}
+  .path-btn:hover{transform:translateY(-2px);box-shadow:0 0 22px rgba(255,43,214,.8)}
+  .path-btn svg{width:16px;height:16px;stroke:#fff;fill:none;stroke-width:2}
+
+  /* right main */
+  .kb-main{min-width:0}
+  .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .search{flex:1;display:flex;align-items:center;gap:9px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;padding:0 13px;height:42px;transition:.16s}
+  .search:focus-within{border-color:var(--line-strong);box-shadow:var(--glow-cyan)}
+  .search svg{width:17px;height:17px;stroke:var(--muted);fill:none;stroke-width:1.8}
+  .search input{flex:1;background:none;border:none;outline:none;color:var(--txt);font-family:"Rajdhani";font-size:14.5px}
+  .search input::placeholder{color:var(--muted2)}
+  .sort{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;height:42px;padding:0 13px;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer}
+  .sort svg{width:15px;height:15px;stroke:var(--cyan);fill:none;stroke-width:1.8}
+
+  /* recommended path strip */
+  .path-strip{background:linear-gradient(120deg,rgba(255,43,214,.07),rgba(0,229,255,.05));
+    border:1px solid var(--line-strong);border-radius:12px;padding:14px 18px;margin-bottom:18px;
+    display:flex;align-items:center;gap:0;overflow:hidden}
+  .path-strip .ph{font-family:"Orbitron";font-weight:700;font-size:12px;color:var(--cyan);
+    letter-spacing:.05em;flex:0 0 92px;line-height:1.4}
+  .steps{display:flex;align-items:center;gap:0;flex:1}
+  .step{display:flex;align-items:center;gap:9px;padding:0 6px}
+  .step .num{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:0 0 26px;
+    font-family:"Orbitron";font-weight:700;font-size:12px;background:var(--panel);border:1px solid var(--line-strong);color:var(--muted)}
+  .step.done .num{background:linear-gradient(135deg,var(--ok),#2bbf86);color:#04231a;border:none}
+  .step.cur .num{background:linear-gradient(135deg,var(--mag),var(--cyan));color:#06121a;border:none;box-shadow:var(--glow-mag)}
+  .step .t{font-size:13px;font-weight:600;white-space:nowrap}
+  .step.done .t{color:var(--muted)}
+  .step.cur .t{color:var(--txt)}
+  .arrow{color:var(--muted2);font-size:14px;padding:0 4px}
+
+  /* cards grid */
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  .card{background:linear-gradient(160deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:12px;padding:16px;position:relative;overflow:hidden;transition:.18s}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c)}
+  .card:hover{border-color:var(--line-strong);transform:translateY(-3px);box-shadow:0 0 20px rgba(0,229,255,.22)}
+  .card .hd{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .card .tt{font-weight:700;font-size:16.5px;line-height:1.25}
+  .card .domtag{font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap;
+    color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent);border:1px solid color-mix(in srgb,var(--c) 40%,transparent)}
+  .lv{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:6px;margin-top:4px}
+  .lv.lvl-入门{color:var(--ok);background:rgba(54,211,153,.14);border:1px solid rgba(54,211,153,.4)}
+  .lv.lvl-初级{color:var(--cyan);background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.4)}
+  .lv.lvl-中级{color:var(--mag);background:rgba(255,43,214,.12);border:1px solid rgba(255,43,214,.4)}
+  .lv.lvl-高级{color:var(--bad);background:rgba(255,93,108,.12);border:1px solid rgba(255,93,108,.4)}
+  .card .desc{font-size:13px;color:var(--muted);line-height:1.5;margin:8px 0 12px;min-height:38px}
+  /* mastery bar */
+  .mast{margin-bottom:11px}
+  .mast .ml{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-bottom:5px;font-weight:600}
+  .mast .ml b{color:var(--txt);font-family:"Consolas"}
+  .bar{height:7px;border-radius:5px;background:rgba(255,255,255,.06);overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--cyan),var(--mag))}
+  /* ref + tags */
+  .refs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:13px}
+  .ref{font-size:11px;font-weight:600;font-family:"Consolas";padding:3px 8px;border-radius:6px;
+    color:var(--info);background:rgba(58,160,255,.1);border:1px solid rgba(58,160,255,.3)}
+  .ref.cve{color:var(--warn);background:rgba(255,180,84,.1);border-color:rgba(255,180,84,.3)}
+  .card .ft{display:flex;gap:9px}
+  .cbtn{flex:1;justify-content:center;font-family:"Rajdhani";font-weight:700;font-size:13px;
+    padding:9px;border-radius:var(--r);cursor:pointer;display:flex;align-items:center;gap:7px;
+    transition:.16s;border:1px solid transparent}
+  .cbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  .cbtn.ghost{background:transparent;border-color:var(--line-strong);color:var(--cyan)}
+  .cbtn.ghost:hover{background:rgba(0,229,255,.08);box-shadow:var(--glow-cyan)}
+  .cbtn.cyan{background:linear-gradient(135deg,var(--cyan),#0aa6ff);color:#04222b;border:none}
+  .cbtn.cyan:hover{transform:translateY(-2px);box-shadow:var(--glow-cyan)}
+  .cbtn:active{transform:scale(.97)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="ng" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff2bd6"/><stop offset="1" stop-color="#00e5ff"/></linearGradient>
+</defs></svg>
+
+<!-- ===== LEFT RAIL ===== -->
+<nav class="rail">
+  <div class="rail-logo">S</div><div class="rail-sep"></div>
+  <div class="rail-item active" data-tip="知识体系"><svg viewBox="0 0 24 24"><path d="M4 5.5 12 3l8 2.5-8 2.5L4 5.5Z"/><path d="M4 12l8 2.5 8-2.5"/><path d="M4 18.5 12 21l8-2.5"/></svg><span class="rl">知识</span></div>
+  <div class="rail-item" data-tip="智能问答"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/><path d="M8 9.5h8M8 12.5h5"/></svg><span class="rl">问答</span></div>
+  <div class="rail-item" data-tip="实战靶场"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg><span class="rl">靶场</span></div>
+  <div class="rail-item" data-tip="学习计划"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/><path d="M8 14l2.2 2.2L15 12"/></svg><span class="rl">计划</span></div>
+  <div class="rail-item" data-tip="安全资讯"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M6.5 8h11M6.5 11.5h11M6.5 15h7"/></svg><span class="rl">资讯</span></div>
+  <div class="rail-item" data-tip="工具与代码"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7 9.5l3 2.5-3 2.5M13 15h4"/></svg><span class="rl">工具</span></div>
+  <div class="rail-item" data-tip="随机自测"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M9 12l2 2 4-4"/></svg><span class="rl">自测</span></div>
+  <div class="rail-item" data-tip="合规声明"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M9.5 12.5l1.8 1.8 3.4-3.6"/></svg><span class="rl">合规</span></div>
+  <div class="rail-sp"></div>
+  <div class="rail-foot">
+    <div class="theme-switch" title="切换深浅"><span class="ts-ic"><svg viewBox="0 0 24 24" fill="none" stroke="#ffb454"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg></span><span class="ts-knob" style="background:linear-gradient(135deg,#ff2bd6,#00e5ff);box-shadow:0 0 14px rgba(255,43,214,.55);transform:translateX(24px)"></span><span class="ts-ic"><svg viewBox="0 0 24 24" fill="none" stroke="#00e5ff"><path d="M20 14.5A8 8 0 1 1 9.5 4 6.2 6.2 0 0 0 20 14.5Z"/></svg></span></div>
+    <div class="avatar" style="width:38px;height:38px;border-radius:50%;background:conic-gradient(from 210deg,#ff2bd6,#00e5ff,#ff2bd6);padding:2px"><i style="display:block;width:100%;height:100%;border-radius:50%;background:var(--panel);display:grid;place-items:center;font-family:Orbitron;font-weight:700;color:#00e5ff;font-size:14px">ZX</i></div>
+  </div>
+</nav>
+
+<!-- ===== MAIN ===== -->
+<div class="main">
+  <header class="topbar">
+    <div class="crumb"><span class="dot"></span><b>SEC TUTOR</b><span>· 知识体系</span></div>
+    <div class="sp"></div>
+    <div class="eng-status">
+      <span class="eng on"><i></i>后端在线</span><span class="eng on"><i></i>离线 RAG</span><span class="eng off"><i></i>未接 LLM</span>
+    </div>
+    <button class="icon-btn" title="搜索"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.6-3.6"/></svg></button>
+    <button class="icon-btn" title="复习提醒"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8Z"/><path d="M10.5 20a2 2 0 0 0 3 0"/></svg><span class="notif">5</span></button>
+    <button class="icon-btn" title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6M18.7 18.7l-1.6-1.6M6.9 6.9 5.3 5.3"/></svg></button>
+  </header>
+
+  <div class="kb">
+    <!-- stats -->
+    <div class="stats">
+      <div class="stat"><div class="k"><svg viewBox="0 0 24 24"><path d="M4 5.5 12 3l8 2.5-8 2.5L4 5.5Z"/><path d="M4 12l8 2.5 8-2.5"/></svg>知识点总数</div><div class="v">128</div><div class="s">覆盖 4 大领域</div></div>
+      <div class="stat"><div class="k"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M9 12l2 2 4-4"/></svg>已掌握</div><div class="v">57</div><div class="s">掌握度 ≥ 80%</div></div>
+      <div class="stat"><div class="k"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>学习中</div><div class="v">34</div><div class="s">本周活跃 23</div></div>
+      <div class="stat"><div class="k"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8Z"/></svg>待复习</div><div class="v">5</div><div class="s">24h 内到期</div></div>
+    </div>
+
+    <div class="kb-body">
+      <!-- left navigator -->
+      <aside class="navpanel">
+        <h3>领域覆盖</h3>
+        <div class="dom active" style="--c:#00e5ff;--p:72"><div class="ring"><b>72</b></div><div class="meta"><div class="nm">Web 安全</div><div class="ct">46 / 64 已掌握</div></div></div>
+        <div class="dom" style="--c:#ff2bd6;--p:54"><div class="ring"><b>54</b></div><div class="meta"><div class="nm">二进制</div><div class="ct">18 / 33 已掌握</div></div></div>
+        <div class="dom" style="--c:#36d399;--p:61"><div class="ring"><b>61</b></div><div class="meta"><div class="nm">密码学</div><div class="ct">14 / 23 已掌握</div></div></div>
+        <div class="dom" style="--c:#ffb454;--p:45"><div class="ring"><b>45</b></div><div class="meta"><div class="nm">渗透测试</div><div class="ct">9 / 20 已掌握</div></div></div>
+
+        <div class="filters">
+          <div class="fl">难度筛选</div>
+          <div class="chips">
+            <span class="chip on">全部</span>
+            <span class="chip">入门</span>
+            <span class="chip">初级</span>
+            <span class="chip">中级</span>
+            <span class="chip">高级</span>
+          </div>
+        </div>
+        <button class="path-btn"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>生成学习路径</button>
+      </aside>
+
+      <!-- right main -->
+      <div class="kb-main">
+        <div class="toolbar">
+          <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.6-3.6"/></svg><input placeholder="搜索知识点 / OWASP / CVE / 关键词…"></div>
+          <div class="sort"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h6"/></svg>掌握度 ↓</div>
+        </div>
+
+        <!-- recommended path -->
+        <div class="path-strip">
+          <div class="ph">推荐<br>学习路径</div>
+          <div class="steps">
+            <div class="step done"><div class="num">✓</div><div class="t">HTTP 基础</div></div><span class="arrow">›</span>
+            <div class="step done"><div class="num">✓</div><div class="t">SQL 注入</div></div><span class="arrow">›</span>
+            <div class="step cur"><div class="num">3</div><div class="t">XSS 跨站</div></div><span class="arrow">›</span>
+            <div class="step"><div class="num">4</div><div class="t">CSRF</div></div><span class="arrow">›</span>
+            <div class="step"><div class="num">5</div><div class="t">SSRF</div></div>
+          </div>
+        </div>
+
+        <!-- cards -->
+        <div class="grid">
+          <div class="card" style="--c:#00e5ff">
+            <div class="hd"><div class="tt">SQL 注入<span class="lv lvl-中级">中级</span></div><div class="domtag">Web</div></div>
+            <div class="desc">通过恶意 SQL 拼接绕过认证、窃取数据。覆盖联合查询、盲注、报错注入与防御（参数化）。</div>
+            <div class="mast"><div class="ml"><span>掌握度</span><b>85%</b></div><div class="bar"><i style="width:85%"></i></div></div>
+            <div class="refs"><span class="ref">OWASP A03</span><span class="ref cve">CVE-2023-xxxx</span><span class="ref">注入</span><span class="ref">数据库</span></div>
+            <div class="ft"><button class="cbtn ghost"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button><button class="cbtn cyan"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button></div>
+          </div>
+
+          <div class="card" style="--c:#00e5ff">
+            <div class="hd"><div class="tt">XSS 跨站脚本<span class="lv lvl-初级">初级</span></div><div class="domtag">Web</div></div>
+            <div class="desc">在页面注入恶意脚本窃取 Cookie / 劫持会话。覆盖存储型、反射型、DOM 型与 CSP 防御。</div>
+            <div class="mast"><div class="ml"><span>掌握度</span><b>60%</b></div><div class="bar"><i style="width:60%"></i></div></div>
+            <div class="refs"><span class="ref">OWASP A03</span><span class="ref">前端</span><span class="ref">会话</span></div>
+            <div class="ft"><button class="cbtn ghost"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button><button class="cbtn cyan"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button></div>
+          </div>
+
+          <div class="card" style="--c:#ff2bd6">
+            <div class="hd"><div class="tt">缓冲区溢出<span class="lv lvl-高级">高级</span></div><div class="domtag">二进制</div></div>
+            <div class="desc">覆盖变量溢出改写返回地址，构造 shellcode 控制 EIP。含栈保护 / ASLR / DEP 绕过思路。</div>
+            <div class="mast"><div class="ml"><span>掌握度</span><b>30%</b></div><div class="bar"><i style="width:30%"></i></div></div>
+            <div class="refs"><span class="ref cve">CVE-2019-xxxx</span><span class="ref">栈</span><span class="ref">shellcode</span></div>
+            <div class="ft"><button class="cbtn ghost"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button><button class="cbtn cyan"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button></div>
+          </div>
+
+          <div class="card" style="--c:#36d399">
+            <div class="hd"><div class="tt">RSA 加密原理<span class="lv lvl-中级">中级</span></div><div class="domtag">密码学</div></div>
+            <div class="desc">基于大数分解难题的非对称加密。覆盖模幂、欧拉定理、填充（PKCS#1 / OAEP）与常见攻击。</div>
+            <div class="mast"><div class="ml"><span>掌握度</span><b>70%</b></div><div class="bar"><i style="width:70%"></i></div></div>
+            <div class="refs"><span class="ref">非对称</span><span class="ref">数论</span><span class="ref">CTF</span></div>
+            <div class="ft"><button class="cbtn ghost"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button><button class="cbtn cyan"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button></div>
+          </div>
+
+          <div class="card" style="--c:#ffb454">
+            <div class="hd"><div class="tt">信息收集<span class="lv lvl-初级">初级</span></div><div class="domtag">渗透</div></div>
+            <div class="desc">渗透第一阶段：资产发现、端口扫描、指纹识别、目录爆破与社会工程信息梳理。</div>
+            <div class="mast"><div class="ml"><span>掌握度</span><b>50%</b></div><div class="bar"><i style="width:50%"></i></div></div>
+            <div class="refs"><span class="ref">侦察</span><span class="ref">nmap</span><span class="ref">OSINT</span></div>
+            <div class="ft"><button class="cbtn ghost"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button><button class="cbtn cyan"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button></div>
+          </div>
+
+          <div class="card" style="--c:#ff2bd6">
+            <div class="hd"><div class="tt">堆溢出利用<span class="lv lvl-高级">高级</span></div><div class="domtag">二进制</div></div>
+            <div class="desc">覆盖 heap 结构、unlink、use-after-free 与 tcache poisoning，构造任意写原语。</div>
+            <div class="mast"><div class="ml"><span>掌握度</span><b>12%</b></div><div class="bar"><i style="width:12%"></i></div></div>
+            <div class="refs"><span class="ref cve">CVE-2022-xxxx</span><span class="ref">heap</span><span class="ref">pwn</span></div>
+            <div class="ft"><button class="cbtn ghost"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button><button class="cbtn cyan"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

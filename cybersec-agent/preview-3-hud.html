@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SecTutor · 重设计预览 · 指令中心 HUD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#080b11;--bg-2:#0b0f18;--panel:#101726;--panel-2:#0c1320;
+  --ink:#e9f0fb;--muted:#7e8ca6;--line:#1e2a40;--line-soft:#162033;
+  --magenta:#ff2bd6;--cyan:#00e5ff;
+  --dual:linear-gradient(115deg,var(--magenta),var(--cyan));
+  --ok:#3ddc84;--warn:#ffb454;--bad:#ff5a6a;--info:#4aa8ff;
+  --ok-bg:#0e2a1c;--bad-bg:#2a1418;--warn-bg:#2a2110;
+  --code-bg:#05080f;--code-ink:#bfe9ff;
+  --radius:8px;--radius-lg:12px;
+  --glow-m:0 0 0 1px rgba(255,43,214,.4),0 0 22px rgba(255,43,214,.32);
+  --glow-c:0 0 0 1px rgba(0,229,255,.4),0 0 22px rgba(0,229,255,.30);
+  --shadow:0 16px 44px rgba(0,0,0,.6);
+  --font-display:'Orbitron',ui-monospace,monospace;
+  --font-ui:'Rajdhani',system-ui,'Segoe UI',sans-serif;
+  --font-body:system-ui,'Segoe UI','Microsoft YaHei',sans-serif;
+  --font-mono:'JetBrains Mono','Consolas',monospace;
+  --t:170ms cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:radial-gradient(1200px 700px at 92% -12%,rgba(255,43,214,.12),transparent 55%),radial-gradient(1000px 640px at -8% 2%,rgba(0,229,255,.12),transparent 52%),var(--bg);color:var(--ink);font-family:var(--font-body);-webkit-font-smoothing:antialiased}
+.shell{display:grid;grid-template-columns:78px 1fr;height:100vh;overflow:hidden}
+
+/* ===== 左：细图标栏 ===== */
+.rail{background:linear-gradient(180deg,var(--panel),var(--bg-2));border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px}
+.rail .logo{width:46px;height:46px;display:grid;place-items:center;font-size:22px;border-radius:12px;
+  background:var(--panel-2);border:1px solid var(--line);box-shadow:var(--glow-c);margin-bottom:10px}
+.navbtn{width:50px;height:50px;border-radius:12px;border:1px solid transparent;background:transparent;
+  color:var(--muted);display:grid;place-items:center;font-size:20px;cursor:pointer;transition:var(--t);position:relative}
+.navbtn:hover{color:var(--ink);background:var(--panel-2);border-color:var(--line)}
+.navbtn.on{color:#fff;background:linear-gradient(180deg,rgba(255,43,214,.22),rgba(0,229,255,.12));border-color:transparent;box-shadow:var(--glow-m)}
+.navbtn.on::before{content:"";position:absolute;left:-14px;top:14px;bottom:14px;width:3px;border-radius:3px;background:var(--dual);box-shadow:var(--glow-m)}
+.navbtn .tip{position:absolute;left:60px;white-space:nowrap;background:var(--panel);border:1px solid var(--line);
+  color:var(--ink);font-family:var(--font-ui);font-size:13px;padding:5px 10px;border-radius:8px;opacity:0;pointer-events:none;transform:translateX(-6px);transition:var(--t);z-index:30;box-shadow:var(--shadow)}
+.navbtn:hover .tip{opacity:1;transform:translateX(0)}
+.rail .spacer{flex:1}
+.rail .mini{font-family:var(--font-mono);font-size:11px;color:var(--cyan);border:1px solid var(--line);border-radius:8px;padding:6px 8px;cursor:pointer;transition:var(--t)}
+.rail .mini:hover{box-shadow:var(--glow-c)}
+
+/* ===== 右：工作区 ===== */
+.workspace{display:flex;flex-direction:column;overflow:hidden}
+.topstrip{display:flex;align-items:center;gap:16px;padding:14px 26px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(16,23,38,.9),rgba(11,15,24,.8));backdrop-filter:blur(8px)}
+.crumb{font-family:var(--font-ui);font-weight:700;font-size:18px;letter-spacing:1px}
+.crumb b{background:var(--dual);-webkit-background-clip:text;background-clip:text;color:transparent;font-family:var(--font-display)}
+.topstrip .status{margin-left:auto;display:flex;align-items:center;gap:14px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.scroll{overflow:auto;padding:26px;flex:1}
+.grid{display:grid;gap:18px}
+.g2{grid-template-columns:1.3fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);
+  border-radius:var(--radius-lg);padding:18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.card .lab{font-family:var(--font-ui);font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan);margin:0 0 12px}
+.card h3{font-family:var(--font-display);font-weight:700;font-size:16px;margin:0 0 4px;letter-spacing:.5px}
+.card .sub{font-size:12.5px;color:var(--muted);line-height:1.6;margin:0}
+/* 指标块 */
+.metric{display:flex;flex-direction:column;gap:4px}
+.metric .n{font-family:var(--font-display);font-weight:900;font-size:34px;line-height:1;background:var(--dual);-webkit-background-clip:text;background-clip:text;color:transparent}
+.metric .k{font-family:var(--font-ui);font-weight:600;font-size:13px;color:var(--muted);letter-spacing:.5px}
+/* 雷达 */
+.radar{width:100%;height:auto;display:block}
+/* 复习环 */
+.circles{display:flex;gap:10px;flex-wrap:wrap}
+.cc{width:78px;height:78px;border-radius:50%;display:grid;place-items:center;position:relative;
+  background:conic-gradient(var(--cyan) var(--p,30%),var(--panel-2) 0);border:1px solid var(--line)}
+.cc::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--panel)}
+.cc span{position:relative;z-index:1;font-family:var(--font-mono);font-size:13px;color:var(--ink)}
+.cc small{position:relative;z-index:1;font-size:10px;color:var(--muted);font-family:var(--font-ui)}
+.ccrow{display:flex;flex-direction:column;align-items:center;gap:4px}
+.ccrow small{font-family:var(--font-ui);font-size:11px;color:var(--muted)}
+/* 最近对话 */
+.conv{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line-soft)}
+.conv:last-child{border:0}
+.av{width:34px;height:34px;border-radius:9px;background:var(--panel-2);border:1px solid var(--line);display:grid;place-items:center;font-size:15px;flex:none}
+.conv .t{font-size:13.5px;color:var(--ink);line-height:1.5}
+.conv .m{font-size:11.5px;color:var(--muted);font-family:var(--font-mono);margin-top:2px}
+/* 模块快捷 */
+.mod{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--panel-2);transition:var(--t);cursor:pointer}
+.mod:hover{transform:translateY(-2px);border-color:rgba(0,229,255,.5);box-shadow:var(--glow-c)}
+.mod .ic{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:19px;background:linear-gradient(135deg,rgba(255,43,214,.18),rgba(0,229,255,.14));border:1px solid var(--line)}
+.mod .tt{font-family:var(--font-ui);font-weight:700;font-size:15px}
+.mod .dm{font-size:11.5px;color:var(--muted)}
+.tag{font-family:var(--font-mono);font-size:10px;color:var(--cyan);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+.btn{font-family:var(--font-ui);font-weight:700;font-size:14px;letter-spacing:.5px;cursor:pointer;border:1px solid transparent;border-radius:var(--radius);padding:9px 14px;transition:var(--t)}
+.btn:not(.ghost){color:#080b11;background:var(--dual);box-shadow:var(--glow-m)}
+.btn:not(.ghost):hover{transform:translateY(-1px);filter:brightness(1.08)}
+.btn.ghost{background:transparent;color:var(--muted);border-color:var(--line)}
+.note{position:fixed;bottom:14px;right:16px;font-family:var(--font-mono);font-size:11px;color:var(--cyan);border:1px solid var(--line);background:var(--panel);padding:7px 11px;border-radius:var(--radius);z-index:40}
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- 左图标栏 -->
+  <nav class="rail">
+    <div class="logo">🛡️</div>
+    <button class="navbtn on">📊<span class="tip">控制台 · 首页</span></button>
+    <button class="navbtn">📚<span class="tip">知识体系</span></button>
+    <button class="navbtn">🎯<span class="tip">实战靶场</span></button>
+    <button class="navbtn">🧠<span class="tip">随机自测</span></button>
+    <button class="navbtn">💬<span class="tip">智能问答</span></button>
+    <button class="navbtn">📰<span class="tip">安全资讯</span></button>
+    <button class="navbtn">🛠️<span class="tip">工具与代码</span></button>
+    <button class="navbtn">⚖️<span class="tip">合规声明</span></button>
+    <div class="spacer"></div>
+    <button class="mini" title="明暗切换">🌗</button>
+    <button class="mini" title="已掌握">✓12</button>
+  </nav>
+
+  <!-- 右工作区 -->
+  <div class="workspace">
+    <div class="topstrip">
+      <div class="crumb">SEC<b>TUTOR</b> · 学习控制台</div>
+      <div class="status"><span class="dot"></span> 引擎在线 · 离线 RAG 就绪 · 未接入外部 LLM</div>
+    </div>
+
+    <div class="scroll">
+      <!-- 顶部指标 -->
+      <div class="grid g3" style="margin-bottom:18px">
+        <div class="card metric"><span class="lab">综合掌握度</span><span class="n">68%</span><span class="k">198 知识点 · 已掌握 12</span></div>
+        <div class="card metric"><span class="lab">本周活跃</span><span class="n">23</span><span class="k">自测题 · 4 新知识 · 2 复习</span></div>
+        <div class="card metric"><span class="lab">待复习</span><span class="n" style="background:linear-gradient(115deg,var(--warn),var(--bad));-webkit-background-clip:text;background-clip:text;color:transparent">2</span><span class="k">到期项 · 建议今天回看</span></div>
+      </div>
+
+      <div class="grid g2">
+        <!-- 左：雷达 + 复习环 -->
+        <div class="card">
+          <p class="lab">能力雷达 · 四域分布</p>
+          <svg class="radar" viewBox="0 0 320 250" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff2bd6"/><stop offset="1" stop-color="#00e5ff"/></linearGradient></defs>
+            <g stroke="#1e2a40" fill="none">
+              <polygon points="160,40 260,110 224,210 96,210 60,110"/>
+              <polygon points="160,80 220,120 200,176 120,176 100,120"/>
+              <polygon points="160,120 180,130 172,162 148,162 140,130"/>
+            </g>
+            <g stroke="#3a4a66" stroke-width="1">
+              <line x1="160" y1="40" x2="160" y2="210"/><line x1="60" y1="110" x2="260" y2="110"/>
+              <line x1="96" y1="210" x2="224" y2="210"/>
+            </g>
+            <polygon fill="url(#rg)" fill-opacity="0.22" stroke="url(#rg)" stroke-width="2.5"
+              points="160,70 230,118 196,186 116,196 84,118"/>
+            <g fill="#e9f0fb" font-family="JetBrains Mono" font-size="11" text-anchor="middle">
+              <text x="160" y="30">Web</text><text x="278" y="112">二进制</text>
+              <text x="232" y="228">密码学</text><text x="88" y="228">渗透</text><text x="42" y="112">综合</text>
+            </g>
+          </svg>
+        </div>
+        <div class="card">
+          <p class="lab">复习覆盖 · 各域待办</p>
+          <div class="circles" style="margin-top:6px">
+            <div class="ccrow"><div class="cc" style="--p:70%"><span>70%</span></div><small>Web</small></div>
+            <div class="ccrow"><div class="cc" style="--p:42%"><span>42%</span></div><small>二进制</small></div>
+            <div class="ccrow"><div class="cc" style="--p:55%"><span>55%</span></div><small>密码学</small></div>
+            <div class="ccrow"><div class="cc" style="--p:48%"><span>48%</span></div><small>渗透</small></div>
+          </div>
+          <p class="sub" style="margin-top:14px">复习提醒按 1/2/4/7/15/30 天艾宾浩斯节点推送，到期项已用红点标注在曲线上。</p>
+          <button class="btn" style="margin-top:10px;width:100%">🎯 弱项专项自测（二进制漏洞）</button>
+        </div>
+      </div>
+
+      <div class="grid g2" style="margin-top:18px">
+        <!-- 最近对话 -->
+        <div class="card">
+          <p class="lab">最近对话 · AI 辅助</p>
+          <div class="conv"><div class="av">💬</div><div><div class="t">用类比讲 SQL 注入的成因与防御</div><div class="m">昨天 21:14 · 已引用 2 个知识源</div></div></div>
+          <div class="conv"><div class="av">🤖</div><div><div class="t">XSS 与 SQL 注入的核心区别</div><div class="m">昨天 20:50 · 含 payload 解析</div></div></div>
+          <div class="conv"><div class="av">🛡️</div><div><div class="t">把 Log4Shell 翻译成自查加固清单</div><div class="m">周一 09:02 · 情报关联</div></div></div>
+        </div>
+        <!-- 模块快捷 -->
+        <div class="card">
+          <p class="lab">快速进入模块</p>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px">
+            <div class="mod"><div class="ic">📚</div><div style="flex:1"><div class="tt">知识体系 <span class="tag">198</span></div><div class="dm">分级讲解 · AI 辅助 · 学习路径</div></div></div>
+            <div class="mod"><div class="ic">🎯</div><div style="flex:1"><div class="tt">实战靶场 <span class="tag">题解+演练</span></div><div class="dm">题解库 · 在线演练 · 靶机</div></div></div>
+            <div class="mod"><div class="ic">🧠</div><div style="flex:1"><div class="tt">随机自测 <span class="tag">198 题</span></div><div class="dm">分域分级 · 选项乱序 · 提示</div></div></div>
+            <div class="mod"><div class="ic">🛠️</div><div style="flex:1"><div class="tt">工具与代码</div><div class="dm">Base64/Hash · 工具库 · 代码</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="note">结构预览 · 指令中心 HUD（左图标栏 + 学习控制台首页）· 非换皮</div>
+</body>
+</html>
