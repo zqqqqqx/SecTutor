@@ -8,7 +8,7 @@ function loadJsdom() {
 }
 const { JSDOM, VirtualConsole } = loadJsdom();
 
-const dir = "C:/Users/ZQX/Desktop/NewAgent/cybersec-agent";
+const dir = __dirname;
 let html = fs.readFileSync(path.join(dir, "index.html"), "utf8");
 const dataJs = fs.readFileSync(path.join(dir, "data.js"), "utf8");
 const appJs = fs.readFileSync(path.join(dir, "app.js"), "utf8");
