@@ -957,7 +957,7 @@
     const related = docs.filter((d) => d !== primary).slice(0, 4);
     if (related.length) {
       html += `<p style="margin-top:8px;color:var(--muted)">${t("src.related")}：` +
-        related.map((d) => `<span class="cite">${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
+        related.map((d) => `<span class="cite" data-id="${escapeHtml(d.id)}">${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
     }
     const moreTopics = allTopics().filter((x) => x.cat === topicDoc.cat && x.id !== topicId).slice(0, 3);
     html += `<p style="margin-top:6px;color:var(--muted)">${t("src.more")}：` + suggestionButtons(moreTopics) + `</p>`;
@@ -1074,7 +1074,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 --- 资料结束 ---`;
     const tools = toolSchemas();
     const srcTitleHtml = (ds) => `<p style="margin-top:8px;color:var(--muted);font-size:.85em">${t("src.title")}：` +
-      ds.map((d, i) => `<span class="cite">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
+      ds.map((d, i) => `<span class="cite" data-id="${escapeHtml(d.id)}">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
     try {
       const messages = [{ role: "system", content: sys }, ...state.history.map((m) => ({ role: m.role, content: m.content }))];
       removeTyping();
@@ -1160,6 +1160,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 
   $("#sendBtn").addEventListener("click", send);
   $("#chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  // 聊天引用条目可点击：跳转到对应模块（知识点打开详情 / 资讯·工具·靶场聚焦面板）
+  $("#chatLog").addEventListener("click", (e) => {
+    const el = e.target.closest(".cite");
+    if (!el || !el.dataset.id) return;
+    const doc = CORPUS.find((x) => x.id === el.dataset.id);
+    if (doc) gotoCorpusDoc(doc);
+  });
   $("#userLevel").addEventListener("change", (e) => { state.userLevel = e.target.value; });
   $("#focusCat").addEventListener("change", (e) => { state.focusCat = e.target.value; });
 

@@ -256,7 +256,7 @@ const advHint = SD.quizzes.filter(function(q){ return q.level === "高级" && q.
 assert(advHint >= 40, "高级(CTF)题均带内置提示（>=40）");
 const ansText = qItem ? qItem.options[qItem.answer] : "";
 // 选项已乱序，必须按"正确答案内容"定位按钮，而非按原始下标
-const optBtn = $$("#quizMain .quiz-opt").find((b) => b.textContent.replace(/^\d+\.\s*/, "").trim() === ansText);
+const optBtn = $$("#quizMain .quiz-opt").find((b) => { const t = b.textContent.replace(/^\d+\.\s*/, "").trim(); return t === ansText || t.indexOf(ansText) === 0; });
 assert(!!optBtn, "正确选项按钮存在（按内容定位，兼容选项乱序）");
 if (optBtn) { optBtn.click(); $("#quizSubmit").click(); }
 // 回归：选项乱序后 answer 下标必须仍指向原正确答案内容（修复"答案总在同一位置"）

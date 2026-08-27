@@ -530,7 +530,8 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .msg .suggestions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; }
 .msg .suggestions button { background: var(--panel); border: 1px solid var(--brand); color: var(--brand); border-radius: 16px; padding: 5px 11px; cursor: pointer; font-size: 12.5px; transition: background .15s, color .15s, border-color .15s; }
 .msg .suggestions button:hover { background: var(--brand); color: #fff; }
-.cite { display: inline-block; background: var(--chip); border: 1px solid var(--line); color: var(--muted); border-radius: 10px; padding: 2px 9px; font-size: 12px; margin: 2px 3px 2px 0; }
+.cite { display: inline-block; background: var(--chip); border: 1px solid var(--line); color: var(--muted); border-radius: 10px; padding: 2px 9px; font-size: 12px; margin: 2px 3px 2px 0; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.cite:hover { background: var(--brand); color: #fff; border-color: var(--brand); }
 .code-wrap { margin: 8px 0; }
 .code-wrap pre { margin: 0; }
 
