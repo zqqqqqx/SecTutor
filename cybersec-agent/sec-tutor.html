@@ -5251,7 +5251,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   function renderNews() {
     const list = $("#newsList");
     list.innerHTML = SEC_DATA.news.map((n) => `
-      <div class="news-card">
+      <div class="news-card" data-id="${escapeHtml(n.id)}">
         <span class="tag">${escapeHtml(n.cve)}</span>
         <h3>${escapeHtml(n.title)}</h3>
         <div class="date">${escapeHtml(n.date)} ｜ ${catById(n.cat).name}</div>
