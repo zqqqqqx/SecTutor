@@ -629,7 +629,7 @@
     if (type === "topic") { activateTab("knowledge"); showTopicDetail(id); }
     else if (type === "range") { activateTab("range"); showRange(id); }
     else if (type === "lab") { activateTab("range"); if (window.__openLabById) window.__openLabById(id); }
-    else if (type === "news") { activateTab("news"); }
+    else if (type === "news") { showNews(id); }
     else if (type === "tool") { activateTab("tools"); }
   }
 
@@ -1877,11 +1877,34 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       </div>`).join("");
     list.querySelectorAll(".news-ai-btn").forEach((b) => {
       if (b.dataset.bound) return; b.dataset.bound = "1";
-      b.addEventListener("click", () => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
         const nw = SEC_DATA.news.find((x) => x.id === b.dataset.id);
         if (nw) aiAssistForNews(nw);
       });
     });
+    list.querySelectorAll(".news-card").forEach((c) => {
+      if (c.dataset.boundCard) return; c.dataset.boundCard = "1";
+      c.addEventListener("click", () => showNews(c.dataset.id));
+    });
+  }
+
+  function showNews(id) {
+    const n = (SEC_DATA.news || []).find((x) => x.id === id);
+    if (!n) { activateTab("news"); return; }
+    const catName = catById(n.cat).name;
+    const body = `
+      <div class="news-detail">
+        ${n.cve ? `<div class="tag" style="display:inline-block;margin-bottom:8px">${escapeHtml(n.cve)}</div>` : ""}
+        <h2 style="margin:0 0 6px">${escapeHtml(n.title)}</h2>
+        <div class="date" style="margin-bottom:12px">${escapeHtml(n.date)} ｜ ${escapeHtml(catName)}</div>
+        <p style="line-height:1.7">${escapeHtml(n.summary)}</p>
+        <p style="line-height:1.7"><strong style="color:var(--accent)">🛡 防御建议：</strong>${escapeHtml(n.defense)}</p>
+        <button class="btn" id="newsDetailAi" style="margin-top:8px">🤖 AI 辅助（解读/关联/加固）</button>
+      </div>`;
+    openModal("安全资讯 · " + escapeHtml(catName), body);
+    const aiBtn = $("#newsDetailAi");
+    if (aiBtn) aiBtn.addEventListener("click", () => { closeModal(); aiAssistForNews(n); });
   }
 
   let toolActiveCat = "all";

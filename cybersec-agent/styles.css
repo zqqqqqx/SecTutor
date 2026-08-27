@@ -577,7 +577,10 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 
 /* ---------- 资讯 ---------- */
 .news-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(345px,1fr)); gap: 16px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; }
-.news-card { background: var(--panel); border:1px solid var(--line); border-left: 4px solid var(--warn); border-radius: var(--radius); padding: 19px; box-shadow: var(--shadow-sm); transition: transform .2s, border-color .2s; position: relative; overflow: hidden; }
+.news-card { background: var(--panel); border:1px solid var(--line); border-left: 4px solid var(--warn); border-radius: var(--radius); padding: 19px; box-shadow: var(--shadow-sm); transition: transform .2s, border-color .2s; position: relative; overflow: hidden; cursor: pointer; }
+.news-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.news-detail h2 { color: var(--ink); }
+.news-detail .date { color: var(--muted); font-size: 13px; }
 .news-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
 .news-card .tag { font-size: 11px; background: var(--warn-bg); color: var(--warn); padding: 3px 9px; border-radius: 8px; font-weight: 700; }
 .news-card h3 { color: var(--ink); text-transform: none; margin: 10px 0; font-size: 16px; letter-spacing: 0; }
