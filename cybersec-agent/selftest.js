@@ -544,6 +544,7 @@ $("#backLab").click();
   const intelPane = $("#modalOverlay .api-pane[data-pane='intel']");
   assert(intelPane && !intelPane.classList.contains("hidden"), "可切换到「威胁情报（预留）」面板");
   $("#modalClose").click();
+  await delay(320);  // 弹窗退场动效 200ms + 兜底定时器 260ms，需等隐藏真正生效
   assert($("#modalOverlay").classList.contains("hidden"), "模态框可关闭");
 
   // ===== 20. 方向⑩ 大模型配置保存（仅本机 localStorage）=====
@@ -567,11 +568,13 @@ $("#backLab").click();
   assert($$(".gs-item").length > 0, "全局搜索命中结果（防抖钩子同步刷新）");
   const firstGs = $$(".gs-item")[0];
   firstGs.click();
+  await delay(320);  // 弹窗退场动效需等隐藏生效（同 21 组）
   assert($("#modalOverlay").classList.contains("hidden"), "点击搜索结果关闭弹窗并跳转");
   $("#btnReview").click();
   assert(!$("#modalOverlay").classList.contains("hidden"), "复习提醒弹窗打开");
   assert(!!$("#revStartBtn") || !!$("#modalBody .rev-empty"), "复习提醒含开始按钮或空态提示");
   $("#modalClose").click();
+  await delay(320);
   assert($("#modalOverlay").classList.contains("hidden"), "复习提醒弹窗可关闭");
   $("#btnSettings").click();
   assert(!!$("#setPdf") && !!$("#setReset"), "设置弹窗含导出计划与重置入口");
@@ -580,6 +583,7 @@ $("#backLab").click();
   if (otherChip) otherChip.click();
   assert(doc.documentElement.getAttribute("data-theme") !== themeBeforeSet, "设置弹窗可切换主题");
   $("#modalClose").click();
+  await delay(320);
   assert($("#modalOverlay").classList.contains("hidden"), "设置弹窗可关闭");
 
   // ===== 22. 布局滚动回归：body 固定视口高度，面板内左右独立滚动互不带动 =====
@@ -664,6 +668,83 @@ $("#backLab").click();
     assert(p4 >= 90, `检索质量防护：改写查询 P@4=${p4.toFixed(1)}%（要求 ≥90%，RAG 取 top-4 必须命中）`);
     assert(p1 >= 60, `检索质量防护：改写查询 P@1=${p1.toFixed(1)}%（要求 ≥60%）`);
   }
+
+  // ===== 25. 交互反馈层（P0）：Toast / 忙碌态 =====
+  const UI = window.__ui;
+  assert(!!UI, "交互反馈层已暴露 __ui（Toast / withPending 可回归校验）");
+  if (UI) {
+    const host = doc.getElementById("toastHost");
+    assert(!!host && host.getAttribute("aria-live") === "polite", "Toast 宿主存在且 aria-live 正确（读屏可播报）");
+    const idOk = UI.toast("ok-测试", "ok");
+    const idErr = UI.toast("err-测试", "err");
+    const idInfo = UI.toast("info-测试", "info");
+    assert(!!doc.querySelector(".toast-ok"), "Toast 支持 ok 类型");
+    assert(!!doc.querySelector(".toast-err") && doc.querySelector(".toast-err").getAttribute("role") === "alert", "Toast err 类型带 role=alert（读屏立即播报）");
+    assert(!!doc.querySelector(".toast-info"), "Toast 支持 info 类型");
+    UI.toast("第四条-测试", "info");
+    assert(host.children.length <= 3, `Toast 最多同时堆叠 3 条（当前 ${host.children.length}）`);
+    let undone = false;
+    const idUndo = UI.toast("可撤销-测试", "ok", { actionText: "撤销", onAction: () => { undone = true; } });
+    const actBtn = doc.querySelector('.toast[data-toast-id="' + idUndo + '"] .toast-act');
+    if (actBtn) actBtn.click();
+    assert(undone, "Toast 撤销按钮点击后回调被触发");
+    const idAuto = UI.toast("短时-测试", "info", { duration: 60 });
+    await delay(450);
+    assert(!doc.querySelector('.toast[data-toast-id="' + idAuto + '"]'), "Toast 超时后自动移除");
+    [idOk, idErr, idInfo, idUndo].forEach((i) => UI.closeToast(i, true));
+
+    const probe = doc.createElement("button");
+    probe.innerHTML = "<span>原文案</span>";
+    doc.body.appendChild(probe);
+    const restore = UI.withPending(probe, "处理中…");
+    assert(probe.disabled === true, "withPending 期间按钮被禁用（防重复提交）");
+    assert(/处理中/.test(probe.textContent), "withPending 期间显示忙碌文案");
+    restore();
+    assert(probe.disabled === false && /原文案/.test(probe.textContent), "withPending 恢复后按钮解禁且原文案还原");
+
+    const probe2 = doc.createElement("button");
+    probe2.innerHTML = "<span>二</span>";
+    doc.body.appendChild(probe2);
+    let restoreFn = null;
+    try { restoreFn = UI.withPending(probe2, "忙"); throw new Error("模拟业务异常"); }
+    catch (e) { if (restoreFn) restoreFn(); }
+    assert(probe2.disabled === false, "withPending 在业务异常后仍能恢复按钮（不会永久禁用）");
+  }
+
+  // ===== 26. 键盘导航（P1）：快捷键 / 焦点管理 =====
+  function pressKey(key, opts) {
+    const ev = new window.KeyboardEvent("keydown", Object.assign({ key: key, bubbles: true, cancelable: true }, opts || {}));
+    doc.dispatchEvent(ev);
+    return ev;
+  }
+  pressKey("3");
+  assert($("#panel-range").classList.contains("active"), "数字键 3 切换到「实战靶场」面板");
+  pressKey("1");
+  assert($("#panel-knowledge").classList.contains("active"), "数字键 1 切换到「知识体系」面板");
+  const kbInput = $("#kbSearch");
+  if (kbInput) kbInput.focus();
+  pressKey("5");
+  assert($("#panel-knowledge").classList.contains("active"), "输入框内按数字键不会误切面板（防打字误触）");
+  if (kbInput) kbInput.blur();
+  pressKey("k", { ctrlKey: true });
+  assert(!$("#modalOverlay").classList.contains("hidden"), "Ctrl+K 打开全局搜索");
+  pressKey("Escape");
+  await delay(320);
+  assert($("#modalOverlay").classList.contains("hidden"), "Esc 可关闭弹窗");
+  const settingsTrigger = $("#btnSettings");
+  if (settingsTrigger) { settingsTrigger.focus(); settingsTrigger.click(); }
+  const modalEl = doc.querySelector("#modalOverlay .modal");
+  assert(!!modalEl && modalEl.contains(doc.activeElement), "弹窗打开后焦点已移入弹窗内");
+  assert(!!modalEl && modalEl.getAttribute("role") === "dialog" && modalEl.getAttribute("aria-modal") === "true", "弹窗带 role=dialog 与 aria-modal");
+  pressKey("Escape");
+  await delay(320);
+  assert(doc.activeElement === settingsTrigger, "弹窗关闭后焦点归还触发元素");
+  assert($$(".rail-item .rail-key").length >= 8, "左侧导航显示 1-8 数字角标");
+  pressKey("?");
+  const titleEl = $("#modalTitle");
+  assert(!$("#modalOverlay").classList.contains("hidden") && !!titleEl && /键盘快捷键/.test(titleEl.textContent), "? 打开快捷键帮助面板");
+  pressKey("Escape");
+  await delay(320);
 
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));

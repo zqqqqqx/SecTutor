@@ -269,6 +269,139 @@
   }
   function curLang() { return document.documentElement.getAttribute("lang") === "en" ? "en" : "zh"; }
   function t(k) { return (I18N[curLang()] && I18N[curLang()][k] != null) ? I18N[curLang()][k] : (I18N.zh[k] != null ? I18N.zh[k] : k); }
+
+  /* ============================================================
+     交互反馈层（P0）：Toast 通知 / 按钮忙碌态 / 骨架屏
+     目标：让每一次操作都有即时、明确、可预期的回应。
+     ============================================================ */
+  const TOAST_ICON = { ok: "\u2713", err: "!", info: "i" };
+  const TOAST_DUR = { ok: 3000, err: 5000, info: 3500 };
+  const toastRecs = new Map();
+  let toastSeq = 0;
+
+  function toastHost() {
+    let host = document.getElementById("toastHost");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "toastHost";
+      host.className = "toast-host";
+      host.setAttribute("role", "status");
+      host.setAttribute("aria-live", "polite");
+      document.body.appendChild(host);
+    }
+    return host;
+  }
+
+  /* 统一通知入口。
+     msg  提示文案 | type "ok" | "err" | "info"
+     opts { actionText, onAction, duration }（带撤销按钮时默认 8 秒）
+     返回 toastId，可用 closeToast(id) 手动关闭。 */
+  function toast(msg, type, opts) {
+    type = TOAST_ICON[type] ? type : "info";
+    opts = opts || {};
+    const host = toastHost();
+    // 最多同时 3 条，超出移除最早的一条
+    while (host.children.length >= 3) {
+      const first = host.firstElementChild;
+      if (!first) break;
+      closeToast(first.getAttribute("data-toast-id"), true);
+    }
+    const id = "t" + (++toastSeq);
+    const el = document.createElement("div");
+    el.className = "toast toast-" + type;
+    el.setAttribute("data-toast-id", id);
+    el.setAttribute("role", type === "err" ? "alert" : "status");
+    let html = `<span class="toast-ic">${TOAST_ICON[type]}</span><span class="toast-msg">${escapeHtml(msg)}</span>`;
+    if (opts.actionText) html += `<button class="toast-act" type="button">${escapeHtml(opts.actionText)}</button>`;
+    html += `<button class="toast-x" type="button" aria-label="\u5173\u95ed">\u2715</button>`;
+    el.innerHTML = html;
+    host.appendChild(el);
+
+    const rec = { timer: null, el: el };
+    toastRecs.set(id, rec);
+    const dur = opts.duration || (opts.actionText ? 8000 : TOAST_DUR[type]);
+    const start = function () { rec.timer = setTimeout(function () { closeToast(id); }, dur); };
+    el.querySelector(".toast-x").addEventListener("click", function () { closeToast(id); });
+    const actBtn = el.querySelector(".toast-act");
+    if (actBtn) {
+      actBtn.addEventListener("click", function () {
+        closeToast(id);
+        if (typeof opts.onAction === "function") opts.onAction();
+      });
+    }
+    // 悬停暂停自动消失，移开重新计时
+    el.addEventListener("mouseenter", function () { if (rec.timer) { clearTimeout(rec.timer); rec.timer = null; } });
+    el.addEventListener("mouseleave", function () { if (!rec.timer) start(); });
+    start();
+    return id;
+  }
+
+  // immediate=true 时立即移除（不带退场动画），用于堆叠淘汰
+  function closeToast(id, immediate) {
+    const rec = toastRecs.get(id);
+    if (!rec) return;
+    toastRecs.delete(id);
+    if (rec.timer) clearTimeout(rec.timer);
+    const el = rec.el;
+    if (immediate) { if (el.parentNode) el.parentNode.removeChild(el); return; }
+    el.classList.add("out");
+    let done = false;
+    const remove = function () {
+      if (done) return;
+      done = true;
+      if (el.parentNode) el.parentNode.removeChild(el);
+    };
+    // 关闭动效时不会触发 animationend，用定时器兜底
+    el.addEventListener("animationend", remove, { once: true });
+    setTimeout(remove, 320);
+  }
+
+  /* 把按钮置为忙碌态，返回「恢复函数」。
+     必须在 try/finally 中调用恢复，否则异常会把按钮永久禁用。
+     实现上只隐藏原有子元素并追加忙碌层，不替换 innerHTML，
+     以保留按钮内的图标与子元素上已绑定的事件监听。 */
+  function withPending(btn, busyText) {
+    const el = typeof btn === "string" ? $(btn) : btn;
+    if (!el) return function () {};
+    const prevW = el.offsetWidth;
+    if (prevW) el.style.minWidth = prevW + "px";
+    const prevDisabled = !!el.disabled;
+    Array.prototype.forEach.call(el.children, function (c) { c.style.display = "none"; });
+    const busy = document.createElement("span");
+    busy.className = "pending-wrap";
+    busy.style.display = "inline-flex";
+    busy.style.alignItems = "center";
+    busy.style.gap = "6px";
+    busy.innerHTML = `<span class="spinner"></span><span>${escapeHtml(busyText || "\u5904\u7406\u4e2d\u2026")}</span>`;
+    el.appendChild(busy);
+    el.disabled = true;
+    let restored = false;
+    return function restore() {
+      if (restored) return;
+      restored = true;
+      if (busy.parentNode) busy.parentNode.removeChild(busy);
+      Array.prototype.forEach.call(el.children, function (c) { c.style.display = ""; });
+      el.disabled = prevDisabled;
+      el.style.minWidth = "";
+    };
+  }
+
+  /* 骨架屏：在容器显示 n 张占位卡，返回清除函数。
+     清除时仅当骨架卡仍在（避免误删已经渲染好的真实内容）。 */
+  function showSkeleton(container, n) {
+    const box = typeof container === "string" ? $(container) : container;
+    if (!box) return function () {};
+    n = n || 6;
+    let html = "";
+    for (let i = 0; i < n; i++) {
+      html += `<div class="sk-card"><div class="sk-line sk-shimmer" style="width:60%"></div>` +
+        `<div class="sk-line sk-shimmer" style="width:100%"></div>` +
+        `<div class="sk-line sk-shimmer" style="width:72%"></div></div>`;
+    }
+    box.innerHTML = html;
+    return function clear() { if (box.querySelector(".sk-card")) box.innerHTML = ""; };
+  }
+
   function saveMastery() {
     localStorage.setItem("sectutor_mastery", JSON.stringify([...state.mastery]));
     updateBadge();
@@ -532,6 +665,82 @@
   $$(".rail-item").forEach((tab) => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab));
   });
+
+  /* ============================================================
+     键盘导航层（P1）：全局快捷键 / Esc / 焦点管理
+     ============================================================ */
+  // 数字键 1-8 与左侧导航顺序保持一致
+  const TAB_KEYS = ["knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance"];
+  const TAB_NAMES = { knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" };
+
+  // 左侧导航显示数字角标（低对比度，hover/激活时提亮）
+  (function markRailKeys() {
+    $$(".rail-item").forEach((el) => {
+      const i = TAB_KEYS.indexOf(el.dataset.tab);
+      if (i < 0 || el.querySelector(".rail-key")) return;
+      const b = document.createElement("span");
+      b.className = "rail-key";
+      b.textContent = String(i + 1);
+      el.appendChild(b);
+    });
+  })();
+
+  function isTypingTarget(el) {
+    if (!el) return false;
+    const tag = (el.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || !!el.isContentEditable;
+  }
+
+  function openHotkeyHelp() {
+    const rows = [
+      ["打开全局搜索", "Ctrl / ⌘ + K"],
+      ["关闭弹窗 / 清空输入", "Esc"],
+      ["聚焦当前搜索框", "/"],
+      ["发送消息", "Enter"],
+      ["打开本帮助", "?"],
+    ].concat(TAB_KEYS.map((k, i) => ["切换到 " + TAB_NAMES[k], String(i + 1)]));
+    const html = `<div class="hk-list">` + rows
+      .map((r) => `<div class="hk-row"><span>${escapeHtml(r[0])}</span><span><kbd>${escapeHtml(r[1])}</kbd></span></div>`)
+      .join("") + `</div>`;
+    openModal("⌨️ 键盘快捷键", html);
+  }
+
+  function initHotkeys() {
+    document.addEventListener("keydown", (e) => {
+      const key = e.key;
+      // Ctrl/⌘ + K 全局搜索：任何情况都响应（含输入框内）
+      if ((e.ctrlKey || e.metaKey) && (key === "k" || key === "K")) {
+        e.preventDefault();
+        openGlobalSearch();
+        return;
+      }
+      // Esc：弹窗优先（全局搜索本身也是弹窗）
+      if (key === "Escape") {
+        const ov = $("#modalOverlay");
+        if (ov && !ov.classList.contains("hidden")) { e.preventDefault(); closeModal(); return; }
+        if (isTypingTarget(document.activeElement) && document.activeElement.value) {
+          document.activeElement.value = "";
+          e.preventDefault();
+        }
+        return;
+      }
+      // 以下快捷键在输入框内不触发，避免打字时误触
+      if (isTypingTarget(document.activeElement)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (key >= "1" && key <= "8") {
+        const tab = TAB_KEYS[parseInt(key, 10) - 1];
+        if (tab) { e.preventDefault(); activateTab(tab); }
+        return;
+      }
+      if (key === "/") {
+        const s = $("#kbSearch");
+        if (s) { e.preventDefault(); activateTab("knowledge"); s.focus(); }
+        return;
+      }
+      if (key === "?") { e.preventDefault(); openHotkeyHelp(); }
+    });
+  }
+  initHotkeys();
 
   /* ============================================================
      知识体系
@@ -840,7 +1049,8 @@
     const topicAiBtn = $("#topicAiBtn");
     if (topicAiBtn) topicAiBtn.addEventListener("click", () => aiAssistForTopic(topic));
     $("#learnBtn").addEventListener("click", () => {
-      if (state.mastery.has(topic.id)) {
+      const wasMastered = state.mastery.has(topic.id);
+      if (wasMastered) {
         state.mastery.delete(topic.id);
         delete state.masteryDates[topic.id];
       } else {
@@ -851,6 +1061,8 @@
       saveMastery();
       saveMasteryDates();
       showTopicDetail(topic.id);
+      // 反馈闭环：原先点击后只有按钮文案变化，缺少明确的结果提示
+      toast(wasMastered ? "已取消掌握：" + topic.name : "已标记掌握：" + topic.name, wasMastered ? "info" : "ok");
     });
   }
 
@@ -1400,6 +1612,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     html += `<p style="color:var(--muted);font-size:13px">提示：每周完成后在「知识体系」对应知识点点击「我已掌握」即可在下方跟踪进度；已掌握的知识点会自动排到计划末尾。</p>`;
     $("#planOutput").innerHTML = html;
     renderProgress();
+    // 反馈闭环：原先生成后无任何提示，用户不确定是否已生效
+    toast(`已生成 ${weeks} 周学习计划，共 ${sorted.length} 个知识点`, "ok");
   }
 
   function renderProgress() {
@@ -1433,10 +1647,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const out = $("#planOutput");
     if (!out || !(out.innerHTML || "").trim()) {
       if (st) st.textContent = "请先生成学习计划再导出。";
+      toast("请先生成学习计划再导出", "err");
       return;
     }
     if (st) st.textContent = "正在打开打印对话框（可「另存为 PDF」）…";
     window.print();
+    toast("已打开打印对话框，选择「另存为 PDF」即可保存", "info");
   }
   function wrapText(text, max) {
     const out = [];
@@ -1456,12 +1672,14 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const src = $("#planOutput");
     if (!src || !(src.textContent || "").trim()) {
       if (st) st.textContent = "请先生成学习计划再导出。";
+      toast("请先生成学习计划再导出", "err");
       return;
     }
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext && canvas.getContext("2d");
     if (!ctx) {
       if (st) st.textContent = "当前环境不支持 PNG 导出，请改用「导出 PDF」或在浏览器中打开。";
+      toast("当前环境不支持 PNG 导出，请改用「导出 PDF」", "err");
       return;
     }
     const text = (src.textContent || "").replace(/[ \t]+\n/g, "\n").trim();
@@ -1481,8 +1699,11 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       a.href = canvas.toDataURL("image/png");
       a.click();
       if (st) st.textContent = "已导出 sectutor-plan.png";
+      toast("已导出 sectutor-plan.png", "ok");
     } catch (e) {
-      if (st) st.textContent = "PNG 导出失败：" + (e && e.message ? e.message : e);
+      const msg = e && e.message ? e.message : String(e);
+      if (st) st.textContent = "PNG 导出失败：" + msg;
+      toast("PNG 导出失败：" + msg, "err");
     }
   }
   const exportPdfBtn = $("#exportPdf");
@@ -1610,6 +1831,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         clearTimeout(timer);
         if (!r.ok || !d.ok) { showEnvDegrade(panel, btn, (d && d.error) || ("HTTP " + r.status)); return; }
         showEnvReady(panel, btn, d.env);
+        toast(d.env && d.env.simulated ? "靶场已就绪（本地仿真模式，无需后端）" : "靶场环境已就绪，可开始练习", "ok");
       })
       .catch((e) => {
         clearTimeout(timer);
@@ -1619,6 +1841,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   function showEnvDegrade(panel, btn, msg) {
     panel.innerHTML = `<div class="env-status warn">⚠️ 临时靶场后端不可用（${escapeHtml(msg || "")}），已回退到本地仿真演练。你仍可在此页面完成前端练习。</div>`;
     if (btn) btn.disabled = false;
+    toast("靶场后端不可用，已回退本地仿真：" + (msg || "未知原因"), "err");
   }
   function proxyUrl(env) {
     const base = env && env.accessUrl;
@@ -1672,8 +1895,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     envApi("/api/envs/" + id, { method: "DELETE" }).then((r) => r.json()).then((d) => {
       stopEnvTimers();
       panel.innerHTML = `<div class="env-status ok">🗑 环境已销毁，资源已释放。</div>`;
+      toast("靶场环境已销毁，资源已释放", "info");
+      if (btn) btn.disabled = false;
     }).catch((e) => {
       panel.innerHTML = `<div class="env-status warn">销毁请求失败：${escapeHtml((e && e.message) || "")}，可在后端手动清理。</div>`;
+      toast("销毁请求失败：" + ((e && e.message) || "网络错误"), "err");
+      if (btn) btn.disabled = false;
     });
   }
 
@@ -2196,12 +2423,24 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       corpusSize: function () { return CORPUS.length; },
     };
   }
+  // 交互反馈层自测钩子
+  if (typeof window !== "undefined") {
+    window.__ui = {
+      toast: toast,
+      closeToast: closeToast,
+      withPending: withPending,
+      showSkeleton: showSkeleton,
+      hotkeyHelp: openHotkeyHelp,
+    };
+  }
   // 统一的「上下文带入智能问答」入口：离线可用（未配 LLM 时走内置知识引擎兜底），配置了外部 LLM 时做更深推理。
   function aiAssistToChat(prompt) {
     activateTab("chat");
     const inp = $("#chatInput");
     if (inp) inp.value = prompt;
     if (typeof send === "function") send();
+    // 反馈闭环：原先静默跳转，用户不确定是否已带入（尤其在非问答页触发时）
+    toast("已带入智能问答，正在生成解答", "info");
   }
   // 高级/CTF 题目 AI 辅助：把当前题带入智能问答，要求 AI 渐进式提示 + 利用链分析（不直接给答案）
   // 复用现有 RAG / 外接 LLM 体系；未配置外部模型时由内置知识引擎尽力辅助。
@@ -2494,23 +2733,32 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const el = $("#backendStatus");
       if (el) { el.textContent = "✅ 后端已随应用自动运行（无需手动启停）"; el.className = "backend-status ok"; }
     } else {
+      // 错误不再在此吞掉，交给调用处统一处理（便于给出明确的成功/失败通知）
       function startBackend() {
-        return fetch(LAUNCHER + "/start", { mode: "cors", cache: "no-store" })
-          .then((r) => r.json())
-          .catch(() => { showLauncherFallback(); });
+        return fetch(LAUNCHER + "/start", { mode: "cors", cache: "no-store" }).then((r) => r.json());
       }
       function stopBackend() {
-        return fetch(LAUNCHER + "/stop", { mode: "cors", cache: "no-store" })
-          .then((r) => r.json())
-          .catch(() => { showLauncherFallback(); });
+        return fetch(LAUNCHER + "/stop", { mode: "cors", cache: "no-store" }).then((r) => r.json());
       }
       if (startBtn) startBtn.addEventListener("click", () => {
-        startBtn.disabled = true;
-        startBackend().finally(() => { startBtn.disabled = false; setTimeout(checkBackend, 4000); });
+        const restore = withPending(startBtn, curLang() === "en" ? "Starting\u2026" : "\u542f\u52a8\u4e2d\u2026");
+        startBackend()
+          .then((d) => {
+            if (d && d.ok === false) toast("\u540e\u7aef\u542f\u52a8\u5931\u8d25\uff1a" + ((d && d.error) || "\u672a\u77e5\u539f\u56e0"), "err");
+            else toast("\u540e\u7aef\u542f\u52a8\u6307\u4ee4\u5df2\u53d1\u9001\uff0c\u6b63\u5728\u7b49\u5f85\u5c31\u7eea\u2026", "info");
+          })
+          .catch(() => { showLauncherFallback(); toast("\u65e0\u6cd5\u8fde\u63a5\u542f\u52a8\u5668\uff0c\u8bf7\u5148\u8fd0\u884c SecTutor.bat", "err"); })
+          .finally(() => { restore(); setTimeout(checkBackend, 4000); });
       });
       if (stopBtn) stopBtn.addEventListener("click", () => {
-        stopBtn.disabled = true;
-        stopBackend().finally(() => { stopBtn.disabled = false; setTimeout(checkBackend, 3000); });
+        const restore = withPending(stopBtn, "\u505c\u6b62\u4e2d\u2026");
+        stopBackend()
+          .then((d) => {
+            if (d && d.ok === false) toast("\u540e\u7aef\u505c\u6b62\u5931\u8d25\uff1a" + ((d && d.error) || "\u672a\u77e5\u539f\u56e0"), "err");
+            else toast("\u540e\u7aef\u5df2\u505c\u6b62", "info");
+          })
+          .catch(() => { showLauncherFallback(); toast("\u65e0\u6cd5\u8fde\u63a5\u542f\u52a8\u5668\uff0c\u53ef\u80fd\u540e\u7aef\u5df2\u7ecf\u672a\u8fd0\u884c", "err"); })
+          .finally(() => { restore(); setTimeout(checkBackend, 3000); });
       });
 
       // 探测后端状态
@@ -2842,16 +3090,66 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
      - API 接入中心（LLM / 威胁情报预留 / MCP 预留 / 隐私说明）
      ============================================================ */
   // —— 通用模态框（复习小测 / API 接入中心 复用）——
+  const FOCUSABLE_SEL = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  let modalPrevFocus = null;
+  let modalGen = 0;      // 代际令牌：防止「延迟隐藏」误伤随后打开的新弹窗
+  let modalTrapBound = false;
+
+  function bindModalTrap(ov) {
+    ov.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      const modal = ov.querySelector(".modal");
+      if (!modal) return;
+      const items = Array.prototype.slice.call(modal.querySelectorAll(FOCUSABLE_SEL));
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+  }
+
   function openModal(titleHtml, bodyHtml) {
     let ov = $("#modalOverlay");
     if (!ov) { ov = document.createElement("div"); ov.id = "modalOverlay"; ov.className = "modal-overlay hidden"; document.body.appendChild(ov); }
-    ov.innerHTML = `<div class="modal"><div class="modal-head"><span>${titleHtml}</span><button class="modal-close" id="modalClose">✕</button></div><div class="modal-body" id="modalBody">${bodyHtml}</div></div>`;
+    ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">` +
+      `<div class="modal-head"><span id="modalTitle">${titleHtml}</span>` +
+      `<button class="modal-close" id="modalClose" aria-label="\u5173\u95ed">\u2715</button></div>` +
+      `<div class="modal-body" id="modalBody">${bodyHtml}</div></div>`;
     ov.classList.remove("hidden");
+    ov.classList.remove("out");
+    modalGen++;                                   // 令此前所有挂起的「延迟隐藏」失效
     $("#modalClose").onclick = closeModal;
     ov.onclick = (e) => { if (e.target === ov) closeModal(); };
+    if (!modalTrapBound) { bindModalTrap(ov); modalTrapBound = true; }
+    // 焦点管理：记录来源，关闭时归还；打开后聚焦弹窗内首个可聚焦元素
+    modalPrevFocus = document.activeElement;
+    const first = ov.querySelector(".modal " + FOCUSABLE_SEL);
+    if (first && typeof first.focus === "function") { try { first.focus(); } catch (err) {} }
     return ov;
   }
-  function closeModal() { const ov = $("#modalOverlay"); if (ov) ov.classList.add("hidden"); }
+
+  function closeModal() {
+    const ov = $("#modalOverlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    const myGen = modalGen;
+    ov.classList.add("out");
+    let done = false;
+    const finish = function () {
+      if (done) return;
+      done = true;
+      // 期间若又打开了新弹窗（modalGen 已变），则本次隐藏作废，避免把新弹窗一起藏掉
+      if (myGen !== modalGen) return;
+      ov.classList.add("hidden");
+      ov.classList.remove("out");
+    };
+    const modal = ov.querySelector(".modal");
+    if (modal) modal.addEventListener("animationend", finish, { once: true });
+    setTimeout(finish, 260);   // 关闭动效时不会触发 animationend，定时器兜底
+    if (modalPrevFocus && typeof modalPrevFocus.focus === "function") {
+      try { modalPrevFocus.focus(); } catch (err) {}
+    }
+    modalPrevFocus = null;
+  }
 
   // —— 本地工具实现（纯 JS，离线）——
   function toBin(str) { const bytes = new TextEncoder().encode(str); let s = ""; for (const b of bytes) s += String.fromCharCode(b); return s; }

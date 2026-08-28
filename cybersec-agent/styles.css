@@ -850,3 +850,131 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .sp-steps .st { display: block; margin-top: 5px; opacity: 0; transform: translateY(4px); transition: opacity .25s, transform .25s; }
 .sp-steps .st.on { opacity: 1; transform: none; }
 .sp-steps .st.ok { color: var(--accent, #0d9488); }
+
+/* ==================================================================
+   动效规范（明显档：250–350ms，带明显位移与缩放）
+   说明：基础布局/配色样式无条件生效；只有「动画属性」放进
+   prefers-reduced-motion: no-preference，系统开启减弱动效时自动降级。
+   ================================================================== */
+:root {
+  --dur-fast: 180ms;
+  --dur-base: 260ms;
+  --dur-slow: 340ms;
+  --ease-out: cubic-bezier(.16, .84, .44, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --move-sm: 12px;
+  --move-md: 20px;
+  --move-lg: 32px;
+  --scale-press: .96;
+  --scale-pop: 1.04;
+}
+
+/* ===== 焦点可见环（无障碍，始终生效）===== */
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+
+/* ===== Toast 通知 ===== */
+.toast-host {
+  position: fixed; right: 24px; bottom: 24px; z-index: 1200;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  pointer-events: none; max-width: min(380px, calc(100vw - 48px));
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 10px;
+  min-width: 220px; max-width: 380px; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--brand);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  color: var(--ink); font-size: 13.5px; line-height: 1.5;
+}
+.toast-ok { border-left-color: var(--ok, #16a34a); }
+.toast-err { border-left-color: var(--bad, #dc2626); }
+.toast-info { border-left-color: var(--brand); }
+.toast-ic { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--brand); }
+.toast-ok .toast-ic { background: var(--ok, #16a34a); }
+.toast-err .toast-ic { background: var(--bad, #dc2626); }
+.toast-msg { flex: 1 1 auto; word-break: break-word; }
+.toast-act {
+  flex: none; background: transparent; border: 1px solid var(--line); color: var(--brand);
+  border-radius: 8px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; font-weight: 500;
+}
+.toast-act:hover { background: var(--brand-soft); }
+.toast-x { flex: none; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1; }
+.toast-x:hover { color: var(--ink); }
+
+/* ===== 按钮忙碌态 ===== */
+.btn[disabled], button[disabled] { opacity: .62; cursor: not-allowed; }
+.spinner {
+  display: inline-block; width: 15px; height: 15px; flex: none; vertical-align: -2px;
+  border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%;
+  opacity: .85;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== 骨架屏 ===== */
+.sk-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px 18px; box-shadow: var(--shadow-sm);
+}
+.sk-line { height: 12px; border-radius: 6px; background: var(--panel-2); margin-bottom: 10px; }
+.sk-line:last-child { margin-bottom: 0; }
+.sk-shimmer { position: relative; overflow: hidden; }
+.sk-shimmer::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--glass), transparent);
+}
+
+/* ===== 左侧导航数字角标（快捷键提示）===== */
+.rail-item { position: relative; }
+.rail-key {
+  position: absolute; right: 3px; bottom: 2px; min-width: 13px; height: 13px; padding: 0 2px;
+  border-radius: 4px; background: var(--chip); color: var(--muted);
+  font-size: 9.5px; line-height: 13px; text-align: center; font-weight: 600;
+  opacity: .55; pointer-events: none; transition: opacity .15s;
+}
+.rail-item:hover .rail-key, .rail-item.active .rail-key { opacity: 1; color: var(--brand); }
+
+/* ===== 快捷键帮助表 ===== */
+.hk-list { display: grid; gap: 8px; }
+.hk-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 13px; }
+.hk-row span:first-child { color: var(--muted); }
+kbd {
+  display: inline-block; padding: 2px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 5px; background: var(--panel-2); color: var(--ink);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 11.5px;
+}
+
+/* ===== 动效（仅在允许动效时生效）===== */
+@media (prefers-reduced-motion: no-preference) {
+  .panel.active { animation: panelIn var(--dur-base) var(--ease-out); }
+  @keyframes panelIn {
+    from { opacity: 0; transform: translateY(var(--move-md)); }
+    to { opacity: 1; transform: none; }
+  }
+  .toast { animation: toastIn var(--dur-slow) var(--ease-spring); }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(120%) scale(.92); }
+    to { opacity: 1; transform: none; }
+  }
+  .toast.out { animation: toastOut 220ms var(--ease-out) forwards; }
+  @keyframes toastOut { to { opacity: 0; transform: translateX(120%); } }
+  .spinner { animation: spin .7s linear infinite; }
+  .sk-shimmer::after { animation: skSweep 1.4s linear infinite; }
+  @keyframes skSweep { to { transform: translateX(100%); } }
+  .topic-card, .news-card, .gl-card { transition: transform 240ms var(--ease-out), box-shadow 240ms var(--ease-out), border-color 240ms var(--ease-out); }
+  .topic-card:hover, .news-card:hover, .gl-card:hover { transform: translateY(-6px) scale(1.02); box-shadow: var(--shadow-lg); }
+  .btn, .tc-btn, .rail-item { transition: transform var(--dur-fast) var(--ease-out); }
+  .btn:active, .tc-btn:active, .rail-item:active { transform: scale(var(--scale-press)); }
+  .modal { animation: modalIn 300ms var(--ease-spring); }
+  @keyframes modalIn {
+    from { opacity: 0; transform: translateY(var(--move-lg)) scale(.9); }
+    to { opacity: 1; transform: none; }
+  }
+  .modal-overlay.out .modal { animation: modalOut 200ms var(--ease-out) forwards; }
+  @keyframes modalOut { to { opacity: 0; transform: scale(.96); } }
+}
+
+/* 关闭动效时：确保元素处于终态，不残留 transform 或不可见状态 */
+@media (prefers-reduced-motion: reduce) {
+  .panel.active, .toast, .modal { animation: none; }
+  .topic-card:hover, .news-card:hover, .gl-card:hover { transform: none; }
+  .spinner { animation: spin .7s linear infinite; }
+}
