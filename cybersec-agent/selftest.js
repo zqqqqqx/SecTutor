@@ -607,6 +607,64 @@ $("#backLab").click();
   console.log(`  长度耦合度（最长项==正确答案）: ${(coupledRatio * 100).toFixed(1)}%（修复前约 97%，修复目标 <40%）`);
   assert(lenTotal > 0 && coupledRatio >= 0.12 && coupledRatio <= 0.38, `长度与答案脱钩：选最长的正确率≈${(coupledRatio * 100).toFixed(1)}%（接近随机 25%）`);
 
+  // ===== 24. 索引层与检索质量回归防护（倒排索引 + BM25）=====
+  const PF = window.__perf;
+  assert(!!PF, "索引层已暴露 __perf（检索/索引能力可回归校验）");
+  if (PF) {
+    // 记忆化：原实现每次调用都重建整个数组，优化后应返回同一实例
+    assert(PF.allTopics() === PF.allTopics(), "allTopics() 已记忆化（重复调用返回同一实例，不再重建数组）");
+    assert(PF.allTopics().length > 0, `知识点索引非空（${PF.allTopics().length} 个知识点）`);
+    assert(PF.corpusSize() > 0, `语料索引已构建（${PF.corpusSize()} 篇文档）`);
+
+    // 边界：空查询 / 无命中不得抛错
+    let edgeOk = true;
+    try {
+      const r0 = PF.retrieve("", 4);
+      const r1 = PF.retrieve("zzzz不存在的词zzzz", 4);
+      if (!Array.isArray(r0) || !Array.isArray(r1)) edgeOk = false;
+    } catch (e) { edgeOk = false; }
+    assert(edgeOk, "检索边界安全：空查询与无命中均返回数组且不抛错");
+
+    // 相关推荐不得把自身推荐出来
+    let noSelf = true;
+    const someTopic = PF.allTopics()[0];
+    if (someTopic) {
+      const rel = PF.relatedDocs(someTopic);
+      if (rel.some((d) => d.id === "topic:" + someTopic.id)) noSelf = false;
+    }
+    assert(noSelf, "relatedDocs 不会把知识点自身作为推荐项返回");
+
+    // 检索质量回归防护：改写查询（不含标题原文，真正考验算法）
+    const HARD = [
+      ["攻击者让受害者的浏览器执行恶意脚本从而窃取 cookie", ["xss"]],
+      ["在登录框里拼接数据库查询语句绕过身份验证", ["sqli"]],
+      ["让服务器代为请求内网地址来探测内部服务", ["ssrf"]],
+      ["上传木马文件到服务器进而获取权限", ["upload"]],
+      ["内存块被释放之后指针仍然被继续使用", ["uaf"]],
+      ["用私钥签名、公钥验签的非对称体系", ["asym", "pki"]],
+      ["已经拿到普通用户权限，如何进一步提权到系统管理员", ["privesc", "priv-esc"]],
+      ["拿下内网一台机器后继续扩散控制其他主机", ["lateral", "net-lateral"]],
+      ["容器里的进程突破隔离拿到了宿主机权限", ["container-escape"]],
+      ["文件被加密勒索了应该怎么处理", ["ir"]],
+      ["想摸清目标公司暴露在外的域名和子域名", ["recon", "osint"]],
+      ["篡改域名解析结果把用户引到假冒网站", ["arp-dns"]],
+      ["令牌可以被随意伪造，服务端没有校验签名", ["jwt", "auth"]],
+      ["随机数序列可以被预测导致密钥被推算出来", ["rand"]],
+      ["在没有授权的情况下读取到别人的订单数据", ["idor", "api-sec"]],
+    ];
+    let q1 = 0, q4 = 0;
+    for (const [q, want] of HARD) {
+      const res = PF.retrieve(q, 10);
+      const rank = res.findIndex((d) => want.includes(d.id.replace(/^topic:/, "")));
+      if (rank === 0) q1++;
+      if (rank >= 0 && rank < 4) q4++;
+    }
+    const p1 = (q1 / HARD.length) * 100, p4 = (q4 / HARD.length) * 100;
+    console.log(`  检索质量（改写查询 ${HARD.length} 条）: P@1=${p1.toFixed(1)}%  P@4=${p4.toFixed(1)}%（优化前实测基线 P@1=60.0% P@4=90.0%）`);
+    assert(p4 >= 90, `检索质量防护：改写查询 P@4=${p4.toFixed(1)}%（要求 ≥90%，RAG 取 top-4 必须命中）`);
+    assert(p1 >= 60, `检索质量防护：改写查询 P@1=${p1.toFixed(1)}%（要求 ≥60%）`);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

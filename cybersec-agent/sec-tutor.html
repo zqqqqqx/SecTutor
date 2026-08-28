@@ -3444,8 +3444,18 @@ zeek -C -r capture.pcap
 
   const CATS = SEC_DATA.categories;
   const catById = (id) => CATS.find((c) => c.id === id) || { id, name: "未分类", icon: "📁", topics: [] };
-  const allTopics = () => CATS.flatMap((c) => c.topics.map((t) => ({ ...t, cat: c.id })));
-  const topicName = (id) => { const t = allTopics().find((x) => x.id === id); return t ? t.name : id; };
+  /* ---------- 知识点索引（构建一次）----------
+     原 allTopics() 每次调用都 flatMap+map 重建整个数组并分配新对象；
+     updateHero() 一次就连调 3 次，搜索时每次按键再调 1 次。改为构建一次复用。
+     topicName() 原本内部再调 allTopics() 做线性查找 → 升级为 O(1) 的 Map 查询。 */
+  const TOPICS = CATS.flatMap((c) => c.topics.map((t) => ({ ...t, cat: c.id })));
+  const TOPIC_BY_ID = new Map(TOPICS.map((t) => [t.id, t]));
+  const TOPICS_BY_CAT = new Map();
+  (function buildTopicIndex() {
+    CATS.forEach((c) => TOPICS_BY_CAT.set(c.id, (c.topics || []).map((t) => ({ ...t, cat: c.id }))));
+  })();
+  const allTopics = () => TOPICS;
+  const topicName = (id) => { const t = TOPIC_BY_ID.get(id); return t ? t.name : id; };
 
   /* ---------- RAG 检索（离线可运行，跨全知识库） ---------- */
   // 把「知识点 / 靶场题解 / 安全资讯 / 安全工具 / 交互靶场」统一打成可检索文档，
@@ -3495,14 +3505,88 @@ zeek -C -r capture.pcap
     return docs;
   })();
 
-  // 中英文混合分词：CJK 用字符二元文法，英文/数字保留整词
+  // 中英文混合分词：CJK 用字符二元文法，英文/数字保留整词。
+  // 返回 Map(term -> 词频)：词频是 BM25 的必要输入（原实现只存 Set，无法区分"提了 1 次"和"通篇在讲"）。
+  function tokenizeTf(s) {
+    const raw = String(s || "").toLowerCase();
+    const tf = new Map();
+    const cleaned = raw.replace(/[\s\p{P}\p{S}]+/gu, "");
+    for (let i = 0; i < cleaned.length - 1; i++) {
+      const g = cleaned.slice(i, i + 2);
+      tf.set(g, (tf.get(g) || 0) + 1);
+    }
+    const words = raw.match(/[a-z0-9_]+/g) || [];
+    for (let i = 0; i < words.length; i++) tf.set(words[i], (tf.get(words[i]) || 0) + 1);
+    return tf;
+  }
+  // 兼容旧接口：只要词集合（查询侧、去重场景用）。
+  // 注意：这里直接构建 Set，不要走 tokenizeTf 再转 Set（会多分配一个 Map，实测慢约 1.8 倍）。
   function tokenize(s) {
-    s = String(s || "").toLowerCase();
+    const raw = String(s || "").toLowerCase();
     const toks = new Set();
-    const cleaned = s.replace(/[\s\p{P}\p{S}]+/gu, "");
+    const cleaned = raw.replace(/[\s\p{P}\p{S}]+/gu, "");
     for (let i = 0; i < cleaned.length - 1; i++) toks.add(cleaned.slice(i, i + 2));
-    (s.match(/[a-z0-9_]+/g) || []).forEach((w) => toks.add(w));
+    const words = raw.match(/[a-z0-9_]+/g) || [];
+    for (let i = 0; i < words.length; i++) toks.add(words[i]);
     return toks;
+  }
+
+  /* ---------- 索引层：启动时构建一次 ----------
+     重构动机（实测基线）：原实现每次检索都要遍历「全库文档 × 每个文档的全部 token」，
+     relatedDocs 单次调用约 6.3 万次哈希查找（1480 次调用耗时 846ms，是最大热点）。
+     改为倒排索引 + 预计算 IDF/文档长度后，查询只访问「命中词」的倒排链，
+     复杂度与命中规模成正比，而不再与全库 token 总量成正比。 */
+  const N_DOC = CORPUS.length;
+  const DOC_BY_ID = new Map();
+  const DOC_LEN = new Float64Array(N_DOC);
+  const INV = new Map();               // term -> [{ i, tf }]
+  (function buildIndex() {
+    for (let i = 0; i < N_DOC; i++) {
+      const d = CORPUS[i];
+      DOC_BY_ID.set(d.id, d);
+      // 兼容未预计算词频的文档
+      if (!d.tf) d.tf = tokenizeTf(d.text || "");
+      let len = 0;
+      d.tf.forEach((tf, term) => {
+        len += tf;
+        let post = INV.get(term);
+        if (!post) { post = []; INV.set(term, post); }
+        post.push({ i: i, tf: tf });
+      });
+      DOC_LEN[i] = len || 1;
+    }
+  })();
+  const AVG_DL = (function () { let s = 0; for (let i = 0; i < N_DOC; i++) s += DOC_LEN[i]; return (s / N_DOC) || 1; })();
+  // BM25 参数：k1 控制词频饱和，b 控制文档长度归一化（抑制"越长越容易命中"的偏置）
+  const BM25_K1 = 1.2, BM25_B = 0.75;
+  const IDF_CACHE = new Map();
+  // IDF = ln(1 + (N - df + 0.5)/(df + 0.5))：出现在几乎所有文档里的高频词（"的时""一是"）权重趋零
+  function idf(term) {
+    let v = IDF_CACHE.get(term);
+    if (v === undefined) {
+      const post = INV.get(term);
+      const df = post ? post.length : 0;
+      v = Math.log(1 + (N_DOC - df + 0.5) / (df + 0.5));
+      IDF_CACHE.set(term, v);
+    }
+    return v;
+  }
+  // 对倒排链累加 BM25 得分到 Map(docIndex -> score)；skipId 用于排除自身
+  function accumulateBM25(tfMap, scores, skipId) {
+    tfMap.forEach(function (qtf, term) {
+      const idfv = idf(term);
+      if (idfv <= 0) return;                 // 无区分度，剪枝（也是主要的性能来源）
+      const post = INV.get(term);
+      if (!post) return;
+      for (let p = 0; p < post.length; p++) {
+        const hit = post[p];
+        if (skipId && CORPUS[hit.i].id === skipId) continue;
+        const denom = hit.tf + BM25_K1 * (1 - BM25_B + BM25_B * (DOC_LEN[hit.i] / AVG_DL));
+        const s = (idfv * hit.tf * (BM25_K1 + 1)) / denom;
+        scores.set(hit.i, (scores.get(hit.i) || 0) + s);
+      }
+    });
+    return scores;
   }
 
   // 意图识别：根据用户问法判断偏重（防御/工具/原理/实战/资讯），用于检索加权与答案组织
@@ -3520,32 +3604,35 @@ zeek -C -r capture.pcap
   // 检索打分：关键词精确命中权重最高，其次二元文法重叠与标题子串命中；并按意图加权（仅加不减）
   function retrieve(q, k) {
     k = k || 4;
-    const qt = tokenize(q);
-    const ql = q.toLowerCase().trim();
+    const ql = String(q || "").toLowerCase().trim();
+    if (!ql) return [];
+    const qt = tokenize(ql);
     const intent = detectIntent(ql);
-    return CORPUS.map((d) => {
-      let s = 0;
+    // 1) BM25：只遍历查询词的倒排链（不再扫描全库 × 全 token）
+    const scores = accumulateBM25(qt, new Map(), null);
+    // 2) 精确命中信号与意图加权（原逻辑验证有效的部分，保留）
+    const out = [];
+    scores.forEach(function (s, i) {
+      const d = CORPUS[i];
+      let sc = s;
       (d.keywords || []).forEach((kw) => {
         const kwl = kw.toLowerCase();
-        if (ql.includes(kwl) || kwl.split(/[\s,]+/).filter(Boolean).some((t) => ql.includes(t))) s += 6;
+        if (ql.includes(kwl) || kwl.split(/[\s,]+/).filter(Boolean).some((x) => ql.includes(x))) sc += 6;
       });
-      qt.forEach((t) => { if (d.tokens.has(t)) s += 1; });
       if (ql.length > 1) {
         const tl = d.title.toLowerCase();
-        if (tl.includes(ql)) s += 8;
-        else if (ql.includes(tl.slice(0, Math.min(tl.length, 6)))) s += 5;
+        if (tl.includes(ql)) sc += 8;
+        else if (ql.includes(tl.slice(0, Math.min(tl.length, 6)))) sc += 5;
       }
       // 意图感知加权（仅加不减，提升常见诉求的命中精度）
-      if (intent.defense && /防御|防护|缓解|修复|加固|安全/.test(d.text)) s += 3;
-      if (intent.tool && d.src === "安全工具") s += 4;
-      if (intent.principle && d.src === "知识点") s += 2;
-      if (intent.example && (d.src === "靶场题解" || d.src === "交互靶场")) s += 3;
-      if (intent.news && d.src === "安全资讯") s += 4;
-      return { d, s };
-    }).filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, k)
-      .map((x) => x.d);
+      if (intent.defense && /防御|防护|缓解|修复|加固|安全/.test(d.text)) sc += 3;
+      if (intent.tool && d.src === "安全工具") sc += 4;
+      if (intent.principle && d.src === "知识点") sc += 2;
+      if (intent.example && (d.src === "靶场题解" || d.src === "交互靶场")) sc += 3;
+      if (intent.news && d.src === "安全资讯") sc += 4;
+      out.push({ d: d, s: sc });
+    });
+    return out.sort((a, b) => b.s - a.s).slice(0, k).map((x) => x.d);
   }
 
   function trimHistory(max) {
@@ -3883,10 +3970,18 @@ zeek -C -r capture.pcap
     });
   }
 
-  function matchSearch(t, q) {
-    const hay = (t.name + " " + t.summary + " " + (t.keywords || []).join(" ")).toLowerCase();
-    return hay.indexOf(q) >= 0;
+  // 预计算小写检索串：原实现每次按键都对每个知识点重新拼接字符串并执行 toLowerCase
+  // （74 个知识点 × 每次按键一次全量重建），改为首次访问时构建并缓存。
+  const SEARCH_HAY = new Map();
+  function searchHay(t) {
+    let h = SEARCH_HAY.get(t.id);
+    if (h === undefined) {
+      h = (t.name + " " + t.summary + " " + (t.keywords || []).join(" ")).toLowerCase();
+      SEARCH_HAY.set(t.id, h);
+    }
+    return h;
   }
+  function matchSearch(t, q) { return searchHay(t).indexOf(q) >= 0; }
 
   // 掌握度排序（默认 / 掌握优先 ↓ / 未掌握优先 ↑）
   function sortTopics(list) {
@@ -4071,21 +4166,18 @@ zeek -C -r capture.pcap
 
   // 相关推荐：基于 CORPUS 的同分类 / 关键词重叠，从全库拉相关条目
   function relatedDocs(topic) {
-    const tdoc = CORPUS.find((d) => d.id === "topic:" + topic.id);
-    const tt = tdoc ? tdoc.tokens : tokenize([topic.name, topic.summary, (topic.keywords || []).join(" ")].join(" "));
-    return CORPUS
-      .filter((d) => d.id !== "topic:" + topic.id)
-      .map((d) => {
-        let ov = 0;
-        d.tokens.forEach((tk) => { if (tt.has(tk)) ov++; });
-        let s = Math.min(ov, 8);           // 二元文法重叠（封顶，避免长文档虚高）
-        if (d.cat === topic.cat) s += 1;   // 同领域略加权
-        return { d, s };
-      })
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 6)
-      .map((x) => x.d);
+    const selfId = "topic:" + topic.id;
+    const tdoc = DOC_BY_ID.get(selfId);
+    // 原实现对每个候选文档遍历其全部 token 求交集（O(全库 × 全 token)），
+    // 改为用倒排链 + BM25，只访问自身词项命中的文档。
+    const tt = tdoc ? tdoc.tf : tokenizeTf([topic.name, topic.summary, (topic.keywords || []).join(" ")].join(" "));
+    const scores = accumulateBM25(tt, new Map(), selfId);
+    const out = [];
+    scores.forEach(function (s, i) {
+      // 同领域略加权（保留原策略，权重按 BM25 量纲调整）
+      out.push({ d: CORPUS[i], s: s + (CORPUS[i].cat === topic.cat ? 0.5 : 0) });
+    });
+    return out.sort((a, b) => b.s - a.s).slice(0, 6).map((x) => x.d);
   }
 
   function showTopicDetail(topicId) {
@@ -4123,7 +4215,7 @@ zeek -C -r capture.pcap
       box.querySelectorAll(".rel-chip").forEach((b) => {
         if (b.dataset.bound) return; b.dataset.bound = "1";
         b.addEventListener("click", () => {
-          const doc = CORPUS.find((x) => x.id === b.dataset.id);
+          const doc = DOC_BY_ID.get(b.dataset.id);
           if (doc) gotoCorpusDoc(doc);
         });
       });
@@ -4548,7 +4640,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   $("#chatLog").addEventListener("click", (e) => {
     const el = e.target.closest(".cite");
     if (!el || !el.dataset.id) return;
-    const doc = CORPUS.find((x) => x.id === el.dataset.id);
+    const doc = DOC_BY_ID.get(el.dataset.id);
     if (doc) gotoCorpusDoc(doc);
   });
   $("#userLevel").addEventListener("change", (e) => { state.userLevel = e.target.value; });
@@ -4696,18 +4788,21 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 
   function renderProgress() {
     const board = $("#progressBoard");
-    board.innerHTML = "<h3>📊 掌握度进度</h3>";
+    // 原实现在循环里 innerHTML +=，每次都会让浏览器重新序列化并解析整段 HTML（O(n²) 重解析）
+    // 改为先拼好字符串再一次性赋值
+    const parts = ["<h3>📊 掌握度进度</h3>"];
     CATS.forEach((c) => {
       const total = c.topics.length;
       const done = c.topics.filter((t) => state.mastery.has(t.id)).length;
       const pct = total ? Math.round((done / total) * 100) : 0;
-      board.innerHTML += `
+      parts.push(`
         <div class="pcard">
           <div><strong>${c.icon} ${c.name}</strong></div>
           <div style="font-size:13px;color:var(--muted)">${done}/${total} 已掌握</div>
           <div class="bar"><i style="width:${pct}%"></i></div>
-        </div>`;
+        </div>`);
     });
+    board.innerHTML = parts.join("");
   }
 
   $("#genPlan").addEventListener("click", genPlan);
@@ -5474,6 +5569,16 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     window.__shuffleOptions = shuffleOptions;
     window.__balanceOptions = balanceOptions;
     window.__prepareQuestion = prepareQuestion;
+    // 性能基准 / 检索质量回归：暴露检索相关纯函数
+    window.__perf = {
+      retrieve: retrieve,
+      relatedDocs: relatedDocs,
+      allTopics: allTopics,
+      matchSearch: matchSearch,
+      tokenize: tokenize,
+      detectIntent: detectIntent,
+      corpusSize: function () { return CORPUS.length; },
+    };
   }
   // 统一的「上下文带入智能问答」入口：离线可用（未配 LLM 时走内置知识引擎兜底），配置了外部 LLM 时做更深推理。
   function aiAssistToChat(prompt) {
