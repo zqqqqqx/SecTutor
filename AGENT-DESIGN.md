@@ -1034,4 +1034,17 @@ agent_enabled / voice_enabled / vision_enabled / multi_agent
 
 **两点说明**：① 真实端口级扫描（如 nmap 类）后端仍未提供，且浏览器 `no-cors` 探测仅反映网络层可达、不读 CORS 响应体；如需「靶场内授权深度扫描」需走路线 B（新增后端 `POST /api/envs/:id/scan`，改 `sectutor-backend` 源码并重新打包，超出本仓库范围）。② 本地领先远端 1 个 commit，沙箱无法 push，需用户本机 `git push origin main`。
 
+## 第 33 节：闭环实跑验证（Phase 1 工具层收尾验证）
+
+**沙箱约束**：无外网到 OpenAI/DeepSeek 通道、无真实 API Key，无法在沙箱打真实 Provider。故采用「模拟 LLM 网关」跑通**真实 `askAgent` 循环 + 真实 `confirmToolCall` 确认流 + 真实 `runScan` 工具**——仅把"模型"替换为可控 mock，闭环逻辑与真实运行完全一致。
+
+**实现桩（零回归）**：`askAgent` 内的网关调用与确认调用改为经可变引用 `_agentGateway` / `_confirmToolCall`（默认指向真实实现）；`window.__agent` 暴露 `_setGateway/_setConfirm/_resetHooks`。
+
+**selftest 端到端闭环（section 34，244/244 全绿，新增 6 条断言）**：
+- T-A 真实确认弹窗连线：直接调 `confirmToolCall` 验证弹窗打开 `#toolConfirmYes` 存在、点击「确认」→ `true`、点击「取消」→ `false`。
+- T-B 接受路径：mock 网关第一轮回 `run_scan` 工具调用 → 自动确认 → 真实 `runScan` 执行（降级知识清单，因无后端）→ 工具结果回传模型 → 第二轮回显「自检完成标记=YES」，证明工具已在循环内执行且结果回传。
+- T-C 拒绝路径：mock 网关同第一轮回工具调用 → 确认返回 `false` → `runScan` 未执行，模型收「用户拒绝执行该操作」→ 第二轮回显「拒绝标记=YES」。
+
+**本机真实运行方法**：在浏览器/Electron 控制台执行 `SecTutor.__agent.setEnabled(true)`（或设置 localStorage `sectutor_agent_enabled=true`），并在设置中填入自有 API Key，即可让真实模型在问答中调用 `run_scan` 等工具，弹确认框后执行/拒绝。
+
 ```

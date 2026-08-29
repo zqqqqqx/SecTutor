@@ -1695,6 +1695,10 @@
   }
 
   // 增强版问答：网关 + 适配上下文注入；离线/失败回退内置知识引擎
+  // 测试/可替换桩：默认指向真实实现；window.__agent._setGateway/_setConfirm 可在自测中替换为 mock，
+  // 以验证「模型调用工具 → 确认流 → 执行/拒绝」完整闭环，而不依赖真实 LLM 与网络。生产路径不受影响。
+  let _agentGateway = agentGatewayComplete;
+  let _confirmToolCall = confirmToolCall;
   async function askAgent(q) {
     if (state.thinking) return;
     const adapt = buildAdaptationContext();
@@ -1712,7 +1716,7 @@
       const bubble = botRow ? botRow.querySelector(".msg.bot") : null;
       let streamed = "";
       const onChunk = (d) => { if (!bubble) return; streamed += d; bubble.innerHTML = escapeHtml(streamed).replace(/\n/g, "<br>"); autoScrollChat($("#chatLog")); };
-      let reply = await agentGatewayComplete(messages, tools, { onChunk });
+      let reply = await _agentGateway(messages, tools, { onChunk });
       if (reply.offline) { state.history.pop(); removeTyping(); addMsg("bot", "⚠️ 已进入离线模式（无可用大模型）："); askBuiltin(q); return; }
       const srcTitleHtml = (ds) => `<p style="margin-top:8px;color:var(--muted);font-size:.85em">${t("src.title")}：` + ds.map((d, i) => `<span class="cite" data-id="${escapeHtml(d.id)}">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
       if (reply.toolCalls && reply.toolCalls.length) {
@@ -1724,13 +1728,13 @@
             const args = safeParse(tc.function.arguments, {});
             const tool = AGENT_TOOLS.find((x) => x.name === tc.function.name);
             if (tool && toolRequiresConfirm(tool.name)) {
-              const ok = await confirmToolCall(tool, args);
+              const ok = await _confirmToolCall(tool, args);
               if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
             }
             const res = await callTool(tc.function.name, args);
             messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) });
           }
-          reply = await agentGatewayComplete(messages, tools);
+          reply = await _agentGateway(messages, tools);
         }
         const ans = reply.content || "（模型返回为空）";
         state.history.push({ role: "assistant", content: ans }); trimHistory();
@@ -1766,6 +1770,9 @@
     confirmToolCall: confirmToolCall,
     callTool: callTool,
     setActiveEnv: (e) => { state.activeEnv = e; },
+    _setGateway: (fn) => { _agentGateway = fn; },
+    _setConfirm: (fn) => { _confirmToolCall = fn; },
+    _resetHooks: () => { _agentGateway = agentGatewayComplete; _confirmToolCall = confirmToolCall; },
   };
 
   async function askLLM(q) {

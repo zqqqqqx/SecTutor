@@ -939,6 +939,75 @@ $("#backLab").click();
     ag2.setActiveEnv(null);
   }
 
+  // ===== 34. 端到端闭环：模型调用 run_scan → 确认流 → 执行/拒绝（mock 网关，免真实 LLM/网络）=====
+  if (ag2 && typeof ag2.ask === "function") {
+    // 确保聊天容器存在（避免 jsdom 缺 #chatLog 时答案无法落盘）
+    if (!doc.getElementById("chatLog")) {
+      const d = doc.createElement("div"); d.id = "chatLog"; doc.body.appendChild(d);
+    }
+    const lastBotText = () => {
+      const els = doc.querySelectorAll("#chatLog .msg.bot");
+      const el = els[els.length - 1];
+      return el ? el.textContent : "";
+    };
+    const resetHooks = () => { if (ag2._resetHooks) ag2._resetHooks(); };
+    const runScanTC = { id: "t1", function: { name: "run_scan", arguments: "{}" } };
+    const toolCallReply = { toolCalls: [runScanTC], message: { role: "assistant", content: null, tool_calls: [runScanTC] }, content: null, offline: false };
+
+    // T-A：真实确认弹窗连线（确认→true，取消→false），证明 UI 确认流而非静默执行
+    if (typeof ag2.confirmToolCall === "function") {
+      const pYes = ag2.confirmToolCall({ name: "run_scan" }, {});
+      assert(!!doc.getElementById("toolConfirmYes"), "confirmToolCall 真正弹出确认框（#toolConfirmYes 存在）");
+      const yesBtn = doc.getElementById("toolConfirmYes");
+      if (yesBtn) yesBtn.click();
+      const yesRes = await pYes;
+      assert(yesRes === true, "点击「确认执行」→ confirmToolCall 解析为 true");
+      const pNo = ag2.confirmToolCall({ name: "run_scan" }, {});
+      const noBtn = doc.getElementById("toolConfirmNo");
+      if (noBtn) noBtn.click();
+      const noRes = await pNo;
+      assert(noRes === false, "点击「取消」→ confirmToolCall 解析为 false");
+    }
+
+    // T-B：完整闭环（接受）——mock 网关第一轮回 run_scan 工具调用，第二轮回显工具结果标记
+    resetHooks();
+    ag2.setActiveEnv({ id: "lab_xss", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    let calls = 0;
+    ag2._setGateway(async (messages, tools, opts) => {
+      calls++;
+      if (calls === 1) return toolCallReply;
+      const lastTool = Array.from(messages).reverse().find((m) => m.role === "tool");
+      const sawReport = !!(lastTool && /脆弱点|env_id|compliance/.test(lastTool.content));
+      return { content: "自检完成标记=" + (sawReport ? "YES" : "NO") + "；报告已生成。", message: { role: "assistant", content: "自检完成标记=" + (sawReport ? "YES" : "NO") + "；报告已生成。" }, toolCalls: [] };
+    });
+    ag2._setConfirm(async () => true); // 自动确认
+    const before = doc.querySelectorAll("#chatLog .msg.bot").length;
+    await ag2.ask("请对我的靶场做一次授权安全自检");
+    const after = doc.querySelectorAll("#chatLog .msg.bot").length;
+    assert(after === before + 1, "完整闭环为本次问答新增一条 bot 回答");
+    const txtB = lastBotText();
+    assert(/自检完成标记=YES/.test(txtB), "闭环接受路径：run_scan 已执行且模型收到自检报告（工具结果回传）");
+    ag2.setActiveEnv(null);
+    resetHooks();
+
+    // T-C：完整闭环（拒绝）——确认返回 false，模型被告知拒绝、run_scan 不执行
+    ag2.setActiveEnv({ id: "lab_xss", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    calls = 0;
+    ag2._setGateway(async (messages, tools, opts) => {
+      calls++;
+      if (calls === 1) return toolCallReply;
+      const lastTool = Array.from(messages).reverse().find((m) => m.role === "tool");
+      const rejected = !!(lastTool && /用户拒绝执行/.test(lastTool.content));
+      return { content: "拒绝标记=" + (rejected ? "YES" : "NO") + "；已改为文字说明。", message: { role: "assistant", content: "拒绝标记=" + (rejected ? "YES" : "NO") + "；已改为文字说明。" }, toolCalls: [] };
+    });
+    ag2._setConfirm(async () => false); // 自动拒绝
+    await ag2.ask("请对我的靶场做一次授权安全自检");
+    const txtC = lastBotText();
+    assert(/拒绝标记=YES/.test(txtC), "闭环拒绝路径：run_scan 未执行，模型被告知用户拒绝");
+    ag2.setActiveEnv(null);
+    resetHooks();
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
