@@ -34,6 +34,8 @@
     activeEnv: null,
     envTimer: null,
     envPoll: null,
+    // —— Phase 2 适配引擎独立画像（与 profile 诊断百分比 / userLevel 测验档位解耦）——
+    adapt: safeParse(localStorage.getItem("sectutor_adapt"), null), // {levelSelf,scenario,scenarioSource,domains,modalities,quizAccuracy,studyMin,domainDelta,consecHigh,consecLow,levelByDomain}
   };
 
   // ===== 密钥保险库（Web Crypto AES-GCM，file:// 与 Electron 双端通用）=====
@@ -164,6 +166,26 @@
   function saveMasteryDates() { try { localStorage.setItem("sectutor_mastery_dates", JSON.stringify(state.masteryDates)); } catch (e) {} }
   function saveActivity() { try { localStorage.setItem("sectutor_activity", JSON.stringify(state.activity.slice(-600))); } catch (e) {} }
   function saveApis() { try { localStorage.setItem("sectutor_apis", JSON.stringify(state.apis)); } catch (e) {} }
+  // —— Phase 2 适配画像持久化（独立于 profile/userLevel）——
+  function defaultAdapt() {
+    return {
+      levelSelf: null,        // 自报水平 L0-L3；null=未自报（用 userLevel 推断）
+      scenario: "general",    // general|cert|ctf|job|popular
+      scenarioSource: "default", // default|explicit|inferred
+      domains: [],            // 偏好领域（空=全部）
+      modalities: ["text"],   // text|voice|vision
+      quizAccuracy: null,     // 滚动测验正确率 0-1；null=未知
+      studyMin: 0,            // 累计学习分钟
+      domainDelta: {},        // 每域动态升降级（连续高/低正确率触发 ±1）
+      consecHigh: {},         // 每域连续 >=0.85 次数
+      consecLow: {},          // 每域连续 <0.5 次数
+      inferredScenario: null, // 最近一次对话推断场景
+      levelByDomain: {},      // 计算缓存 {web:"L1",...}
+    };
+  }
+  function getAdapt() { return (state.adapt && typeof state.adapt === "object") ? state.adapt : (state.adapt = defaultAdapt()); }
+  function saveAdapt() { try { localStorage.setItem("sectutor_adapt", JSON.stringify(state.adapt)); } catch (e) {} }
+  function resetAdapt() { state.adapt = defaultAdapt(); saveAdapt(); }
   // 活动日志：记录学习事件，供周报/遗忘曲线使用
   function logEvent(type, meta) {
     state.activity.push({ t: Date.now(), type, meta: meta || null });
@@ -1542,8 +1564,20 @@
       inp.placeholder = busy ? "正在思考…" : "问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？";
     }
   }
+  // 领域加权检索（spec 8：检索的领域/水平加权包装层）：多取候选，偏好领域命中加分后重排
+  function retrieveWeighted(q, k, preferDomains) {
+    k = k || 4;
+    const base = retrieve(q, k + 4);
+    if (!base.length || !preferDomains || !preferDomains.length) return base.slice(0, k);
+    const pref = new Set(preferDomains);
+    const boosted = base.map((d, i) => ({ d, s: (base.length - i) + (d.cat && pref.has(d.cat) ? base.length * 2 : 0) }));
+    boosted.sort((a, b) => b.s - a.s);
+    return boosted.map((x) => x.d).slice(0, k);
+  }
+
   function buildContext(q) {
-    const docs = retrieve(q, 6);
+    // P2 优化：检索按学习者偏好领域加权（仅加不减，与意图加权叠加）
+    const docs = retrieveWeighted(q, 6, (getAdapt().domains || []));
     if (!docs.length) return { text: "", docs: [] };
     const text = docs.map((d, i) =>
       `[${i + 1}] 【${d.src}】${d.title}\n${(d.render().body || "").slice(0, 700)}`
@@ -1619,9 +1653,21 @@
   /* ===================== Agent 增强（Phase 0）：LLM 网关 + 适配上下文 =====================
    * 架构事实：本应用 LLM 由前端直连 Provider（state.llm.base + Bearer key），没有中间后端。
    * 因此网关放在前端，复用既有 chatCompletions / buildContext / callTool / askBuiltin。
-   * 默认 AGENT_ENABLED=false，askLLM 行为完全不变；置 true 后走 askAgent（网关+适配）。
+   * 默认 AGENT_ENABLED=true（无脑：填 Key 即走 Agent；无 Key 自动降级内置引擎）。
+   * 用户可在「API 接入中心」页面内关闭。状态持久于 localStorage sectutor_agent_enabled。
    */
-  let AGENT_ENABLED = false;
+  let AGENT_ENABLED = readAgentEnabled();
+  function readAgentEnabled() {
+    try {
+      const v = localStorage.getItem("sectutor_agent_enabled");
+      return v == null ? true : v === "1";   // 默认开启
+    } catch (e) { return true; }
+  }
+  function setAgentEnabled(v) {
+    AGENT_ENABLED = !!v;
+    try { localStorage.setItem("sectutor_agent_enabled", AGENT_ENABLED ? "1" : "0"); } catch (e) {}
+    if (window.__agent) window.__agent.enabled = AGENT_ENABLED;
+  }
   const PROVIDERS = {
     openai:    { kind: "openai", label: "OpenAI 兼容" },
     deepseek:  { kind: "openai", label: "DeepSeek(兼容)" },
@@ -1635,24 +1681,185 @@
     return "L0";
   }
 
-  // 适配引擎种子：把四维度（水平/场景/领域/模态/设备）编译成 AdaptationContext
-  function buildAdaptationContext() {
-    const profile = state.profile || {};
-    const masteryCount = state.mastery ? state.mastery.size : 0;
-    const domains = (profile.domains && profile.domains.length) ? profile.domains
-                  : (profile.pentest ? ["pentest"] : []);
-    const online = (typeof navigator !== "undefined" && navigator.onLine === false) ? false : true;
-    const offlineMode = !state.llm || !state.llm.key;
-    return {
-      user_level: state.userLevel || inferLevel(masteryCount),
-      scenario: state.scenario || "general",
-      modalities: ["text"],
-      domains: domains,
-      device: { online: online, low_resource: false, offline_mode: offlineMode },
-      prompt_hints: [],
-      tool_policy: { prefer_domains: domains, allow_high_risk: true },
-    };
+  /* ===================== Phase 2 适配引擎（AdapterRegistry + compose + 冲突栈）=====================
+   * 与 profile（诊断百分比）/ userLevel（测验难度档）完全解耦：新建独立 state.adapt 画像。
+   * 规格：AGENT-DESIGN.md 6.0/6.5 + 18.1–18.5。
+   * 冲突栈：base < level < scenario < domain < modality < device（离线强制覆写）。
+   */
+
+  // —— 18.1 水平分级 ——
+  const LEVELS = ["L0", "L1", "L2", "L3"];
+  const LEVEL_LABEL = { L0: "入门", L1: "进阶", L2: "资深", L3: "专家" };
+  function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+  function scoreToLevel(s) {
+    if (s < 0.35) return "L0";
+    if (s < 0.6) return "L1";
+    if (s < 0.8) return "L2";
+    return "L3";
   }
+  function levelDelta(base, d) {
+    const i = LEVELS.indexOf(base);
+    return LEVELS[Math.max(0, Math.min(LEVELS.length - 1, i + d))];
+  }
+  // 全局加权得分：0.5*测验正确率 + 0.2*掌握均值 + 0.15*时长权重 + 0.15*自报
+  function adaptGlobalScore() {
+    const a = getAdapt();
+    const qa = (a.quizAccuracy == null) ? 0.3 : clamp01(a.quizAccuracy);
+    let ma;
+    if (state.profile) {
+      const vals = DOMAINS.map((d) => (state.profile[d.id] || 0) / 100);
+      ma = vals.reduce((s, v) => s + v, 0) / vals.length;
+    } else {
+      ma = clamp01((state.mastery ? state.mastery.size : 0) / 25);
+    }
+    const tw = clamp01((a.studyMin || 0) / 600); // 600 分钟（10h）记满
+    const srMap = { L0: 0, L1: 0.33, L2: 0.66, L3: 1 };
+    let sr;
+    if (a.levelSelf && srMap[a.levelSelf] != null) sr = srMap[a.levelSelf];
+    else {
+      const um = { "入门": 0, "初级": 0.33, "中级": 0.66, "高级": 1 };
+      sr = um[state.userLevel] != null ? um[state.userLevel] : 0.3;
+    }
+    return clamp01(0.5 * qa + 0.2 * ma + 0.15 * tw + 0.15 * sr);
+  }
+
+  // 各维度提示模板（6.1 / 6.2 / 6.4）
+  const LEVEL_TEMPLATES = {
+    L0: "用类比和白话讲解，少用公式；术语首次出现必须给通俗解释；从选择题/判断题起步；多解释『为什么』；靶场给分步提示。",
+    L1: "用概念+步骤讲解，常见术语可直接使用，必要时一句话解释；单选+简答起步；按需给『为什么』；靶场给关键提示。",
+    L2: "讲原理与边界条件，术语直接使用；出综合题；『为什么』点到为止；靶场只给目标。",
+    L3: "直接讲机制与绕过技巧，可用行话与缩写；出挑战/非常规题；自取深度；靶场只给题目。",
+  };
+  const SCENARIO_TEMPLATES = {
+    general: "通用安全学习，覆盖面广、循序渐进。",
+    cert: "面向考证（软考/OSCP 等）：覆盖大纲、概念准确，考核以选择题+模拟考为主，按考纲模块排期。",
+    ctf: "面向 CTF：侧重题型套路与非常规思路，少背书多练，分类刷题+赛前冲刺。",
+    job: "面向就业：强调实战链路与岗位 JD 映射，综合靶场+面试问答，项目式路径。",
+    popular: "面向通识科普：防骗与日常安全常识，情景判断，轻量短触点。",
+  };
+  const DOMAIN_TERMS = {
+    web: "SQLi/XSS/CSRF/SSRF/反序列化",
+    binary: "栈溢出/堆溢出/ROP/格式化字符串/沙箱逃逸",
+    crypto: "对称/非对称/哈希/分组模式/侧信道",
+    pentest: "信息收集/提权/横向移动/后渗透",
+    network: "ARP/DNS/VLAN/隧道/内网协议",
+    cloud: "容器逃逸/IAM/元数据/镜像安全",
+    blue: "SIEM/EDR/日志分析/威胁狩猎/应急响应",
+  };
+
+  // —— 18.2 场景识别（关键词推断）——
+  function inferScenario(text) {
+    if (!text) return null;
+    const t = String(text).toLowerCase();
+    const rules = [
+      { s: "ctf", kw: ["ctf", "flag", "打比赛", "夺旗", "赛题", "pwn", "reverse 题", "解题"] },
+      { s: "cert", kw: ["考证", "软考", "oscp", "cisp", "认证", "考试", "模拟考", "过考"] },
+      { s: "job", kw: ["面试", "找工作", "就业", "投简历", "岗位", "jd", "跳槽", "实习"] },
+      { s: "popular", kw: ["防诈骗", "防骗", "日常安全", "老人", "家人", "科普", "常识"] },
+    ];
+    for (const r of rules) { if (r.kw.some((k) => t.indexOf(k) >= 0)) return r.s; }
+    return null;
+  }
+
+  // —— 18.1 动态升降级 + 信号采集（测验/复习/诊断后调用，Task #178 挂钩点）——
+  function recordQuizResult(domain, accuracy, nQuestions) {
+    const a = getAdapt();
+    const qa = (accuracy == null) ? null : clamp01(accuracy);
+    if (qa != null) a.quizAccuracy = (a.quizAccuracy == null) ? qa : (a.quizAccuracy * 0.7 + qa * 0.3); // 指数滑动平均
+    a.studyMin = (a.studyMin || 0) + Math.max(1, Math.round((nQuestions || 10) * 0.5)); // 每题约 0.5 分钟
+    if (domain) {
+      a.consecHigh = a.consecHigh || {}; a.consecLow = a.consecLow || {}; a.domainDelta = a.domainDelta || {};
+      const dh = a.consecHigh, dl = a.consecLow, dd = a.domainDelta;
+      if (qa != null) {
+        if (qa >= 0.85) { dh[domain] = (dh[domain] || 0) + 1; dl[domain] = 0;
+          if (dh[domain] >= 3 && (dd[domain] || 0) < 1) { dd[domain] = (dd[domain] || 0) + 1; dh[domain] = 0; } }
+        else if (qa < 0.5) { dl[domain] = (dl[domain] || 0) + 1; dh[domain] = 0;
+          if (dl[domain] >= 2 && (dd[domain] || 0) > -1) { dd[domain] = (dd[domain] || 0) - 1; dl[domain] = 0; } }
+        else { dh[domain] = 0; dl[domain] = 0; }
+      }
+    }
+    saveAdapt();
+  }
+
+  // —— AdapterRegistry：各层产出对 AdaptationContext 的贡献，按数组顺序叠加（后者覆盖前者）——
+  const ADAPTER_REGISTRY = [
+    // 0) base 默认层
+    function (ctx) {
+      ctx.user_level = "L1"; ctx.scenario = "general"; ctx.modalities = ["text"]; ctx.domains = [];
+      ctx.device = { online: true, low_resource: false, offline_mode: false };
+      ctx.prompt_hints = []; ctx.tool_policy = { prefer_domains: [], allow_high_risk: true };
+      return ctx;
+    },
+    // 1) 水平层（18.1）：重写 user_level + 注入 LEVEL 提示 + 计算 per-domain 水平（含动态升降级）
+    function (ctx) {
+      const a = getAdapt();
+      const lvl = scoreToLevel(adaptGlobalScore());
+      ctx.user_level = lvl;
+      ctx.prompt_hints.push("[LEVEL:" + lvl + "] " + (LEVEL_TEMPLATES[lvl] || ""));
+      const lbd = {};
+      DOMAINS.forEach((d) => {
+        const pctv = (state.profile && state.profile[d.id] != null) ? state.profile[d.id] : null;
+        const baseL = pctv != null ? scoreToLevel(pctv / 100) : lvl;
+        const delta = (a.domainDelta && a.domainDelta[d.id]) || 0;
+        lbd[d.id] = delta ? levelDelta(baseL, delta) : baseL;
+      });
+      // P2 优化：仅当分域水平变化时才写盘，避免每次 compose 都触发 localStorage 写
+      if (JSON.stringify(a.levelByDomain || {}) !== JSON.stringify(lbd)) { a.levelByDomain = lbd; saveAdapt(); }
+      ctx.level_by_domain = lbd;
+      return ctx;
+    },
+    // 2) 场景层（18.2/18.3）：显式选择优先；未显式选择时由对话推断驱动
+    function (ctx) {
+      const a = getAdapt();
+      const sc = (a.scenarioSource === "explicit") ? (a.scenario || "general")
+               : (a.inferredScenario || a.scenario || "general");
+      ctx.scenario = sc;
+      ctx.prompt_hints.push("[SCENARIO:" + sc + "] " + (SCENARIO_TEMPLATES[sc] || ""));
+      return ctx;
+    },
+    // 3) 领域层（18.3/18.4）
+    function (ctx) {
+      const doms = getAdapt().domains || [];
+      ctx.domains = doms;
+      ctx.tool_policy.prefer_domains = doms.slice();
+      if (doms.length) {
+        const terms = doms.map((d) => (DOMAIN_TERMS[d] ? d + "=" + DOMAIN_TERMS[d] : d)).join("；");
+        ctx.prompt_hints.push("[DOMAIN:" + doms.join("/") + "] 检索与计划优先这些领域；术语集=" + terms);
+      }
+      return ctx;
+    },
+    // 4) 模态层（18.3）
+    function (ctx) {
+      const mods = getAdapt().modalities || ["text"];
+      ctx.modalities = mods;
+      if (mods.indexOf("voice") >= 0) ctx.prompt_hints.push("[MODALITY:voice] 回答用短句、口语化、适合朗读。");
+      if (mods.indexOf("vision") >= 0) ctx.prompt_hints.push("[MODALITY:vision] 先描述图像再给步骤。");
+      return ctx;
+    },
+    // 5) 设备层（18.4 最高优先 + 离线强制覆写）
+    function (ctx) {
+      const online = (typeof navigator !== "undefined" && navigator.onLine === false) ? false : true;
+      const offlineMode = !state.llm || !state.llm.key;
+      // P2 优化：低配设备感知（核数少时降载：回答更精炼、减少冗长列表）
+      const lowRes = (typeof navigator !== "undefined" && navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4);
+      ctx.device = { online: online, low_resource: !!lowRes, offline_mode: offlineMode };
+      if (lowRes) ctx.prompt_hints.push("[DEVICE:low_resource] 设备性能有限：回答更精炼，避免超长列表与重复解释。");
+      if (!online || offlineMode) {
+        ctx.cloud_disabled = true; ctx.fallback = "local";
+        ctx.prompt_hints.push("[DEVICE:offline] 当前离线/无密钥：关闭云端讲解，仅用本地 BM25 摘要与模板作答。");
+      }
+      return ctx;
+    },
+  ];
+
+  // —— compose（6.5 组合合成 + 18.4 冲突栈）——
+  function composeAdaptation() {
+    const ctx = {};
+    ADAPTER_REGISTRY.forEach((fn) => fn(ctx));
+    return ctx;
+  }
+  // 兼容别名（window.__agent.adapt 仍指向此函数）
+  function buildAdaptationContext() { return composeAdaptation(); }
 
   // LLM 网关：多 Provider 抽象 + 离线降级
   async function agentGatewayComplete(messages, tools, opts) {
@@ -1701,13 +1908,18 @@
   let _confirmToolCall = confirmToolCall;
   async function askAgent(q) {
     if (state.thinking) return;
+    // 18.2/18.5 动态适配：从本次提问推断场景（未显式选择时生效），再合成上下文
+    const a0 = getAdapt();
+    const inferred = inferScenario(q);
+    if (inferred && a0.scenarioSource !== "explicit") { a0.inferredScenario = inferred; saveAdapt(); }
     const adapt = buildAdaptationContext();
     if (!state.llm || !state.llm.key) { askBuiltin(q); return; }
     setChatBusy(true); showTyping();
     state.history.push({ role: "user", content: q }); trimHistory(); logEvent("chat");
     const { text: ctx, docs } = buildContext(q);
     const sysBase = "你是 SecTutor 安全实训辅导 Agent（辅助建议型）。严格遵守：仅用于合法授权安全学习与防御研究；拒绝未授权攻击步骤与武器化代码；侧重原理与防御；回答结构清晰。";
-    const adaptNote = "\n【用户适配上下文】水平:" + adapt.user_level + "; 场景:" + adapt.scenario + "; 领域:" + (adapt.domains.join("/") || "全部") + "; 模态:" + adapt.modalities.join("/") + "; 离线:" + adapt.device.offline_mode + "\n请据此调整讲解深度与术语密度。";
+    const hints = (adapt.prompt_hints || []).join("\n");
+    const adaptNote = "\n【用户适配上下文】\n水平:" + adapt.user_level + "｜场景:" + adapt.scenario + "｜领域:" + (adapt.domains.join("/") || "全部") + "｜模态:" + adapt.modalities.join("/") + "｜离线:" + adapt.device.offline_mode + (adapt.cloud_disabled ? "（云端讲解已禁用）" : "") + "\n" + hints + "\n请据此调整讲解深度、术语密度与考核方式。";
     const sys = sysBase + adaptNote + "\n以下是内置知识库检索资料（请用自己的话讲解并标注引用 [n]）：\n--- 资料开始 ---\n" + (ctx || "（无直接相关条目，基于通用网络安全常识作答，保持防御视角）") + "\n--- 资料结束 ---";
     const tools = toolSchemas();
     const messages = [{ role: "system", content: sys }, ...state.history.map((m) => ({ role: m.role, content: m.content }))];
@@ -1722,18 +1934,34 @@
       if (reply.toolCalls && reply.toolCalls.length) {
         if (bubble) bubble.innerHTML = ""; streamed = "";
         let rounds = 0;
+        const seenCalls = new Set();            // 19.3 防循环：相同 (tool,args) 只执行一次
         while (reply.toolCalls && reply.toolCalls.length && rounds < 4) {
           rounds++; messages.push(reply.message);
+          let executed = 0;
           for (const tc of reply.toolCalls) {
-            const args = safeParse(tc.function.arguments, {});
+            const rawArgs = String(tc.function.arguments || "");
+            const sig = tc.function.name + "|" + rawArgs;
+            if (seenCalls.has(sig)) {
+              messages.push({ role: "tool", tool_call_id: tc.id, content: "（重复调用已拦截：该工具与参数刚执行过，请基于已有结果作答，不要重复调用。）" });
+              continue;
+            }
+            seenCalls.add(sig);
+            const args = safeParse(rawArgs, {});
             const tool = AGENT_TOOLS.find((x) => x.name === tc.function.name);
             if (tool && toolRequiresConfirm(tool.name)) {
               const ok = await _confirmToolCall(tool, args);
               if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
             }
             const res = await callTool(tc.function.name, args);
+            executed++;
             messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) });
           }
+          if (!executed) break;                 // 本轮全是重复/拒绝调用：不再空转网关
+          reply = await _agentGateway(messages, tools);
+        }
+        if (reply.toolCalls && reply.toolCalls.length) {
+          // 轮次上限：强制收束为文字回答（19.3 max_steps 语义）
+          messages.push({ role: "system", content: "工具调用轮次已达上限，请立即基于以上工具结果用文字给出最终回答，不要再调用工具。" });
           reply = await _agentGateway(messages, tools);
         }
         const ans = reply.content || "（模型返回为空）";
@@ -1755,9 +1983,21 @@
 
   window.__agent = {
     enabled: AGENT_ENABLED,
-    setEnabled: (v) => { AGENT_ENABLED = !!v; window.__agent.enabled = AGENT_ENABLED; },
+    setEnabled: (v) => { setAgentEnabled(v); },
     gateway: { complete: agentGatewayComplete },
     adapt: buildAdaptationContext,
+    adaptEngine: {
+      compose: composeAdaptation,
+      getAdapt: getAdapt,
+      saveAdapt: saveAdapt,
+      resetAdapt: resetAdapt,
+      scoreToLevel: scoreToLevel,
+      globalScore: adaptGlobalScore,
+      inferScenario: inferScenario,
+      recordQuizResult: recordQuizResult,
+      LEVELS: LEVELS,
+      SCENARIO_TEMPLATES: SCENARIO_TEMPLATES,
+    },
     ask: (q) => askAgent(q),
     km: KM,
     vault: KeyVault,
@@ -1765,6 +2005,8 @@
     vectorActive: vectorActive,
     features: FEATURE_FLAGS,
     tools: listTools,
+    // 惰性取值：TOOL_RESULT_LIMIT 为后置 const，直接求值会触发 TDZ
+    get toolUtil() { return { truncateToolResult: truncateToolResult, RESULT_LIMIT: TOOL_RESULT_LIMIT, retrieveWeighted: retrieveWeighted }; },
     requiresConfirm: toolRequiresConfirm,
     riskOf: toolRisk,
     confirmToolCall: confirmToolCall,
@@ -3110,6 +3352,11 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const total = st.items.length;
     const main = $("#quizMain");
     const pct = total ? Math.round((st.score / total) * 100) : 0;
+    // Phase 2 适配信号：自测正确率喂给适配引擎（单域测验计入分域升降级）
+    const qc = $("#quizCat");
+    const qcat = qc ? qc.value : "all";
+    const qDomain = (qcat && qcat !== "all" && DOMAINS.some((d) => d.id === qcat)) ? qcat : null;
+    recordQuizResult(qDomain, total ? st.score / total : null, total);
     main.innerHTML = `
       <div class="quiz-result">
         <h3>🎉 自测完成</h3>
@@ -3420,6 +3667,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       takenAt: Date.now(),
     };
     state.profile = prof; saveProfile(); logEvent("diag", prof); diag = null;
+    recordQuizResult(null, null, 12); // Phase 2：诊断约 12 题，计入累计学习时长（水平由 profile 自动纳入评分）
     const da = $("#diagArea"); if (da) da.innerHTML = "";   // 清掉诊断问卷，避免遗留可点击的孤立按钮
     renderAgentCenter();
   }
@@ -3450,6 +3698,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       if (idx >= items.length) {
         ids.forEach((id) => { if (state.masteryDates[id]) state.masteryDates[id].r = (state.masteryDates[id].r || 0) + 1; });
         saveMasteryDates(); logEvent("review", ids.length);
+        // Phase 2 适配信号：复习正确率按知识点所属领域计入分域升降级
+        const revDomain = (() => { const t = allTopics().find((x) => x.id === ids[0]); return t ? t.cat : null; })();
+        recordQuizResult(revDomain, items.length ? score / items.length : null, items.length);
         openModal("🔔 复习完成", `<p>本次复习 ${items.length} 题，答对 <b>${score}</b> 题。</p><p style="color:var(--muted)">相关知识点已推进到下一轮复习周期。</p>`);
         renderReviewCard();
         return;
@@ -3763,7 +4014,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     // —— 以下为「工程化 Agent 基座」专属工具：让外接 LLM 能真正「行动」而非只聊天 ——
     { name: "search_knowledge", description: "在 SecTutor 内置知识库（知识点/靶场题解/安全资讯/安全工具/交互靶场）中检索相关资料，返回最相关条目的摘要。当用户想查某个具体知识点、CVE、工具用法，或需要补充资料时调用。", parameters: { type: "object", properties: { query: { type: "string", description: "检索关键词或问题" }, top_k: { type: "integer", description: "返回条数，默认 5，最多 8" } }, required: ["query"] }, run: (a) => {
       const k = Math.max(1, Math.min(8, parseInt(a.top_k, 10) || 5));
-      const docs = retrieve(a.query || "", k);
+      const docs = retrieveWeighted(a.query || "", k, (getAdapt().domains || [])); // P2：按学习者偏好领域加权
       if (!docs.length) return "未检索到相关资料。";
       return docs.map((d, i) => `[${i + 1}] 【${d.src}】${d.title}\n${(d.text || "").slice(0, 500)}`).join("\n\n---\n\n");
     } },
@@ -3825,7 +4076,6 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         "<p class=\"hint\">" + (risk === "high" ? "该操作会启动实验环境或产生外部副作用。" : "该操作将在本地执行。") + "确认后才真正执行；取消则告知 Agent 你拒绝了该操作。</p>" +
         "<div class=\"modal-actions\"><button class=\"btn small\" id=\"toolConfirmYes\">确认执行</button><button class=\"btn small ghost\" id=\"toolConfirmNo\">取消</button></div>";
       openModal("⚠️ 确认工具执行", body);
-      const gen = modalGen;                 // openModal 已 ++，记录当前弹窗代际
       const ov = $("#modalOverlay");
       let settled = false;
       const done = (v) => { if (settled) return; settled = true; closeModal(); resolve(v); };
@@ -3836,8 +4086,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         const closeBtn = $("#modalClose"); if (closeBtn) closeBtn.onclick = () => done(false);
         ov.onclick = (e) => { if (e.target === ov) done(false); };
       }
-      // 极端情况：被新弹窗抢占（modalGen 变化）或 30s 超时，本次确认作废，避免误执行
-      setTimeout(() => { if (gen !== modalGen && !settled) done(false); }, 30000);
+      // 极端情况：被新弹窗抢占或 30s 内未响应，本次确认作废，避免危险动作被搁置后误执行
+      setTimeout(() => { if (!settled) done(false); }, 30000);
     });
   }
   // —— 授权靶场自检（run_scan 实现，路线 A：仅限本人申请的临时靶场）——
@@ -3889,12 +4139,23 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       })
       .catch((e) => JSON.stringify({ ok: false, error: (e && e.message) || "网络错误", hint: "自检未向外部目标发包。", compliance: SCAN_COMPLIANCE }, null, 2));
   }
+  // P1 优化：工具结果截断（防止超大结果撑爆上下文/浪费 token）
+  const TOOL_RESULT_LIMIT = 4000;
+  function truncateToolResult(s) {
+    const str = (s == null ? "" : String(s));
+    if (str.length <= TOOL_RESULT_LIMIT) return str;
+    return str.slice(0, TOOL_RESULT_LIMIT) + "\n…（结果过长已截断，如需完整内容请缩小检索范围或分步查询）";
+  }
   async function callTool(name, args) {
     const t = AGENT_TOOLS.find((x) => x.name === name);
     if (!t) return "未知工具：" + name;
-    try { const r = await t.run(args || {}); return (r == null ? "" : String(r)); } catch (e) { return "工具执行错误：" + e.message; }
+    try { const r = await t.run(args || {}); return truncateToolResult(r == null ? "" : r); } catch (e) { return "工具执行错误：" + e.message; }
   }
-  function toolSchemas() { return AGENT_TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })); }
+  let _toolSchemas = null;
+  function toolSchemas() {
+    if (!_toolSchemas) _toolSchemas = AGENT_TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    return _toolSchemas;
+  }
 
   function renderToolbox() {
     const box = $("#toolbox"); if (!box) return;
@@ -3965,6 +4226,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <button class="chip active" data-atab="llm">🤖 大模型 LLM</button>
         <button class="chip" data-atab="intel">📰 威胁情报（预留）</button>
         <button class="chip" data-atab="mcp">🧩 MCP 插件（预留）</button>
+        <button class="chip" data-atab="learner">🎯 学习者画像</button>
         <button class="chip" data-atab="privacy">🔒 隐私说明</button>
       </div>
       <div class="api-pane" data-pane="llm">
@@ -3989,6 +4251,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
           <label class="field inline"><input type="checkbox" id="featVoice" ${FEATURE_FLAGS.voiceInput ? "checked" : ""} /> 语音输入（需麦克风，可能联网 ASR）</label>
           <label class="field inline"><input type="checkbox" id="featVision" ${FEATURE_FLAGS.visionInput ? "checked" : ""} /> 视觉识图（截图/报错识图，可能联网 VLM）</label>
           <p class="hint">上述能力将在后续版本接入；当前仅记录开关状态，默认关闭以保隐私与离线可用。</p>
+        </div>
+        <hr class="api-sep" />
+        <div class="agent-section">
+          <div class="kv-status">AI Agent（模型调用工具）</div>
+          <label class="field inline"><input type="checkbox" id="agentEnable" ${AGENT_ENABLED ? "checked" : ""} /> 启用 Agent：允许模型在问答中调用 run_scan / 启动靶场等工具</label>
+          <p class="hint">开启后，模型提出工具调用时应用会弹窗让你<strong>确认执行或拒绝</strong>（高风险操作必确认）。关闭则 AI 仅作纯问答、不调用任何工具。默认开启，仅本机生效。</p>
         </div>
       </div>
       <div class="api-pane hidden" data-pane="intel">
@@ -4018,7 +4286,59 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
           <li>仅当你主动在「大模型 LLM」填入 API 时，问题文本才会发往你指定的外部接口；密钥仅存于本机浏览器。</li>
           <li>威胁情报 / MCP 等外部集成默认关闭，需你自行配置且数据走向由你掌控。</li>
         </ul>
-      </div>`;
+      </div>
+      <div class="api-pane hidden" data-pane="learner" id="learnerPane">${learnerPaneHtml()}</div>`;
+
+    // —— 🎯 学习者画像面板（Phase 2 适配引擎采集 UI）——
+    function learnerPaneHtml() {
+      const a = getAdapt();
+      const gl = scoreToLevel(adaptGlobalScore());
+      const domainChecks = DOMAINS.map((d) => {
+        const on = (a.domains || []).indexOf(d.id) >= 0;
+        return `<label class="field inline"><input type="checkbox" class="learner-domain" value="${d.id}" ${on ? "checked" : ""}/> ${d.icon} ${d.name}</label>`;
+      }).join("");
+      const lbd = a.levelByDomain || {};
+      const lbdHtml = DOMAINS.map((d) => `${d.icon}${d.name}: <b>${lbd[d.id] || gl}</b>`).join("　");
+      const inferred = a.inferredScenario;
+      const showInfer = inferred && a.scenarioSource !== "explicit" && inferred !== a.scenario;
+      return `
+        <p class="hint">适配引擎据此为 AI 问答调整讲解深度、术语密度与考核方式（与能力诊断分开设，互不影响）。</p>
+        <label class="field"><span>自报水平</span><select id="learnerLevel">
+          <option value="">（未自报，按测验/掌握自动评估）</option>
+          ${LEVELS.map((l) => `<option value="${l}" ${a.levelSelf === l ? "selected" : ""}>${l} · ${LEVEL_LABEL[l]}</option>`).join("")}
+        </select></label>
+        <label class="field"><span>学习场景</span><select id="learnerScenario">
+          ${Object.keys(SCENARIO_TEMPLATES).map((s) => `<option value="${s}" ${a.scenario === s && a.scenarioSource === "explicit" ? "selected" : ""}>${s === "general" ? "通用" : s} · ${SCENARIO_TEMPLATES[s].slice(0, 10)}</option>`).join("")}
+        </select></label>
+        ${showInfer ? `<p class="hint" id="learnerInfer">🤖 从你的提问推断偏向「${SCENARIO_TEMPLATES[inferred].slice(0, 8)}」场景。<button class="btn tiny" id="learnerApplyInfer">应用该场景</button></p>` : ""}
+        <div class="field"><span>偏好领域（空=全部）</span><div class="learner-domains">${domainChecks}</div></div>
+        <div class="field"><span>输入模态</span>
+          <label class="field inline"><input type="checkbox" id="learnerVoice" ${((a.modalities || []).indexOf("voice") >= 0) ? "checked" : ""}/> 语音（口语化短句）</label>
+          <label class="field inline"><input type="checkbox" id="learnerVision" ${((a.modalities || []).indexOf("vision") >= 0) ? "checked" : ""}/> 视觉识图</label>
+        </div>
+        <hr class="api-sep" />
+        <div class="learner-readout">
+          <div class="kv-status">当前自动评估：综合水平 <b>${gl} · ${LEVEL_LABEL[gl]}</b></div>
+          <p class="hint">测验正确率：${a.quizAccuracy == null ? "未知" : Math.round(a.quizAccuracy * 100) + "%"}　累计学习：${Math.round(a.studyMin)} 分钟</p>
+          <p class="hint">分域水平：${lbdHtml}</p>
+        </div>`;
+    }
+    function refreshLearner() { const p = $("#learnerPane"); if (p) { p.innerHTML = learnerPaneHtml(); bindLearnerPane(); } }
+    function bindLearnerPane() {
+      const ll = $("#learnerLevel"); if (ll) ll.addEventListener("change", () => { const a = getAdapt(); a.levelSelf = ll.value || null; saveAdapt(); refreshLearner(); });
+      const ls = $("#learnerScenario"); if (ls) ls.addEventListener("change", () => { const a = getAdapt(); a.scenario = ls.value; a.scenarioSource = "explicit"; saveAdapt(); refreshLearner(); });
+      $$("#learnerPane .learner-domain").forEach((cb) => cb.addEventListener("change", () => {
+        const a = getAdapt(); const set = new Set(a.domains || []);
+        if (cb.checked) set.add(cb.value); else set.delete(cb.value);
+        a.domains = Array.from(set); saveAdapt();
+      }));
+      const lvoc = $("#learnerVoice"), lvis = $("#learnerVision");
+      function syncMods() { const a = getAdapt(); const m = ["text"]; if (lvoc && lvoc.checked) m.push("voice"); if (lvis && lvis.checked) m.push("vision"); a.modalities = m; saveAdapt(); }
+      if (lvoc) lvoc.addEventListener("change", syncMods);
+      if (lvis) lvis.addEventListener("change", syncMods);
+      const lai = $("#learnerApplyInfer"); if (lai) lai.addEventListener("click", () => { const a = getAdapt(); if (a.inferredScenario) { a.scenario = a.inferredScenario; a.scenarioSource = "explicit"; saveAdapt(); refreshLearner(); } });
+    }
+
     const ov = openModal("⚙️ API 接入中心", body);
     ov.querySelectorAll(".api-tabs .chip").forEach((b) => b.addEventListener("click", () => {
       ov.querySelectorAll(".api-tabs .chip").forEach((x) => x.classList.remove("active"));
@@ -4068,6 +4388,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const fv = $("#featVoice"), fvi = $("#featVision");
     if (fv) fv.addEventListener("change", () => { FEATURE_FLAGS.voiceInput = fv.checked; saveFeatureFlags(); });
     if (fvi) fvi.addEventListener("change", () => { FEATURE_FLAGS.visionInput = fvi.checked; saveFeatureFlags(); });
+    // AI Agent 开关（页面内操作，持久化）
+    const ae = $("#agentEnable");
+    if (ae) ae.addEventListener("change", () => { setAgentEnabled(ae.checked); });
     $("#hubSaveIntel").addEventListener("click", () => {
       state.apis.intel = { url: $("#hubIntelUrl").value.trim(), key: $("#hubIntelKey").value.trim() };
       saveApis(); openModal("✅ 已保存", "<p>威胁情报接入配置已保存（仅本机）。点「测试连接」可探测可达性；逻辑对接待启用。</p>");
@@ -4089,6 +4412,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     });
     bindMcpRemove();
     bindMcpTest();
+    bindLearnerPane();
   }
   function bindMcpTest() {
     $$("#mcpList .mcp-item button[data-test]").forEach((b) => {

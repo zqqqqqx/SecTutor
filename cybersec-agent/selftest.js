@@ -543,11 +543,16 @@ $("#backLab").click();
   assert(!!$("#apiHubBtn"), "聊天侧存在「API 接入中心」入口");
   $("#apiHubBtn").click();
   assert(!$("#modalOverlay").classList.contains("hidden"), "API 接入中心弹窗打开");
-  assert($$("#modalOverlay .api-tabs .chip").length === 4, "含 4 个接入 Tab（LLM/情报/MCP/隐私）");
+  assert($$("#modalOverlay .api-tabs .chip").length === 5, "含 5 个接入 Tab（LLM/情报/MCP/学习者画像/隐私）");
   const intelTab = $$("#modalOverlay .api-tabs .chip").find((b) => b.dataset.atab === "intel");
   if (intelTab) intelTab.click();
   const intelPane = $("#modalOverlay .api-pane[data-pane='intel']");
   assert(intelPane && !intelPane.classList.contains("hidden"), "可切换到「威胁情报（预留）」面板");
+  const learnerTab = $$("#modalOverlay .api-tabs .chip").find((b) => b.dataset.atab === "learner");
+  if (learnerTab) learnerTab.click();
+  const learnerPane = $("#modalOverlay .api-pane[data-pane='learner']");
+  assert(learnerPane && !learnerPane.classList.contains("hidden"), "可切换到「学习者画像」面板");
+  assert($("#learnerLevel") && $("#learnerScenario") && $("#learnerPane .learner-domain"), "学习者画像含自报水平/场景/领域控件");
   $("#modalClose").click();
   await delay(320);  // 弹窗退场动效 200ms + 兜底定时器 260ms，需等隐藏真正生效
   assert($("#modalOverlay").classList.contains("hidden"), "模态框可关闭");
@@ -856,7 +861,7 @@ $("#backLab").click();
   // Agent 增强（Phase 0）：LLM 网关 + 适配上下文
   const ag = window.__agent;
   assert(!!ag, "window.__agent 测试钩子已暴露");
-  assert(ag && ag.enabled === false, "Agent 默认关闭（AGENT_ENABLED=false，askLLM 行为不变）");
+  assert(ag && ag.enabled === true, "Agent 默认开启（AGENT_ENABLED=true，填 Key 即走 Agent，页面内可关闭）");
   assert(ag && typeof ag.gateway.complete === "function", "Agent 网关 complete 为可调函数");
   assert(ag && typeof ag.adapt === "function" && typeof ag.ask === "function", "Agent 暴露 adapt/ask 接口");
   if (ag) {
@@ -869,6 +874,50 @@ $("#backLab").click();
     assert(ctx && ctx.device.offline_mode === !hasKey, "离线降级标记与 LLM 密钥存在性一致（离线检测读取 state.llm 生效）");
     const p = ag.gateway.complete([{ role: "user", content: "x" }]);
     assert(p && typeof p.then === "function", "网关 complete 返回 Promise（支持异步/流式）");
+  }
+
+  // ===== 29b. Phase 2 适配引擎（AdapterRegistry + 分级 + 场景 + 动态升降级）=====
+  const ae = window.__agent && window.__agent.adaptEngine;
+  assert(!!ae, "Phase2 适配引擎 adaptEngine 已暴露");
+  if (ae) {
+    if (ae.resetAdapt) ae.resetAdapt(); // 隔离：从一个干净的画像开始
+    // 分级阈值（18.1）
+    assert(ae.scoreToLevel(0.2) === "L0" && ae.scoreToLevel(0.4) === "L1" && ae.scoreToLevel(0.7) === "L2" && ae.scoreToLevel(0.9) === "L3", "scoreToLevel 四档阈值正确（0.35/0.6/0.8）");
+    // compose 产出结构
+    const c = ae.compose();
+    assert(c && ae.LEVELS.indexOf(c.user_level) >= 0, "compose 产出 user_level 落在 L0-L3");
+    assert(c && typeof c.scenario === "string", "compose 产出 scenario 为字符串");
+    assert(c && Array.isArray(c.prompt_hints) && c.prompt_hints.some((h) => h.indexOf("[LEVEL:") === 0), "compose 注入 [LEVEL:] 提示模板");
+    // 场景识别（18.2 关键词推断）
+    assert(ae.inferScenario("我想打CTF拿flag") === "ctf", "inferScenario 识别 CTF");
+    assert(ae.inferScenario("准备OSCP考证") === "cert", "inferScenario 识别 考证");
+    assert(ae.inferScenario("明天面试找工作") === "job", "inferScenario 识别 就业");
+    assert(ae.inferScenario("给家人做防诈骗科普") === "popular", "inferScenario 识别 通识科普");
+    assert(ae.inferScenario("hello world") === null, "inferScenario 无关键词返回 null");
+    // 显式场景优先于推断
+    let a = ae.getAdapt(); a.scenario = "cert"; a.scenarioSource = "explicit"; ae.saveAdapt();
+    assert(ae.compose().scenario === "cert", "显式场景覆盖推断（冲突栈 scenario 层）");
+    // 未显式选择时由推断驱动
+    ae.resetAdapt(); a = ae.getAdapt(); a.inferredScenario = "ctf"; ae.saveAdapt();
+    assert(ae.compose().scenario === "ctf", "未显式选择时推断场景生效");
+    // 离线强制覆写（18.4）
+    if (ae.compose().device.offline_mode) {
+      const co = ae.compose();
+      assert(co.cloud_disabled === true, "离线时强制禁用云端讲解（device 层覆写）");
+      assert(co.prompt_hints.some((h) => h.indexOf("[DEVICE:offline]") >= 0), "离线提示含 [DEVICE:offline]");
+    }
+    // 动态升降级（18.1）：连续 3 次某域 ≥0.85 → +1；连续 2 次 <0.5 → -1
+    ae.resetAdapt();
+    ae.recordQuizResult("web", 0.9, 5); ae.recordQuizResult("web", 0.9, 5); ae.recordQuizResult("web", 0.9, 5);
+    assert(ae.getAdapt().domainDelta.web === 1, "连续3次≥0.85 该域动态+1级");
+    assert(Math.abs((ae.getAdapt().quizAccuracy || 0) - 0.9) < 1e-6, "测验正确率滚动值≈0.9");
+    ae.resetAdapt();
+    ae.recordQuizResult("web", 0.3, 5); ae.recordQuizResult("web", 0.3, 5);
+    assert(ae.getAdapt().domainDelta.web === -1, "连续2次<0.5 该域动态-1级（补前置）");
+    // compose 计算的分域水平是合法档位
+    const c2 = ae.compose();
+    assert(c2 && c2.level_by_domain && ae.LEVELS.indexOf(c2.level_by_domain.web) >= 0, "compose 计算 level_by_domain 落在 L0-L3");
+    ae.resetAdapt(); // 还原，避免污染其它测试
   }
 
   // ===== 30. 密钥保险库 + Web Crypto（方向①）=====
@@ -917,6 +966,25 @@ $("#backLab").click();
     assert(typeof r1 === "string" && r1.length > 0, "search_knowledge 执行返回非空字符串");
     const r2 = await ag2.callTool("related_topics", { topicId: "__nope__" });
     assert(typeof r2 === "string", "related_topics 对无效 id 优雅返回字符串（不抛错）");
+  }
+
+  // ===== 32b. P1/P2 优化回归：结果截断 / 领域加权检索 / schema 缓存 =====
+  if (ag2 && ag2.toolUtil) {
+    const tu = ag2.toolUtil;
+    assert(typeof tu.truncateToolResult === "function" && tu.RESULT_LIMIT > 0, "工具结果截断助手已暴露");
+    const long = "x".repeat(tu.RESULT_LIMIT + 500);
+    const cut = tu.truncateToolResult(long);
+    assert(cut.length < long.length && cut.indexOf("已截断") >= 0, "超长工具结果被截断且带截断说明");
+    assert(tu.truncateToolResult("short") === "short", "短结果原样返回（不误伤）");
+    // 领域加权检索：偏好 web 时，含 web 命中的结果应被提前（仅加不减）
+    const plain = (window.__perf && window.__perf.retrieve) ? window.__perf.retrieve("注入 攻击 防御", 5) : [];
+    const weighted = tu.retrieveWeighted("注入 攻击 防御", 5, ["web"]);
+    assert(Array.isArray(weighted) && weighted.length > 0, "retrieveWeighted 返回非空结果");
+    const hasWebPlain = plain.some((d) => d.cat === "web");
+    if (hasWebPlain) {
+      assert(weighted[0].cat === "web" || weighted.filter((d) => d.cat === "web").length >= plain.filter((d) => d.cat === "web").length, "偏好领域命中在加权后未后移（加权生效）");
+    }
+    assert(tu.retrieveWeighted("注入", 5, []).length > 0, "空偏好领域时退化为普通检索（不崩）");
   }
 
   // ===== 33. run_scan 工具：授权靶场自检（路线 A）=====
