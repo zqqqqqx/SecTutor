@@ -1720,7 +1720,16 @@
         let rounds = 0;
         while (reply.toolCalls && reply.toolCalls.length && rounds < 4) {
           rounds++; messages.push(reply.message);
-          for (const tc of reply.toolCalls) { const res = callTool(tc.function.name, safeParse(tc.function.arguments, {})); messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) }); }
+          for (const tc of reply.toolCalls) {
+            const args = safeParse(tc.function.arguments, {});
+            const tool = AGENT_TOOLS.find((x) => x.name === tc.function.name);
+            if (tool && toolRequiresConfirm(tool.name)) {
+              const ok = await confirmToolCall(tool, args);
+              if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
+            }
+            const res = callTool(tc.function.name, args);
+            messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) });
+          }
           reply = await agentGatewayComplete(messages, tools);
         }
         const ans = reply.content || "（模型返回为空）";
@@ -1751,6 +1760,11 @@
     vectorEnabled: VECTOR_ENABLED,
     vectorActive: vectorActive,
     features: FEATURE_FLAGS,
+    tools: listTools,
+    requiresConfirm: toolRequiresConfirm,
+    riskOf: toolRisk,
+    confirmToolCall: confirmToolCall,
+    callTool: callTool,
   };
 
   async function askLLM(q) {
@@ -3746,7 +3760,76 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       return docs.map((d, i) => `[${i + 1}] 【${d.src}】${d.title}\n${(d.text || "").slice(0, 500)}`).join("\n\n---\n\n");
     } },
     { name: "jwt_decode", description: "解码 JWT（JSON Web Token）的 header 与 payload，用于学习/调试。仅解码不校验签名。", parameters: { type: "object", properties: { token: { type: "string", description: "JWT 字符串（header.payload[.signature]）" } }, required: ["token"] }, run: (a) => jwtDecode(a.token) },
+    // —— 以下为「工程化 Agent 基座」新增的能力工具（带风险分级）——
+    { name: "related_topics", description: "根据给定的知识点 id，返回与之关联度最高的若干相关知识点（标题+来源），用于拓展学习路径与查漏补缺。", parameters: { type: "object", properties: { topicId: { type: "string", description: "知识点 id，例如 allTopics 中的某个 id" } }, required: ["topicId"] }, run: (a) => {
+      const id = a.topicId || a.topic_id;
+      const topic = (allTopics() || []).find((t) => t.id === id);
+      if (!topic) return "未找到该知识点（topicId=" + id + "）。";
+      const rel = relatedDocs(topic).slice(0, 5);
+      if (!rel.length) return "该知识点暂无强关联条目。";
+      return rel.map((d, i) => "[" + (i + 1) + "] " + d.title + "（" + (d.src || "") + "）").join("\n");
+    } },
+    { name: "generate_plan", description: "依据指定领域/每周时长/周数生成个性化学习计划（写入学习计划面板）。非破坏性、本地执行。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id，如 web/binary/crypto/pentest 或 all" }, hours_per_week: { type: "integer", description: "每周学习时长（小时）" }, weeks: { type: "integer", description: "总周数" } }, required: [] }, run: (a) => {
+      const cat = a.category || "all";
+      const hours = Math.max(1, parseInt(a.hours_per_week, 10) || 5);
+      const weeks = Math.max(1, parseInt(a.weeks, 10) || 4);
+      const pc = $("#planCat"), ph = $("#planHours"), pw = $("#planWeeks");
+      if (pc && ph && pw) { pc.value = cat; ph.value = String(hours); pw.value = String(weeks); genPlan(); return "已依据「" + cat + "／每周" + hours + "小时／" + weeks + "周」生成学习计划，请查看「学习计划」面板。"; }
+      return "学习计划面板尚未打开，无法渲染。请先切换到学习计划页再试。";
+    } },
+    { name: "launch_lab_env", description: "为指定实验（labId）向后端申请并启动一个临时靶场环境。会产生外部副作用（启动容器/服务），必须经用户确认后才执行。", parameters: { type: "object", properties: { labId: { type: "string", description: "实验 id，例如 lab_sqli / lab_cmdi / lab_xss / lab_traversal / lab_nosql" } }, required: ["labId"] }, run: (a) => {
+      const id = a.labId || a.lab_id;
+      const lab = (SEC_DATA.labs || []).find((l) => l.id === id);
+      if (!lab) return "未找到该实验（labId=" + id + "）。可用 labId 见「在线演练」列表。";
+      requestEnv(lab);
+      return "已申请启动实验环境：" + (lab.name || lab.id) + "（请在「在线演练」面板查看状态；若后端不可用将自动回退本地仿真）。";
+    } },
   ];
+  // —— Phase 1 工具层：风险分级 + 确认流 ——
+  // 风险等级：low（本地只读/非破坏，自动执行）；high（启动环境等外部副作用，需用户确认）
+  const TOOL_RISK = {
+    base64_decode: { level: "low", confirm: false },
+    base64_encode: { level: "low", confirm: false },
+    url_decode: { level: "low", confirm: false },
+    hex_decode: { level: "low", confirm: false },
+    hash_text: { level: "low", confirm: false },
+    search_knowledge: { level: "low", confirm: false },
+    jwt_decode: { level: "low", confirm: false },
+    related_topics: { level: "low", confirm: false },
+    generate_plan: { level: "low", confirm: false },
+    launch_lab_env: { level: "high", confirm: true },
+  };
+  function toolRisk(name) { const r = TOOL_RISK[name]; return r ? r.level : null; }
+  function toolRequiresConfirm(name) { const r = TOOL_RISK[name]; return !!(r && r.confirm); }
+  function listTools() {
+    return AGENT_TOOLS.map((t) => ({ name: t.name, description: t.description, risk_level: toolRisk(t.name) || "low", confirm_required: toolRequiresConfirm(t.name) }));
+  }
+  // 确认执行高风险工具：弹窗 + 代际令牌（modalGen）防误伤；确认→true，取消/关闭/被抢占→false
+  function confirmToolCall(tool, args) {
+    return new Promise((resolve) => {
+      const name = tool && tool.name;
+      const risk = toolRisk(name) || "low";
+      const argStr = args && typeof args === "object" ? JSON.stringify(args) : String(args == null ? "" : args);
+      const body = "<p>Agent 请求执行工具 <strong>" + escapeHtml(name) + "</strong>（风险等级：<span class=\"risk-" + escapeHtml(risk) + "\">" + escapeHtml(risk) + "</span>）。</p>" +
+        "<p class=\"hint\">参数：" + escapeHtml(argStr).slice(0, 300) + "</p>" +
+        "<p class=\"hint\">" + (risk === "high" ? "该操作会启动实验环境或产生外部副作用。" : "该操作将在本地执行。") + "确认后才真正执行；取消则告知 Agent 你拒绝了该操作。</p>" +
+        "<div class=\"modal-actions\"><button class=\"btn small\" id=\"toolConfirmYes\">确认执行</button><button class=\"btn small ghost\" id=\"toolConfirmNo\">取消</button></div>";
+      openModal("⚠️ 确认工具执行", body);
+      const gen = modalGen;                 // openModal 已 ++，记录当前弹窗代际
+      const ov = $("#modalOverlay");
+      let settled = false;
+      const done = (v) => { if (settled) return; settled = true; closeModal(); resolve(v); };
+      const yes = $("#toolConfirmYes"), no = $("#toolConfirmNo");
+      if (yes) yes.onclick = () => done(true);
+      if (no) no.onclick = () => done(false);
+      if (ov) {
+        const closeBtn = $("#modalClose"); if (closeBtn) closeBtn.onclick = () => done(false);
+        ov.onclick = (e) => { if (e.target === ov) done(false); };
+      }
+      // 极端情况：被新弹窗抢占（modalGen 变化）或 30s 超时，本次确认作废，避免误执行
+      setTimeout(() => { if (gen !== modalGen && !settled) done(false); }, 30000);
+    });
+  }
   function callTool(name, args) {
     const t = AGENT_TOOLS.find((x) => x.name === name);
     if (!t) return "未知工具：" + name;

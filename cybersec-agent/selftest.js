@@ -894,6 +894,31 @@ $("#backLab").click();
   assert(ag2 && ag2.features && ag2.features.voiceInput === false && ag2.features.visionInput === false, "D2 语音/视觉默认关闭");
   assert(ag2 && typeof ag2.vectorActive === "function", "vectorActive 为可调函数");
 
+  // ===== 32. Phase 1 工具层：风险分级 + 确认流 =====
+  assert(ag2 && typeof ag2.tools === "function", "Agent 暴露 tools() 列出工具");
+  if (ag2 && typeof ag2.tools === "function") {
+    const tl = ag2.tools();
+    assert(Array.isArray(tl) && tl.length >= 10, "tools() 返回工具数组（≥10 项）");
+    const lab = tl.find((t) => t.name === "launch_lab_env");
+    assert(lab && lab.risk_level === "high" && lab.confirm_required === true, "launch_lab_env 标记为 high + 需确认");
+    const sk = tl.find((t) => t.name === "search_knowledge");
+    assert(sk && sk.risk_level === "low" && sk.confirm_required === false, "search_knowledge 标记为 low + 不需确认");
+    assert(tl.every((t) => typeof t.risk_level === "string"), "每个工具均有 risk_level 字段");
+  }
+  assert(ag2 && typeof ag2.requiresConfirm === "function", "Agent 暴露 requiresConfirm()");
+  if (ag2) {
+    assert(ag2.requiresConfirm("launch_lab_env") === true, "requiresConfirm(launch_lab_env)=true");
+    assert(ag2.requiresConfirm("search_knowledge") === false, "requiresConfirm(search_knowledge)=false");
+    assert(ag2.requiresConfirm("related_topics") === false, "requiresConfirm(related_topics)=false");
+  }
+  // 低风险工具可执行且返回字符串（验证 run 路径不崩、无效参数优雅处理）
+  if (ag2 && typeof ag2.callTool === "function") {
+    const r1 = ag2.callTool("search_knowledge", { query: "sql 注入" });
+    assert(typeof r1 === "string" && r1.length > 0, "search_knowledge 执行返回非空字符串");
+    const r2 = ag2.callTool("related_topics", { topicId: "__nope__" });
+    assert(typeof r2 === "string", "related_topics 对无效 id 优雅返回字符串（不抛错）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

@@ -1009,4 +1009,14 @@ agent_enabled / voice_enabled / vision_enabled / multi_agent
 
 **下一步（Phase 1 工具层）**：把 `retrieve`/`relatedDocs`/出题/计划/启环境正式注册为带 risk 等级的工具并接确认流；D1 向量真正融合需先配 `EMBED_API_KEY` 与文档向量落地。
 
+## 31. Phase 1 工具层落地记录（已实现）
+
+- **风险分级映射 `TOOL_RISK`**：为全部 10 个工具标注 `level`(low/high) 与 `confirm`(是否需确认)。现有 6 个工具箱工具 + `search_knowledge`/`jwt_decode` 均为 low；新增 3 个能力工具：`related_topics`(low)、`generate_plan`(low)、`launch_lab_env`(high, confirm=true)。
+- **确认流 `confirmToolCall(tool, args)`**：返回 Promise<boolean>；用 `openModal` 弹窗展示工具名+风险徽标(`.risk-high` 红 / `.risk-low` 绿)+参数摘要，含「确认执行/取消」按钮。安全闭环：确认→true，取消/点 X/点遮罩→false；并用 `modalGen` 代际令牌防延迟隐藏误伤，30s 超时或新弹窗抢占则作废（false）。复用既有焦点陷阱 + 关闭动效。
+- **接入 `askAgent` 工具循环**：每次执行工具前若 `toolRequiresConfirm(name)` 为真，先 `await confirmToolCall`；用户拒绝则向模型回传「用户拒绝执行」并 `continue`（模型改口用文字说明），绝不静默执行高风险动作。
+- **零回归保证**：`AGENT_ENABLED` 默认 false → `askAgent` 不被调用；现有 UI 的 `genPlan()`/`requestEnv()` 等仍由按钮直连调用，工具层仅在 Agent 路径生效。`toolSchemas()`（LLM 可见 schema）保持不变，不影响模型行为。
+- **测试钩子**：`window.__agent` 新增 `tools()`(列出含 risk 的工具清单)、`requiresConfirm()`、`riskOf()`、`confirmToolCall()`、`callTool()`。`selftest` 新增 11 条断言（231/231）：工具数组≥10、launch_lab_env=high+需确认、search_knowledge=low、每工具均有 risk_level、requiresConfirm 三向判定、低风险工具执行返回非空字符串、无效 id 优雅返回。
+- **构建**：单文件 530.2KB、verify 6/6、_bench 无回归（retrieve 101.8ms / relatedDocs 167.2ms）；两处 resources 同步、NSIS 重建到桌面。
+- **范围说明**：`run_scan`（靶场扫描）按设计属 high 风险工具，但因当前无对应前端封装函数（需 8787 后端扫描端点，未核实），本轮未注册，留待后端扫描能力明确后再补；其余 12 工具规划中已落地 10 个 + 风险/确认基建。
+
 ```
