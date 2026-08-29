@@ -1076,6 +1076,181 @@ $("#backLab").click();
     resetHooks();
   }
 
+  // ===== 35. Phase 3 多 Agent 编排：角色注册表 / 路由 / 工具过滤 / 黑板 / 角色工具 =====
+  if (ag2) {
+    assert(ag2.roles && typeof ag2.roles === "object", "Agent 暴露 roles 角色注册表");
+    const expectedRoles = ["auto", "tutor", "planner", "examiner", "coach", "lab"];
+    const roleIds = Object.keys(ag2.roles || {});
+    expectedRoles.forEach((r) => assert(roleIds.indexOf(r) >= 0, "角色注册表含 " + r));
+    assert(typeof ag2.routeRole === "function", "Agent 暴露 routeRole 意图路由");
+    if (typeof ag2.routeRole === "function") {
+      assert(ag2.routeRole("帮我做个两周学习计划", "auto") === "planner", "routeRole(计划类)→planner");
+      assert(ag2.routeRole("出几道题考考我", "auto") === "examiner", "routeRole(出题类)→examiner");
+      assert(ag2.routeRole("复盘一下我的错题", "auto") === "coach", "routeRole(复盘类)→coach");
+      assert(ag2.routeRole("我想练下靶场", "auto") === "lab", "routeRole(靶场类)→lab");
+      assert(ag2.routeRole("什么是 XSS", "auto") === "tutor", "routeRole(讲解类)→tutor");
+      assert(ag2.routeRole("随便问", "examiner") === "examiner", "routeRole 显式模式优先于意图");
+    }
+    assert(typeof ag2.toolSchemasForRole === "function", "Agent 暴露 toolSchemasForRole 角色工具过滤");
+    if (typeof ag2.toolSchemasForRole === "function") {
+      const tutorTools = (ag2.toolSchemasForRole("tutor") || []).map((s) => s.function.name);
+      assert(tutorTools.indexOf("launch_lab_env") < 0 && tutorTools.indexOf("run_scan") < 0, "讲师角色看不到高风险的靶场/自检工具");
+      assert(tutorTools.indexOf("generate_plan") < 0, "讲师角色看不到规划工具");
+      const labTools = (ag2.toolSchemasForRole("lab") || []).map((s) => s.function.name);
+      assert(labTools.indexOf("launch_lab_env") >= 0 && labTools.indexOf("run_scan") >= 0, "靶场员角色含 launch_lab_env/run_scan");
+      const examTools = (ag2.toolSchemasForRole("examiner") || []).map((s) => s.function.name);
+      assert(examTools.indexOf("generate_quiz") >= 0, "考官角色含 generate_quiz");
+      const allTools = (ag2.toolSchemasForRole("auto") || []).map((s) => s.function.name);
+      assert(allTools.indexOf("launch_lab_env") >= 0 && allTools.indexOf("generate_quiz") >= 0, "自动模式含全部工具");
+    }
+    assert(ag2.blackboard && typeof ag2.blackboard.get === "function", "Agent 暴露 blackboard 黑板读写");
+    if (ag2.blackboard) {
+      const d = ag2.blackboard.default();
+      assert(d && d.last_role === "auto" && Array.isArray(d.weak_points), "默认黑板含 last_role/weak_points 等字段");
+      ag2.blackboard.save({ weak_points: ["XSS"], last_quiz: { domain: "web", count: 3 }, last_role: "tutor" });
+      const g = ag2.blackboard.get();
+      assert(g.weak_points && g.weak_points[0] === "XSS" && g.last_quiz.count === 3, "黑板 save→get 往返持久正确");
+    }
+    assert(typeof ag2.setAgentRole === "function", "Agent 暴露 setAgentRole");
+    if (typeof ag2.setAgentRole === "function") {
+      ag2.setAgentRole("tutor"); assert(ag2.getAgentRole() === "tutor", "setAgentRole('tutor')→getAgentRole='tutor'");
+      ag2.setAgentRole("__bad__"); assert(ag2.getAgentRole() === "auto", "setAgentRole 非法值回退 auto");
+    }
+    if (typeof ag2.callTool === "function") {
+      const qz = await ag2.callTool("generate_quiz", { domain: "web", count: 2 });
+      assert(typeof qz === "string" && qz.length > 0, "generate_quiz 调用返回非空字符串（只读抽样出题）");
+      const rp = await ag2.callTool("read_progress", {});
+      assert(typeof rp === "string" && rp.indexOf("学情快照") >= 0, "read_progress 返回学情快照字符串");
+    }
+    // 复位角色选择，避免影响其他用例/UI 默认态
+    if (typeof ag2.setAgentRole === "function") ag2.setAgentRole("auto");
+  }
+
+  // ===== 36. Phase 4 模态管线（ASR 语音 / VLM 视觉）=====
+  {
+    const ag2 = window.__agent;
+    // 在 jsdom 下无 SpeechRecognition / getUserMedia，且无大模型 Key → asr/vlm 均不可用
+    assert(ag2 && typeof ag2.asr === "object", "window.__agent.asr 对象存在");
+    assert(ag2 && typeof ag2.vlm === "object", "window.__agent.vlm 对象存在");
+    assert(ag2.asr.available() === false, "jsdom 下 asr.available()===false（无语音环境/未开开关/无 Key）");
+    assert(ag2.vlm.available() === false, "jsdom 下 vlm.available()===false（无 Key 或未开开关）");
+    assert(ag2.asr.speechSupported() === false, "speechSupported() 在 jsdom 下为 false");
+    assert(ag2.asr.micSupported() === false, "micSupported() 在 jsdom 下为 false");
+    // 逐轮输入模态 getter/setter
+    assert(typeof ag2.setLastInputModality === "function" && typeof ag2.getLastInputModality === "function", "set/getLastInputModality 存在");
+    ag2.setLastInputModality("voice"); assert(ag2.getLastInputModality() === "voice", "setLastInputModality('voice') 往返正确");
+    ag2.setLastInputModality("vision"); assert(ag2.getLastInputModality() === "vision", "setLastInputModality('vision') 往返正确");
+    ag2.setLastInputModality("bogus"); assert(ag2.getLastInputModality() === "text", "非法模态回退为 text");
+    ag2.setLastInputModality("text");
+    // 无 Key 时 transcribeAudio / describeImage 优雅拒绝（返回 rejected Promise，不崩溃）
+    let asrRej = false; try { await ag2.asr.transcribe(null); } catch (e) { asrRej = true; }
+    assert(asrRej, "transcribeAudio 无 Key 时抛错被捕获（不崩溃）");
+    let vlmRej = false; try { await ag2.vlm.describe("data:image/png;base64,xx", "描述"); } catch (e) { vlmRej = true; }
+    assert(vlmRej, "describeImage 无 Key 时抛错被捕获（不崩溃）");
+    // downscale 对短 dataURL 直接透传
+    const passthrough = await ag2.vlm.downscale("data:image/png;base64,AAAA", 1280);
+    assert(passthrough === "data:image/png;base64,AAAA", "downscale 对短 dataURL 透传");
+    // askAgent 带模态参数不崩溃（jsdom 无 Key → 走内置或提示分支）
+    try { await ag2.ask("测试语音", { modality: "voice" }); await ag2.ask("测试视觉", { image: "data:image/png;base64,AAAA", modality: "vision" }); assert(true, "askAgent 接收 {modality/image} 参数不抛未捕获异常"); }
+    catch (e) { assert(false, "askAgent 模态参数不应抛异常：" + e.message); }
+    // UI 按钮存在（受开关约束，默认 disabled，但元素在 DOM）
+    assert($("#btnVoice") != null, "聊天输入区存在 🎤 语音按钮");
+    assert($("#btnVision") != null, "聊天输入区存在 📷 视觉按钮");
+    assert($("#fileImage") != null, "存在隐藏图片文件输入");
+  }
+
+  // ===== 37. P3/P4 优化：schema 缓存 / auto 角色徽标 / 多模态消息构造 =====
+  {
+    const ag2 = window.__agent;
+    // schema 按角色缓存：同角色两次调用返回同一数组引用；不同角色集合长度不同
+    const t1 = ag2.toolSchemasForRole("tutor"), t2 = ag2.toolSchemasForRole("tutor");
+    assert(t1 === t2, "toolSchemasForRole 同角色复用缓存（同一引用）");
+    const aAll = ag2.toolSchemasForRole("auto"), eEx = ag2.toolSchemasForRole("examiner");
+    assert(Array.isArray(aAll) && aAll.length >= eEx.length, "auto 全量工具 ≥ examiner 白名单数量");
+    assert(eEx.every((s) => ["search_knowledge", "generate_quiz"].indexOf(s.function.name) >= 0), "examiner schema 仅含白名单工具");
+
+    // auto 角色徽标：mock 网关，auto 模式提问 → 回答末尾应带「自动编排 → 由「…」角色应答」
+    const lastBotText = () => {
+      const els = doc.querySelectorAll("#chatLog .msg.bot");
+      const el = els[els.length - 1];
+      return el ? el.textContent : "";
+    };
+    const resetHooks = () => { if (ag2._resetHooks) ag2._resetHooks(); };
+    ag2.setAgentRole("auto");
+    ag2._setGateway(async () => ({ content: "SQL 注入是……（测试回答）", message: { role: "assistant", content: "SQL 注入是……（测试回答）" }, toolCalls: [] }));
+    await ag2.ask("什么是 SQL 注入");
+    assert(/自动编排 → 由「.+」角色应答/.test(lastBotText()), "auto 模式回答带角色徽标（路由可观测）");
+
+    // 显式角色模式：无徽标
+    ag2.setAgentRole("tutor");
+    await ag2.ask("什么是 XSS");
+    assert(!/自动编排 → 由/.test(lastBotText()), "显式角色模式不显示 auto 徽标");
+    ag2.setAgentRole("auto");
+    resetHooks();
+
+    // 多模态消息构造：带 image 时本轮用户消息为 content 数组（text + image_url）
+    let sawArray = false, sawImg = false;
+    ag2._setGateway(async (messages) => {
+      const lastUser = Array.from(messages).reverse().find((m) => m.role === "user");
+      if (lastUser && Array.isArray(lastUser.content)) {
+        sawArray = true;
+        sawImg = lastUser.content.some((c) => c.type === "image_url" && c.image_url && typeof c.image_url.url === "string");
+      }
+      return { content: "已收到图片（测试）", message: { role: "assistant", content: "已收到图片（测试）" }, toolCalls: [] };
+    });
+    await ag2.ask("请分析这张图片", { image: "data:image/png;base64,AAAA", modality: "vision" });
+    assert(sawArray, "视觉轮用户消息为多模态 content 数组");
+    assert(sawImg, "视觉轮包含 image_url（图像随本轮发送）");
+    resetHooks();
+  }
+
+  // ===== 38. P5 靶场深度联动：自动建靶 / 收靶 / 报告归档 =====
+  {
+    const ag2 = window.__agent;
+    // 新工具注册与风险映射
+    const tl = ag2.tools();
+    const td = tl.find((x) => x.name === "teardown_lab_env"), rr = tl.find((x) => x.name === "read_scan_reports");
+    assert(!!td && td.risk_level === "high" && td.confirm_required === true, "teardown_lab_env 已注册且为 high 风险需确认");
+    assert(!!rr && rr.risk_level === "low" && rr.confirm_required === false, "read_scan_reports 已注册且为 low 风险免确认");
+    // lab 角色白名单包含新工具
+    const labNames = ag2.toolSchemasForRole("lab").map((s) => s.function.name);
+    assert(labNames.indexOf("teardown_lab_env") >= 0 && labNames.indexOf("read_scan_reports") >= 0, "lab 角色白名单含收靶与报告工具");
+    // 空归档优雅返回
+    window.localStorage.removeItem("sectutor_scan_reports");
+    const emptyMsg = await ag2.callTool("read_scan_reports", {});
+    assert(/暂无自检报告归档/.test(emptyMsg), "read_scan_reports 空归档时优雅提示");
+    // run_scan（mock 后端 fetch → live 路径）自动归档
+    window.fetch = function (url, opts) {
+      const u = String(url || "");
+      if (u.indexOf("/api/envs/env_t1") >= 0 && (!opts || opts.method !== "DELETE")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, env: { id: "env_t1", labId: "lab_xss", title: "XSS 靶场", status: "running", accessUrl: "http://127.0.0.1:8787/proxy/env_t1" } }) });
+      }
+      return Promise.reject(new Error("no fetch in test harness"));
+    };
+    ag2.setActiveEnv({ id: "env_t1", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    const scanOut = await ag2.callTool("run_scan", {});
+    let rep = null; try { rep = JSON.parse(scanOut); } catch (e) {}
+    assert(rep && rep.ok === true && rep.archived === true && rep.report_id, "run_scan 自检完成且报告自动归档（含 report_id）");
+    const stored = JSON.parse(window.localStorage.getItem("sectutor_scan_reports") || "[]");
+    assert(Array.isArray(stored) && stored.length === 1 && stored[0].id === rep.report_id, "归档已写入 localStorage（sectutor_scan_reports）");
+    const listMsg = await ag2.callTool("read_scan_reports", {});
+    assert(listMsg.indexOf(rep.report_id) >= 0 && /XSS 靶场/.test(listMsg), "read_scan_reports 列表含刚归档的报告");
+    const fullMsg = await ag2.callTool("read_scan_reports", { report_id: rep.report_id });
+    assert(/compliance/.test(fullMsg), "按 report_id 可取回完整报告");
+    // 收靶：本地清理 activeEnv + 远端尽力销毁（mock 对 DELETE 落入 catch → TTL 兜底文案）
+    const tdMsg = await ag2.callTool("teardown_lab_env", {});
+    assert(/清理|销毁|回收/.test(tdMsg), "teardown_lab_env 返回收靶结果字符串");
+    // 恢复默认 reject fetch；无环境后验证 labId 分支与引导语
+    window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); };
+    const badLab = await ag2.callTool("run_scan", { labId: "lab_nope" });
+    assert(/未找到该实验/.test(badLab), "run_scan 未知 labId 返回友好报错");
+    const afterTd = await ag2.callTool("run_scan", {});
+    assert(/未检测到活动靶场/.test(afterTd), "收靶后 activeEnv 已清理（run_scan 回到无环境引导）");
+    // 无环境且无 labId 的 run_scan 引导语包含自动建靶说明
+    assert(/labId.*自动建靶|自动建靶/.test(afterTd), "无环境引导语说明可指定 labId 自动建靶");
+    ag2.setActiveEnv(null);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

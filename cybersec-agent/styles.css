@@ -1008,3 +1008,44 @@ kbd {
   .topic-card:hover, .news-card:hover, .gl-card:hover { transform: none; }
   .spinner { animation: spin .7s linear infinite; }
 }
+
+/* —— Phase 3：Agent 角色选择器 —— */
+.agent-roles {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px; margin-bottom: 8px;
+  background: var(--panel-2, #f4f6fb); border: 1px solid var(--line, #e3e8f0);
+  border-radius: 10px;
+}
+.agent-roles .ar-label { font-size: .82em; color: var(--muted, #6b7280); margin-right: 2px; }
+.agent-roles .ar-chip {
+  font-size: .82em; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line, #e3e8f0); background: var(--panel, #fff); color: var(--text, #1f2937);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.agent-roles .ar-chip:hover { border-color: var(--brand, #2563eb); }
+.agent-roles .ar-chip.active {
+  background: var(--brand, #2563eb); border-color: var(--brand, #2563eb); color: #fff; font-weight: 600;
+}
+
+/* —— Phase 4：语音/视觉输入按钮 —— */
+.chat-input .btn.icon {
+  flex: 0 0 auto; width: 38px; padding: 0; font-size: 1.15em; line-height: 1;
+  background: var(--panel, #fff); border: 1px solid var(--line, #e3e8f0); color: var(--text, #1f2937);
+}
+.chat-input .btn.icon:disabled { opacity: .4; cursor: not-allowed; }
+.chat-input .btn.icon.recording {
+  background: #e11d48; border-color: #e11d48; color: #fff;
+  animation: recpulse 1.1s infinite;
+}
+@keyframes recpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(225,29,72,.45); } 50% { box-shadow: 0 0 0 6px rgba(225,29,72,0); } }
+
+/* —— P3 优化：auto 编排角色徽标 —— */
+.role-badge {
+  margin: 8px 0 0; font-size: .8em; color: var(--muted, #6b7280);
+  border-top: 1px dashed var(--line, #e3e8f0); padding-top: 6px;
+}
+
+/* —— P5：自检报告归档表 —— */
+.rep-table { width: 100%; border-collapse: collapse; font-size: .88em; }
+.rep-table th, .rep-table td { padding: 6px 8px; border-bottom: 1px solid var(--line, #e3e8f0); text-align: left; }
+.rep-table th { color: var(--muted, #6b7280); font-weight: 600; }

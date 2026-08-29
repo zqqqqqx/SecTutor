@@ -179,6 +179,15 @@
           </div>
         </div>
         <div class="chat-main">
+          <div class="agent-roles" id="agentRoles" title="选择本次对话的 Agent 角色；默认「自动编排」会按你的问题意图自动切换">
+            <span class="ar-label">🤖 角色：</span>
+            <button class="ar-chip" data-role="auto">自动编排</button>
+            <button class="ar-chip" data-role="tutor">📚 讲师</button>
+            <button class="ar-chip" data-role="planner">🗺️ 规划师</button>
+            <button class="ar-chip" data-role="examiner">🎯 考官</button>
+            <button class="ar-chip" data-role="coach">🧭 教练</button>
+            <button class="ar-chip" data-role="lab">🧪 靶场员</button>
+          </div>
           <div id="chatLog" class="chat-log"></div>
           <div class="prompt-presets" id="promptPresets">
             <button class="pp-chip" data-prompt="用生活化的类比给我讲讲：">🪄 类比讲解</button>
@@ -187,8 +196,11 @@
             <button class="pp-chip" data-prompt="解释这个 payload 的原理与防御方法：">🔍 讲 payload</button>
           </div>
           <div class="chat-input">
-            <input id="chatInput" data-i18n-ph="ph.chatInput" placeholder="问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？" />
+            <button id="btnVoice" class="btn icon" title="语音输入（需在设置开启）" disabled>🎤</button>
+            <button id="btnVision" class="btn icon" title="发送图片/截图识图（需在设置开启）" disabled>📷</button>
+            <input id="chatInput" data-i18n-ph="ph.chatInput" placeholder="问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？（支持粘贴图片）" />
             <button id="sendBtn" class="btn" data-i18n="btn.send">发送</button>
+            <input id="fileImage" type="file" accept="image/*" style="display:none" />
           </div>
         </div>
       </div>
