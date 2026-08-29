@@ -891,7 +891,7 @@
       div.style.setProperty("--c", color);
       div.style.setProperty("--p", pct);
       div.innerHTML = `
-        <div class="ring"><b>${pct}</b></div>
+        <div class="ring" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(c.name)}掌握度 ${pct}%"><b>${pct}</b></div>
         <div class="meta"><div class="nm">${c.icon} ${c.name}</div><div class="ct">${done} / ${total} 已掌握</div></div>`;
       div.addEventListener("click", () => {
         kbActiveCat = c.id;
@@ -979,7 +979,7 @@
       <div class="tc-hd"><h4>${escapeHtml(t.name)}</h4><span class="dom-tag">${escapeHtml(cat.name)}</span></div>
       <span class="lvl-tag lvl-${t.level}">${t.level}</span>
       <p>${escapeHtml(t.summary)}</p>
-      <div class="mast"><div class="ml"><span>掌握度</span><b>${mastPct}%</b></div><div class="bar"><i style="width:${mastPct}%"></i></div></div>
+      <div class="mast"><div class="ml"><span>掌握度</span><b>${mastPct}%</b></div><div class="bar" role="progressbar" aria-valuenow="${mastPct}" aria-valuemin="0" aria-valuemax="100" aria-label="掌握度 ${mastPct}%"><i style="width:${mastPct}%"></i></div></div>
       <div class="refs">${refs.map((r) => `<span class="ref${r.cve ? " cve" : ""}">${escapeHtml(r.t)}</span>`).join("")}</div>
       <div class="tc-ft">
         <button class="tc-btn ghost" data-ai="${t.id}"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button>
@@ -1135,7 +1135,7 @@
       <div class="kb-section"><h4>📚 延伸阅读</h4><p style="color:var(--muted)">${escapeHtml(topic.refs)}</p></div>
       <div class="kb-section"><h4>🔗 ${t("kb.related")}</h4><div class="rel-box" id="relBox"></div></div>
       <div class="ai-helpers"><button class="btn ghost small" id="topicAiBtn">🤖 AI 辅助（讲解/自测/拓展）</button></div>
-      <button class="learn-btn" id="learnBtn">${learned ? "✓ 已掌握（点击取消）" : "我已掌握此知识点"}</button>
+      <button class="learn-btn${learned ? " mastered" : ""}" id="learnBtn" aria-pressed="${learned ? "true" : "false"}">${learned ? "✓ 已掌握（点击取消）" : "我已掌握此知识点"}</button>
     `;
     const rel = relatedDocs(topic);
     if (rel.length) {
@@ -1173,12 +1173,37 @@
     });
   }
 
+  /* 无障碍：难度筛选原先是一组无语义的 div，读屏无法识别为「单选组」。
+     声明为 radiogroup / radio，并在切换时同步 aria-checked 与 tabindex。 */
+  function markLevelChipsA11y() {
+    const wrap = $("#levelChips");
+    if (!wrap) return;
+    wrap.setAttribute("role", "radiogroup");
+    wrap.setAttribute("aria-label", "按难度筛选知识点");
+    $$("#levelChips .chip").forEach((c) => {
+      const on = c.classList.contains("active");
+      c.setAttribute("role", "radio");
+      c.setAttribute("aria-checked", on ? "true" : "false");
+      c.setAttribute("tabindex", on ? "0" : "-1");
+    });
+  }
+  markLevelChipsA11y();
   $$("#levelChips .chip").forEach((chip) => {
     chip.addEventListener("click", () => {
       $$("#levelChips .chip").forEach((c) => c.classList.remove("active"));
       chip.classList.add("active");
       kbLevelFilter = chip.dataset.level;
+      markLevelChipsA11y();
       renderTopicGrid();
+    });
+    // 方向键在单选项间移动（radiogroup 的标准键盘行为）
+    chip.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      const all = $$("#levelChips .chip");
+      const i = all.indexOf(chip);
+      const next = all[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length];
+      if (next) { next.click(); next.focus(); }
     });
   });
 
@@ -1226,11 +1251,19 @@
   const sortEl = $(".kb-sort");
   if (sortEl && !sortEl.dataset.bound) {
     sortEl.dataset.bound = "1";
+    // 无障碍：原先是纯 div，只能鼠标点且读屏不可识别 → 补语义与键盘支持
+    sortEl.setAttribute("role", "button");
+    sortEl.setAttribute("tabindex", "0");
+    sortEl.setAttribute("aria-label", "切换卡片排序方式");
     sortEl.addEventListener("click", () => {
       kbSortMode = kbSortMode === "default" ? "mastery-desc" : kbSortMode === "mastery-desc" ? "mastery-asc" : "default";
       const label = kbSortMode === "default" ? "默认排序" : kbSortMode === "mastery-desc" ? "掌握度 ↓" : "掌握度 ↑";
       sortEl.innerHTML = `<svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h6"/></svg>${label}`;
+      sortEl.setAttribute("aria-label", "当前排序：" + label + "，点击切换");
       renderTopicGrid();
+    });
+    sortEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sortEl.click(); }
     });
   }
   // 学习路径视图开关
@@ -1764,7 +1797,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <div class="pcard">
           <div><strong>${c.icon} ${c.name}</strong></div>
           <div style="font-size:13px;color:var(--muted)">${done}/${total} 已掌握</div>
-          <div class="bar"><i style="width:${pct}%"></i></div>
+          <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(c.name)}掌握进度 ${pct}%"><i style="width:${pct}%"></i></div>
         </div>`);
     });
     board.innerHTML = parts.join("");
@@ -2031,6 +2064,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       if (left <= 0) { el.textContent = "已到期 / 自动释放"; stopEnvTimers(); return; }
       const m = Math.floor(left / 60000), s = Math.floor((left % 60000) / 1000);
       el.textContent = `${m} 分 ${s} 秒`;
+      // 微交互：最后 60 秒进入告警态（红色 + 脉动），让用户及时保存进度
+      if (left <= 60000) el.classList.add("warn"); else el.classList.remove("warn");
     };
     tick();
     state.envTimer = setInterval(tick, 1000);
@@ -3192,7 +3227,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         lvHtml = `<div class="pbar-sub">` + lvOrder.filter((lv) => bl[lv] != null).map((lv) =>
           `<span class="lvchip lvl-${lv}">${lv} ${bl[lv]}</span>`).join("") + `</div>`;
       }
-      return `<div class="pbar-row"><span class="pbar-name">${d.icon} ${d.name}</span><span class="pbar-track"><i style="width:${p[d.id] || 0}%"></i></span><span class="pbar-val">${p[d.id] || 0}</span></div>${lvHtml}`;
+      const pv = p[d.id] || 0;
+      return `<div class="pbar-row"><span class="pbar-name">${d.icon} ${d.name}</span>` +
+        `<span class="pbar-track" role="progressbar" aria-valuenow="${pv}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(d.name)}能力评分 ${pv}"><i style="width:${pv}%"></i></span>` +
+        `<span class="pbar-val">${pv}</span></div>${lvHtml}`;
     }).join("");
     const weakest = DOMAINS.reduce((w, d) => ((p[d.id] || 0) < (p[w.id] || 0) ? d : w), DOMAINS[0]);
     box.innerHTML = `<div class="acard-head">🧠 能力画像 <button class="btn tiny ghost" id="diagRedo">重新诊断</button></div>

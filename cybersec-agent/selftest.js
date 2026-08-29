@@ -814,6 +814,40 @@ $("#backLab").click();
     assert(rBg >= 4.5 && rPanel >= 4.5, `浅色主题 muted 对比度达标（bg ${rBg.toFixed(2)}:1 / panel ${rPanel.toFixed(2)}:1，AA 需 ≥4.5）`);
   }
 
+  // ===== 29. P3 收尾：筛选语义 / 进度条 / 切换按钮 / 排序键盘 =====
+  const chipsWrap = $("#levelChips");
+  assert(!!chipsWrap && chipsWrap.getAttribute("role") === "radiogroup", "难度筛选容器带 role=radiogroup");
+  const chips = $$("#levelChips .chip");
+  assert(chips.length > 0 && chips.every((c) => c.getAttribute("role") === "radio"), "难度筛选项带 role=radio");
+  assert(chips.filter((c) => c.getAttribute("aria-checked") === "true").length === 1, "难度筛选有且仅有一项 aria-checked=true");
+  const lvChecked = chips.find((c) => c.getAttribute("aria-checked") === "true");
+  const lvOther = chips.find((c) => c.getAttribute("aria-checked") !== "true");
+  if (lvOther && lvChecked) {
+    lvOther.click();
+    assert(lvOther.getAttribute("aria-checked") === "true" && lvChecked.getAttribute("aria-checked") === "false", "切换难度后 aria-checked 同步迁移");
+    lvChecked.click();
+  }
+  const sortBtn = $(".kb-sort");
+  assert(!!sortBtn && sortBtn.getAttribute("role") === "button" && sortBtn.getAttribute("tabindex") === "0", "排序控件可用键盘聚焦（role=button + tabindex=0）");
+  const sortLabelBefore = sortBtn.getAttribute("aria-label");
+  sortBtn.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  assert(sortBtn.getAttribute("aria-label") !== sortLabelBefore, "排序控件支持 Enter 键触发切换（原仅鼠标可用）");
+  assert($$(".dom .ring[role=progressbar]").length > 0, "领域掌握度环带 role=progressbar");
+  const ringBar = $(".dom .ring[role=progressbar]");
+  assert(!!ringBar && ringBar.getAttribute("aria-valuenow") !== null && ringBar.getAttribute("aria-valuemax") === "100", "进度环带 aria-valuenow / aria-valuemax");
+  const firstCardP3 = doc.querySelector("#topicGrid .topic-card");
+  if (firstCardP3) {
+    firstCardP3.click();
+    const lb = $("#learnBtn");
+    assert(!!lb && lb.getAttribute("aria-pressed") !== null, "「我已掌握」按钮带 aria-pressed（切换按钮语义）");
+    const pressedBefore = lb.getAttribute("aria-pressed");
+    lb.click();
+    const lb2 = $("#learnBtn");
+    assert(!!lb2 && lb2.getAttribute("aria-pressed") !== pressedBefore, "点击掌握后 aria-pressed 同步翻转");
+    if (lb2) lb2.click();                     // 还原，避免影响后续用例
+    const backBtn = $("#backKb"); if (backBtn) backBtn.click();
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

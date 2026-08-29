@@ -963,6 +963,20 @@ kbd {
   .topic-card:hover, .news-card:hover, .gl-card:hover { transform: translateY(-6px) scale(1.02); box-shadow: var(--shadow-lg); }
   .btn, .tc-btn, .rail-item { transition: transform var(--dur-fast) var(--ease-out); }
   .btn:active, .tc-btn:active, .rail-item:active { transform: scale(var(--scale-press)); }
+  /* 导航激活态平滑过渡（替代跳变） */
+  .rail-item { transition: transform var(--dur-fast) var(--ease-out), background-color 200ms var(--ease-out), color 200ms var(--ease-out), border-color 200ms var(--ease-out); }
+  /* 进度条宽度过渡：数值变化时平滑推进而非跳变 */
+  .bar i, .pbar-track i, .path-bar, .ring { transition: width 600ms var(--ease-out), background-position 600ms var(--ease-out); }
+  /* 掌握度打勾弹入 */
+  .done-flag, .learn-btn.mastered { animation: popIn 420ms var(--ease-spring); }
+  @keyframes popIn {
+    0% { transform: scale(.6); opacity: 0; }
+    60% { transform: scale(1.04); opacity: 1; }
+    100% { transform: scale(1); }
+  }
+  /* 靶场倒计时最后 60 秒告警 */
+  #envCountdown.warn { animation: cdPulse 1s ease-in-out infinite; }
+  @keyframes cdPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   .modal { animation: modalIn 300ms var(--ease-spring); }
   @keyframes modalIn {
     from { opacity: 0; transform: translateY(var(--move-lg)) scale(.9); }
@@ -972,9 +986,12 @@ kbd {
   @keyframes modalOut { to { opacity: 0; transform: scale(.96); } }
 }
 
+/* 倒计时告警配色（静态，无条件生效） */
+#envCountdown.warn, .env-meta .warn { color: var(--bad, #dc2626); font-weight: 600; }
+
 /* 关闭动效时：确保元素处于终态，不残留 transform 或不可见状态 */
 @media (prefers-reduced-motion: reduce) {
-  .panel.active, .toast, .modal { animation: none; }
+  .panel.active, .toast, .modal, .done-flag, .learn-btn.mastered, #envCountdown.warn { animation: none; }
   .topic-card:hover, .news-card:hover, .gl-card:hover { transform: none; }
   .spinner { animation: spin .7s linear infinite; }
 }
