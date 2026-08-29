@@ -746,6 +746,74 @@ $("#backLab").click();
   pressKey("Escape");
   await delay(320);
 
+  // ===== 27. 状态安全（P2）：滚动位置记忆 / 撤销 / 输入草稿 =====
+  if (UI) {
+    // 滚动位置记忆：设位置 → 记录 → 重置 → 切回应恢复
+    const kbSide = doc.querySelector("#panel-knowledge .kb-side");
+    if (kbSide) {
+      kbSide.scrollTop = 120;
+      UI.savePanelScroll("knowledge");
+      kbSide.scrollTop = 0;                 // 模拟切走再切回（位置被重置）
+      UI.restorePanelScroll("knowledge");
+      assert(kbSide.scrollTop === 120, `切回面板后滚动位置被恢复（实测 ${kbSide.scrollTop}）`);
+    } else {
+      assert(false, "知识体系侧栏存在（滚动记忆用例前提）");
+    }
+
+    // 撤销机制：验证「快照 → 清空 → 用快照恢复」这一核心链路
+    const realSnap = UI.snapshotMastery();
+    const before = realSnap.mastery.length;
+    const probeSnap = { mastery: ["__undo_test_topic__"], dates: {} };
+    UI.restoreMastery(probeSnap);
+    assert(UI.snapshotMastery().mastery.length === 1, "restoreMastery 能写回掌握进度（撤销的基础）");
+    UI.restoreMastery({ mastery: [], dates: {} });
+    assert(UI.snapshotMastery().mastery.length === 0, "restoreMastery 能清空掌握进度");
+    UI.restoreMastery(realSnap);
+    assert(UI.snapshotMastery().mastery.length === before, `撤销后能完整还原原有掌握进度（${before} 项）`);
+
+    // 输入草稿：保存后能恢复，清空后不残留
+    const chatInp = $("#chatInput");
+    if (chatInp) {
+      UI.saveDraft("草稿内容-测试");
+      chatInp.value = "";
+      UI.restoreDraft();
+      assert(chatInp.value === "草稿内容-测试", "输入草稿可从 localStorage 恢复");
+      UI.clearDraft();
+      let left = "";
+      try { left = window.localStorage.getItem(UI.DRAFT_KEY) || ""; } catch (e) {}
+      assert(left === "", "清空后草稿不残留");
+      chatInp.value = "";
+    }
+  }
+
+  // ===== 28. 无障碍（P3）：语义化标签与对比度 =====
+  const railItems = $$(".rail-item");
+  assert(railItems.length > 0 && railItems.every((r) => r.getAttribute("role") === "tab"), "左侧导航项带 role=tab");
+  assert(railItems.every((r) => !!r.getAttribute("aria-controls")), "导航项用 aria-controls 关联对应面板");
+  assert($$(".panel").every((p) => p.getAttribute("role") === "tabpanel"), "各面板带 role=tabpanel");
+  const activeRail = $$(".rail-item").find((r) => r.classList.contains("active"));
+  assert(!!activeRail && activeRail.getAttribute("aria-selected") === "true", "当前面板的导航项 aria-selected=true");
+  assert($$(".rail-item").filter((r) => r.getAttribute("aria-selected") === "true").length === 1, "同一时刻只有一个导航项为选中态");
+  pressKey("3");
+  const rail3 = $$(".rail-item").find((r) => r.dataset.tab === "range");
+  assert(!!rail3 && rail3.getAttribute("aria-selected") === "true", "切换面板后 aria-selected 同步更新");
+  pressKey("1");
+  assert(!!$("#btnSearch").getAttribute("aria-label") && !!$("#btnSettings").getAttribute("aria-label"), "顶栏图标按钮带 aria-label（读屏可读）");
+  // 浅色主题 muted 对比度（原 #64748b 在页面底色上仅 4.23:1，低于 WCAG AA）
+  const cssNow = fs.readFileSync(path.join(dir, "styles.css"), "utf8");
+  const m = cssNow.match(/--muted:\s*(#[0-9a-fA-F]{6})/);
+  function lum(hex) {
+    const c = hex.replace("#", "");
+    const v = [0, 2, 4].map((i) => parseInt(c.substr(i, 2), 16) / 255);
+    const f = (x) => (x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4));
+    return 0.2126 * f(v[0]) + 0.7152 * f(v[1]) + 0.0722 * f(v[2]);
+  }
+  function ratio(a, b) { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); }
+  if (m) {
+    const rBg = ratio(m[1], "#eef2f7"), rPanel = ratio(m[1], "#ffffff");
+    assert(rBg >= 4.5 && rPanel >= 4.5, `浅色主题 muted 对比度达标（bg ${rBg.toFixed(2)}:1 / panel ${rPanel.toFixed(2)}:1，AA 需 ≥4.5）`);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

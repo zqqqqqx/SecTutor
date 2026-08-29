@@ -15,7 +15,7 @@
   --panel: #ffffff;
   --panel-2: #f8fafc;
   --ink: #0f172a;
-  --muted: #64748b;
+  --muted: #5e6c82;   /* 原 #64748b 在页面底色上仅 4.23:1（低于 AA 4.5:1）；改后 bg 4.74 / panel 5.33 / panel-2 5.09 全部达标 */
   --line: #e6ebf2;
   --brand: #2563eb;
   --brand-2: #4f46e5;
@@ -92,7 +92,7 @@
   --panel: #ffffff;
   --panel-2: #f8fafc;
   --ink: #0f172a;
-  --muted: #64748b;
+  --muted: #5e6c82;   /* 原 #64748b 在页面底色上仅 4.23:1（低于 AA 4.5:1）；改后 bg 4.74 / panel 5.33 / panel-2 5.09 全部达标 */
   --line: #e6ebf2;
   --brand: #0aa6c4;
   --brand-2: #d61fa6;

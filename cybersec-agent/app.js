@@ -402,6 +402,50 @@
     return function clear() { if (box.querySelector(".sk-card")) box.innerHTML = ""; };
   }
 
+  /* ============================================================
+     撤销支持（P2）：破坏性操作改为「先快照 → 再执行 → 可撤销」
+     原则：任何清空类操作都不应是单点误触就无法挽回的。
+     ============================================================ */
+  function snapshotMastery() {
+    return {
+      mastery: Array.from(state.mastery || []),
+      dates: JSON.parse(JSON.stringify(state.masteryDates || {})),
+    };
+  }
+  function restoreMastery(snap) {
+    state.mastery.clear();
+    (snap.mastery || []).forEach((id) => state.mastery.add(id));
+    state.masteryDates = snap.dates || {};
+    saveMastery();
+    saveMasteryDates();
+  }
+  function clearMastery() {
+    state.mastery.clear();
+    state.masteryDates = {};
+    saveMastery();
+    saveMasteryDates();
+  }
+  // 重置掌握进度（带二次确认 + 限时撤销）
+  function resetMasteryUndoable(confirmMsg) {
+    if (typeof confirm === "function" && !confirm(confirmMsg)) return false;
+    const snap = snapshotMastery();
+    const n = snap.mastery.length;
+    clearMastery();
+    renderProgress();
+    const out = $("#planOutput");
+    if (out) out.innerHTML = "<p>进度已重置。</p>";
+    toast(n ? "已清空 " + n + " 项掌握进度" : "当前没有已掌握的知识点", "info", {
+      actionText: n ? "撤销" : null,
+      onAction: function () {
+        restoreMastery(snap);
+        renderProgress();
+        if (out) out.innerHTML = "";
+        toast("已恢复 " + n + " 项掌握进度", "ok");
+      },
+    });
+    return true;
+  }
+
   function saveMastery() {
     localStorage.setItem("sectutor_mastery", JSON.stringify([...state.mastery]));
     updateBadge();
@@ -532,11 +576,25 @@
     const pdf = $("#setPdf"); if (pdf) pdf.addEventListener("click", () => { closeModal(); exportPlanPdf(); });
     const chat = $("#setChat"); if (chat) chat.addEventListener("click", () => { closeModal(); exportChat(); });
     const reset = $("#setReset"); if (reset) reset.addEventListener("click", () => {
-      if (typeof confirm === "function" && !confirm("确定重置全部学习进度？此操作不可撤销。")) return;
-      const rp = $("#resetPlan"); if (rp) rp.click();
+      if (typeof confirm === "function" && !confirm("确定重置全部掌握进度并清空对话记录？重置后可在右下角提示条点击「撤销」恢复。")) return;
+      const snap = snapshotMastery();
+      let chatSnap = "";
+      try { chatSnap = localStorage.getItem(CHAT_KEY) || ""; } catch (e) {}
+      const n = snap.mastery.length;
+      clearMastery();
       try { localStorage.removeItem(CHAT_KEY); } catch (e) {}
       const log = $("#chatLog"); if (log) log.innerHTML = "";
+      renderProgress();
       closeModal();
+      toast("已重置" + (n ? " " + n + " 项掌握进度" : "") + "并清空对话记录", "info", {
+        actionText: "撤销",
+        onAction: function () {
+          restoreMastery(snap);
+          try { if (chatSnap) localStorage.setItem(CHAT_KEY, chatSnap); } catch (e) {}
+          renderProgress();
+          toast("已恢复掌握进度与对话记录", "ok");
+        },
+      });
     });
   }
 
@@ -655,12 +713,51 @@
   }
 
   /* ---------- 导航（左图标栏） ---------- */
+  // 数字键 1-8 与左侧导航顺序保持一致（快捷键与导航共用同一份定义）
+  const TAB_KEYS = ["knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance"];
+  const TAB_NAMES = { knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" };
+
+  /* 面板滚动位置记忆（P2）：切走前记录各滚动容器位置，切回时恢复，
+     否则从知识体系滚到第 40 个知识点后切走再回来会回到顶部。 */
+  const SCROLL_SEL = ".kb-side,.chat-side,.range-side,.tools-side,.plan-controls,.quiz-side," +
+    ".kb-main,.range-main,.plan-main,.tools-main,.quiz-main,.chat-log,.news-list,.compliance-box";
+  const scrollMem = new Map();   // tabName -> Map("序号|className" -> scrollTop)
+
+  function savePanelScroll(tabName) {
+    const panel = $("#panel-" + tabName);
+    if (!panel) return;
+    const mem = new Map();
+    Array.prototype.forEach.call(panel.querySelectorAll(SCROLL_SEL), (el, i) => {
+      mem.set(i + "|" + el.className, el.scrollTop);
+    });
+    scrollMem.set(tabName, mem);
+  }
+  function restorePanelScroll(tabName) {
+    const mem = scrollMem.get(tabName);
+    if (!mem) return;
+    const panel = $("#panel-" + tabName);
+    if (!panel) return;
+    Array.prototype.forEach.call(panel.querySelectorAll(SCROLL_SEL), (el, i) => {
+      const v = mem.get(i + "|" + el.className);
+      if (typeof v === "number" && v > 0) el.scrollTop = v;
+    });
+  }
+
   function activateTab(tabName) {
-    $$(".rail-item").forEach((t) => t.classList.toggle("active", t.dataset.tab === tabName));
+    const prev = $(".panel.active");
+    if (prev && prev.id) savePanelScroll(prev.id.replace(/^panel-/, ""));
+    $$(".rail-item").forEach((t) => {
+      const on = t.dataset.tab === tabName;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");   // 读屏可感知当前面板
+    });
     $$(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tabName));
     // 顶栏 breadcrumb 同步
-    const sub = { knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" }[tabName] || "";
+    const sub = TAB_NAMES[tabName] || "";
     const cs = $(".crumb-sub"); if (cs) cs.textContent = "· " + sub;
+    // 面板刚切换时高度尚未计算完成，需等布局稳定后再恢复滚动位置
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => restorePanelScroll(tabName));
+    else setTimeout(() => restorePanelScroll(tabName), 0);
   }
   $$(".rail-item").forEach((tab) => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab));
@@ -669,20 +766,30 @@
   /* ============================================================
      键盘导航层（P1）：全局快捷键 / Esc / 焦点管理
      ============================================================ */
-  // 数字键 1-8 与左侧导航顺序保持一致
-  const TAB_KEYS = ["knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance"];
-  const TAB_NAMES = { knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" };
-
   // 左侧导航显示数字角标（低对比度，hover/激活时提亮）
+  // 注：TAB_KEYS / TAB_NAMES 已在导航区定义，此处复用，避免两份定义不同步
   (function markRailKeys() {
     $$(".rail-item").forEach((el) => {
       const i = TAB_KEYS.indexOf(el.dataset.tab);
-      if (i < 0 || el.querySelector(".rail-key")) return;
+      if (i < 0) return;
+      // 无障碍：把图标栏声明为 tablist / tab，并与对应面板关联
+      el.setAttribute("role", "tab");
+      el.setAttribute("aria-controls", "panel-" + el.dataset.tab);
+      el.setAttribute("aria-label", TAB_NAMES[el.dataset.tab] + "（快捷键 " + (i + 1) + "）");
+      el.setAttribute("aria-selected", el.classList.contains("active") ? "true" : "false");
+      const panel = $("#panel-" + el.dataset.tab);
+      if (panel && !panel.getAttribute("role")) {
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-label", TAB_NAMES[el.dataset.tab]);
+      }
+      if (el.querySelector(".rail-key")) return;
       const b = document.createElement("span");
       b.className = "rail-key";
       b.textContent = String(i + 1);
       el.appendChild(b);
     });
+    const rail = $(".rail-scroll") || $(".rail");
+    if (rail && !rail.getAttribute("role")) rail.setAttribute("role", "tablist");
   })();
 
   function isTypingTarget(el) {
@@ -1431,12 +1538,34 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     }
   }
 
+  /* ---------- 输入草稿自动保存（P2）：刷新或意外关闭不丢未发送的输入 ---------- */
+  const DRAFT_KEY = "sectutor_chat_draft";
+  let draftTimer = null;
+  function saveDraft(v) {
+    try {
+      if (v && v.trim()) localStorage.setItem(DRAFT_KEY, v);
+      else localStorage.removeItem(DRAFT_KEY);
+    } catch (e) {}
+  }
+  function clearDraft() {
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+  }
+  function restoreDraft() {
+    const inp = $("#chatInput");
+    if (!inp) return;
+    let v = "";
+    try { v = localStorage.getItem(DRAFT_KEY) || ""; } catch (e) {}
+    if (v && !inp.value) inp.value = v;
+  }
+
   function send() {
     const input = $("#chatInput");
     const q = input.value.trim();
     if (!q || state.thinking) return;
     addMsg("user", escapeHtml(q));
     input.value = "";
+    clearDraft();
     logEvent("chat");
     askLLM(q);
   }
@@ -1464,6 +1593,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 
   $("#sendBtn").addEventListener("click", send);
   $("#chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  // 草稿自动保存：输入停止 400ms 后落盘，刷新或意外关闭不丢未发送内容
+  $("#chatInput").addEventListener("input", (e) => {
+    const inp = e.target;
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => saveDraft(inp.value), 400);
+  });
   // 聊天引用条目可点击：跳转到对应模块（知识点打开详情 / 资讯·工具·靶场聚焦面板）
   $("#chatLog").addEventListener("click", (e) => {
     const el = e.target.closest(".cite");
@@ -1636,9 +1771,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
 
   $("#genPlan").addEventListener("click", genPlan);
+  // 原先此处无任何确认即清空掌握度（与设置内的重置不一致），现统一为确认 + 可撤销
   $("#resetPlan").addEventListener("click", () => {
-    state.mastery.clear(); saveMastery(); renderProgress();
-    $("#planOutput").innerHTML = "<p>进度已重置。</p>";
+    resetMasteryUndoable("确定重置全部掌握进度？重置后可在右下角提示条点击「撤销」恢复。");
   });
 
   // 计划导出
@@ -1772,10 +1907,21 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       <button class="btn small ghost" id="labReset">重置战绩</button>`;
     const rb = $("#labReset");
     if (rb) rb.addEventListener("click", () => {
-      if (typeof confirm === "function" && !confirm("确定清空所有靶场战绩？此操作不可撤销。")) return;
+      if (typeof confirm === "function" && !confirm("确定清空所有靶场战绩？清空后可在右下角提示条点击「撤销」恢复。")) return;
+      const snap = Array.from(state.labsSolved || []);
+      const n = snap.length;
       state.labsSolved.clear();
       try { localStorage.removeItem("sectutor_labs"); } catch (e) {}
       renderLabStats(); renderLabList();
+      toast(n ? "已清空 " + n + " 条靶场战绩" : "当前没有靶场战绩", "info", {
+        actionText: n ? "撤销" : null,
+        onAction: function () {
+          snap.forEach((id) => state.labsSolved.add(id));
+          try { localStorage.setItem("sectutor_labs", JSON.stringify(snap)); } catch (e) {}
+          renderLabStats(); renderLabList();
+          toast("已恢复 " + n + " 条靶场战绩", "ok");
+        },
+      });
     });
   }
   // 支持独立临时靶机的测试点（与 sectutor-backend 的 labSpecs 对齐）
@@ -2288,9 +2434,11 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
   function clearChat() {
     try { localStorage.removeItem(CHAT_KEY); } catch (e) {}
+    clearDraft();
     $("#chatLog").innerHTML = "";
     welcome();
     bindSuggestions();
+    toast("对话记录已清空", "info");
   }
   // 导出对话：把当前聊天记录下载为 .txt（本地优先，不联网）
   function exportChat() {
@@ -2431,6 +2579,16 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       withPending: withPending,
       showSkeleton: showSkeleton,
       hotkeyHelp: openHotkeyHelp,
+      // P2 状态安全
+      savePanelScroll: savePanelScroll,
+      restorePanelScroll: restorePanelScroll,
+      snapshotMastery: snapshotMastery,
+      restoreMastery: restoreMastery,
+      resetMasteryUndoable: resetMasteryUndoable,
+      saveDraft: saveDraft,
+      clearDraft: clearDraft,
+      restoreDraft: restoreDraft,
+      DRAFT_KEY: DRAFT_KEY,
     };
   }
   // 统一的「上下文带入智能问答」入口：离线可用（未配 LLM 时走内置知识引擎兜底），配置了外部 LLM 时做更深推理。
@@ -2705,6 +2863,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     renderProgress();
     renderAgentCenter();   // 方向① 学习中心（能力画像 / 复习 / 周报）
     renderToolbox();       // 方向⑩ 本地工具箱
+    restoreDraft();        // P2：恢复上次未发送的输入草稿
     if (!loadChat()) welcome();
     bindSuggestions();
     const bu = $("#backendUrl"); if (bu) bu.value = state.backend.url;
