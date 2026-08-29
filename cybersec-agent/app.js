@@ -1493,7 +1493,140 @@
     return { content: full, message: toolCalls.length ? { tool_calls: toolCalls } : { content: full }, toolCalls };
   }
 
+  /* ===================== Agent 增强（Phase 0）：LLM 网关 + 适配上下文 =====================
+   * 架构事实：本应用 LLM 由前端直连 Provider（state.llm.base + Bearer key），没有中间后端。
+   * 因此网关放在前端，复用既有 chatCompletions / buildContext / callTool / askBuiltin。
+   * 默认 AGENT_ENABLED=false，askLLM 行为完全不变；置 true 后走 askAgent（网关+适配）。
+   */
+  let AGENT_ENABLED = false;
+  const PROVIDERS = {
+    openai:    { kind: "openai", label: "OpenAI 兼容" },
+    deepseek:  { kind: "openai", label: "DeepSeek(兼容)" },
+    local:     { kind: "openai", label: "本地 Ollama" },
+    anthropic: { kind: "anthropic", label: "Anthropic" },
+  };
+
+  function inferLevel(masteryCount) {
+    if (masteryCount >= 20) return "L2";
+    if (masteryCount >= 8) return "L1";
+    return "L0";
+  }
+
+  // 适配引擎种子：把四维度（水平/场景/领域/模态/设备）编译成 AdaptationContext
+  function buildAdaptationContext() {
+    const profile = state.profile || {};
+    const masteryCount = state.mastery ? state.mastery.size : 0;
+    const domains = (profile.domains && profile.domains.length) ? profile.domains
+                  : (profile.pentest ? ["pentest"] : []);
+    const online = (typeof navigator !== "undefined" && navigator.onLine === false) ? false : true;
+    const offlineMode = !state.llm || !state.llm.key;
+    return {
+      user_level: state.userLevel || inferLevel(masteryCount),
+      scenario: state.scenario || "general",
+      modalities: ["text"],
+      domains: domains,
+      device: { online: online, low_resource: false, offline_mode: offlineMode },
+      prompt_hints: [],
+      tool_policy: { prefer_domains: domains, allow_high_risk: true },
+    };
+  }
+
+  // LLM 网关：多 Provider 抽象 + 离线降级
+  async function agentGatewayComplete(messages, tools, opts) {
+    if (!state.llm || !state.llm.key) return { offline: true };
+    const p = (state.llm.provider && PROVIDERS[state.llm.provider]) ? PROVIDERS[state.llm.provider] : PROVIDERS.openai;
+    try {
+      if (p.kind === "openai") {
+        return await chatCompletions(messages, tools, opts && opts.onChunk);
+      }
+      if (p.kind === "anthropic") {
+        return await anthropicComplete(messages, tools, opts);
+      }
+    } catch (e) {
+      return { offline: true, error: e.message };
+    }
+    return { offline: true };
+  }
+
+  // Anthropic 适配器（非默认路径；当前非流式，返回完整内容）
+  async function anthropicComplete(messages, tools, opts) {
+    const base = (state.llm.base || "https://api.anthropic.com").replace(/\/$/, "");
+    const sys = (messages.find((m) => m.role === "system") || {}).content || "";
+    const msgs = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
+    const body = {
+      model: state.llm.model || "claude-3-5-sonnet-latest",
+      max_tokens: 1024, system: sys, messages: msgs,
+      tools: (tools || []).map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })),
+    };
+    const resp = await fetch(base + "/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": state.llm.key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    const text = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+    const tcs = (data.content || []).filter((c) => c.type === "tool_use")
+      .map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input) } }));
+    return { content: text, message: { content: text, tool_calls: tcs }, toolCalls: tcs };
+  }
+
+  // 增强版问答：网关 + 适配上下文注入；离线/失败回退内置知识引擎
+  async function askAgent(q) {
+    if (state.thinking) return;
+    const adapt = buildAdaptationContext();
+    if (!state.llm || !state.llm.key) { askBuiltin(q); return; }
+    setChatBusy(true); showTyping();
+    state.history.push({ role: "user", content: q }); trimHistory(); logEvent("chat");
+    const { text: ctx, docs } = buildContext(q);
+    const sysBase = "你是 SecTutor 安全实训辅导 Agent（辅助建议型）。严格遵守：仅用于合法授权安全学习与防御研究；拒绝未授权攻击步骤与武器化代码；侧重原理与防御；回答结构清晰。";
+    const adaptNote = "\n【用户适配上下文】水平:" + adapt.user_level + "; 场景:" + adapt.scenario + "; 领域:" + (adapt.domains.join("/") || "全部") + "; 模态:" + adapt.modalities.join("/") + "; 离线:" + adapt.device.offline_mode + "\n请据此调整讲解深度与术语密度。";
+    const sys = sysBase + adaptNote + "\n以下是内置知识库检索资料（请用自己的话讲解并标注引用 [n]）：\n--- 资料开始 ---\n" + (ctx || "（无直接相关条目，基于通用网络安全常识作答，保持防御视角）") + "\n--- 资料结束 ---";
+    const tools = toolSchemas();
+    const messages = [{ role: "system", content: sys }, ...state.history.map((m) => ({ role: m.role, content: m.content }))];
+    try {
+      const botRow = addMsg("bot", "");
+      const bubble = botRow ? botRow.querySelector(".msg.bot") : null;
+      let streamed = "";
+      const onChunk = (d) => { if (!bubble) return; streamed += d; bubble.innerHTML = escapeHtml(streamed).replace(/\n/g, "<br>"); autoScrollChat($("#chatLog")); };
+      let reply = await agentGatewayComplete(messages, tools, { onChunk });
+      if (reply.offline) { state.history.pop(); removeTyping(); addMsg("bot", "⚠️ 已进入离线模式（无可用大模型）："); askBuiltin(q); return; }
+      const srcTitleHtml = (ds) => `<p style="margin-top:8px;color:var(--muted);font-size:.85em">${t("src.title")}：` + ds.map((d, i) => `<span class="cite" data-id="${escapeHtml(d.id)}">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
+      if (reply.toolCalls && reply.toolCalls.length) {
+        if (bubble) bubble.innerHTML = ""; streamed = "";
+        let rounds = 0;
+        while (reply.toolCalls && reply.toolCalls.length && rounds < 4) {
+          rounds++; messages.push(reply.message);
+          for (const tc of reply.toolCalls) { const res = callTool(tc.function.name, safeParse(tc.function.arguments, {})); messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) }); }
+          reply = await agentGatewayComplete(messages, tools);
+        }
+        const ans = reply.content || "（模型返回为空）";
+        state.history.push({ role: "assistant", content: ans }); trimHistory();
+        let html = ans.replace(/</g, "&lt;").replace(/\n/g, "<br>");
+        if (docs.length) html += srcTitleHtml(docs);
+        if (bubble) bubble.innerHTML = html; else addMsg("bot", html);
+      } else {
+        const ans = reply.content || "（模型返回为空）";
+        state.history.push({ role: "assistant", content: ans }); trimHistory();
+        if (docs.length && bubble) bubble.innerHTML += srcTitleHtml(docs);
+        if (!bubble) addMsg("bot", (reply.content || "").replace(/</g, "&lt;").replace(/\n/g, "<br>"));
+      }
+      saveChat();
+    } catch (e) {
+      state.history.pop(); removeTyping(); addMsg("bot", `⚠️ 大模型调用失败（${escapeHtml(e.message)}），已切换回内置知识引擎：`); askBuiltin(q);
+    } finally { removeTyping(); setChatBusy(false); }
+  }
+
+  window.__agent = {
+    enabled: AGENT_ENABLED,
+    setEnabled: (v) => { AGENT_ENABLED = !!v; window.__agent.enabled = AGENT_ENABLED; },
+    gateway: { complete: agentGatewayComplete },
+    adapt: buildAdaptationContext,
+    ask: (q) => askAgent(q),
+  };
+
   async function askLLM(q) {
+    if (AGENT_ENABLED) { askAgent(q); return; }
     if (!state.llm || !state.llm.key) {
       askBuiltin(q);
       return;

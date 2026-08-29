@@ -848,6 +848,24 @@ $("#backLab").click();
     const backBtn = $("#backKb"); if (backBtn) backBtn.click();
   }
 
+  // Agent 增强（Phase 0）：LLM 网关 + 适配上下文
+  const ag = window.__agent;
+  assert(!!ag, "window.__agent 测试钩子已暴露");
+  assert(ag && ag.enabled === false, "Agent 默认关闭（AGENT_ENABLED=false，askLLM 行为不变）");
+  assert(ag && typeof ag.gateway.complete === "function", "Agent 网关 complete 为可调函数");
+  assert(ag && typeof ag.adapt === "function" && typeof ag.ask === "function", "Agent 暴露 adapt/ask 接口");
+  if (ag) {
+    const ctx = ag.adapt();
+    assert(ctx && typeof ctx.user_level === "string" && typeof ctx.scenario === "string", "适配上下文含 user_level / scenario");
+    assert(ctx && ctx.device && typeof ctx.device.offline_mode === "boolean", "适配上下文 device.offline_mode 为布尔");
+    assert(ctx && Array.isArray(ctx.domains), "适配上下文 domains 为数组");
+    const llmRaw = window.localStorage.getItem("sectutor_llm");
+    const hasKey = !!(llmRaw && JSON.parse(llmRaw).key);
+    assert(ctx && ctx.device.offline_mode === !hasKey, "离线降级标记与 LLM 密钥存在性一致（离线检测读取 state.llm 生效）");
+    const p = ag.gateway.complete([{ role: "user", content: "x" }]);
+    assert(p && typeof p.then === "function", "网关 complete 返回 Promise（支持异步/流式）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
