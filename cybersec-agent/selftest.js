@@ -913,10 +913,30 @@ $("#backLab").click();
   }
   // 低风险工具可执行且返回字符串（验证 run 路径不崩、无效参数优雅处理）
   if (ag2 && typeof ag2.callTool === "function") {
-    const r1 = ag2.callTool("search_knowledge", { query: "sql 注入" });
+    const r1 = await ag2.callTool("search_knowledge", { query: "sql 注入" });
     assert(typeof r1 === "string" && r1.length > 0, "search_knowledge 执行返回非空字符串");
-    const r2 = ag2.callTool("related_topics", { topicId: "__nope__" });
+    const r2 = await ag2.callTool("related_topics", { topicId: "__nope__" });
     assert(typeof r2 === "string", "related_topics 对无效 id 优雅返回字符串（不抛错）");
+  }
+
+  // ===== 33. run_scan 工具：授权靶场自检（路线 A）=====
+  if (ag2 && typeof ag2.callTool === "function") {
+    assert(ag2.riskOf("run_scan") === "high", "run_scan 风险等级为 high");
+    assert(ag2.requiresConfirm("run_scan") === true, "run_scan 需用户确认");
+    const sc = (ag2.tools() || []).find((t) => t.name === "run_scan");
+    assert(sc && sc.risk_level === "high" && sc.confirm_required === true, "tools() 含 run_scan 且标记 high+需确认");
+    // 无活动靶场 → 同步引导分支（先强制清零，隔离前置测试副作用；生产环境初始即为 null）
+    ag2.setActiveEnv(null);
+    const noEnv = await ag2.callTool("run_scan", {});
+    assert(typeof noEnv === "string" && /未检测到活动靶场/.test(noEnv), "无活动靶场时 run_scan 返回引导提示（不发包）");
+    // 有活动靶场但无后端（jsdom fetch 兜底 reject）→ 返回合规 JSON（catch 分支）
+    ag2.setActiveEnv({ id: "lab_xss", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    const withEnv = await ag2.callTool("run_scan", {});
+    assert(typeof withEnv === "string", "run_scan 有 env 时返回字符串");
+    let parsed = null; try { parsed = JSON.parse(withEnv); } catch (e) {}
+    assert(parsed && typeof parsed.ok === "boolean", "run_scan 返回合法 JSON 且含 ok 字段");
+    assert(parsed && typeof parsed.compliance === "string" && parsed.compliance.length > 0, "run_scan 返回含合规声明字段");
+    ag2.setActiveEnv(null);
   }
 
   console.log("\n==== 自测结果 ====");

@@ -1019,4 +1019,19 @@ agent_enabled / voice_enabled / vision_enabled / multi_agent
 - **构建**：单文件 530.2KB、verify 6/6、_bench 无回归（retrieve 101.8ms / relatedDocs 167.2ms）；两处 resources 同步、NSIS 重建到桌面。
 - **范围说明**：`run_scan`（靶场扫描）按设计属 high 风险工具，但因当前无对应前端封装函数（需 8787 后端扫描端点，未核实），本轮未注册，留待后端扫描能力明确后再补；其余 12 工具规划中已落地 10 个 + 风险/确认基建。
 
+## 32. `run_scan` 工具落地（路线 A：授权靶场自检）
+
+**端点核查结论**：后端 `sectutor-backend` 仅有 `src/routes/envs.js`（`/api/envs`，负责创建/查询/销毁临时隔离靶场），**无任何 `scan` 端点**；鉴权 `Authorization: Bearer <token>`，经 `envApi()` 封装。合规红线 `compliance.l4` 禁止非授权扫描。用户决策：采用**路线 A——授权靶场自检**。
+
+**实现**（app.js，零后端改动、零回归）：
+- `run_scan` 注册进 `AGENT_TOOLS`，**不接受任何外部/任意 target 参数**，仅操作 `state.activeEnv`（用户自己申请的临时靶场），从根上杜绝越界扫描。
+- `runScan()`：`activeEnv` 为空 → 返回引导提示（不发包）；有 env 且后端可用 → `GET /api/envs/:id`（已有端点）确认真实状态 + 对自身 `accessUrl` 做 `mode:no-cors` best-effort 连通探测（不读响应体）→ 基于 `labId` 由 `retrieve()` 生成「应核查脆弱点清单」→ 返回合规 JSON；后端不可用 → 降级为纯知识库清单（不联网）。
+- `callTool` 改为 `async` 并 `await t.run(...)`，`askAgent` 工具循环同步 `await callTool(...)`（支持异步工具返回给模型）。
+- `window.__agent` 暴露 `setActiveEnv`（测试/调试用，不影响正常 UI）。
+- `TOOL_RISK` 标记 `run_scan: { level:"high", confirm:true }`，复用 Phase 1 `confirmToolCall` 高风险确认流（用户拒绝则回传模型改口）。
+- selftest 238/238（新增 7 条 run_scan 断言：risk=high、需确认、tools() 含条目、无 env 引导、有 env 返回合规 JSON、含 compliance 字段）；verify 6/6、_bench 无回归（retrieve 108ms / relatedDocs 160ms）。
+- 构建 533.6KB；NSIS 重建到桌面（md5 ca771d23…）。
+
+**两点说明**：① 真实端口级扫描（如 nmap 类）后端仍未提供，且浏览器 `no-cors` 探测仅反映网络层可达、不读 CORS 响应体；如需「靶场内授权深度扫描」需走路线 B（新增后端 `POST /api/envs/:id/scan`，改 `sectutor-backend` 源码并重新打包，超出本仓库范围）。② 本地领先远端 1 个 commit，沙箱无法 push，需用户本机 `git push origin main`。
+
 ```

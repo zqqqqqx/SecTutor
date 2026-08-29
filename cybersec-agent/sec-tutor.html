@@ -5269,7 +5269,7 @@ zeek -C -r capture.pcap
               const ok = await confirmToolCall(tool, args);
               if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
             }
-            const res = callTool(tc.function.name, args);
+            const res = await callTool(tc.function.name, args);
             messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) });
           }
           reply = await agentGatewayComplete(messages, tools);
@@ -5307,6 +5307,7 @@ zeek -C -r capture.pcap
     riskOf: toolRisk,
     confirmToolCall: confirmToolCall,
     callTool: callTool,
+    setActiveEnv: (e) => { state.activeEnv = e; },
   };
 
   async function askLLM(q) {
@@ -7326,6 +7327,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       requestEnv(lab);
       return "已申请启动实验环境：" + (lab.name || lab.id) + "（请在「在线演练」面板查看状态；若后端不可用将自动回退本地仿真）。";
     } },
+    { name: "run_scan", description: "对你本人已申请的临时靶场环境（state.activeEnv，由 launch_lab_env 启动）做授权内安全自检：经后端查询环境真实状态、对自己靶场 accessUrl 做 best-effort 连通探测，并基于该靶场对应的知识点/题解生成「应核查脆弱点清单」与合规提醒。绝不向任何外部或任意地址发包，仅限你拥有的授权靶场。high 风险，需确认。", parameters: { type: "object", properties: {}, required: [] }, run: () => runScan() },
   ];
   // —— Phase 1 工具层：风险分级 + 确认流 ——
   // 风险等级：low（本地只读/非破坏，自动执行）；high（启动环境等外部副作用，需用户确认）
@@ -7340,6 +7342,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     related_topics: { level: "low", confirm: false },
     generate_plan: { level: "low", confirm: false },
     launch_lab_env: { level: "high", confirm: true },
+    run_scan: { level: "high", confirm: true },
   };
   function toolRisk(name) { const r = TOOL_RISK[name]; return r ? r.level : null; }
   function toolRequiresConfirm(name) { const r = TOOL_RISK[name]; return !!(r && r.confirm); }
@@ -7372,10 +7375,59 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       setTimeout(() => { if (gen !== modalGen && !settled) done(false); }, 30000);
     });
   }
-  function callTool(name, args) {
+  // —— 授权靶场自检（run_scan 实现，路线 A：仅限本人申请的临时靶场）——
+  const SCAN_COMPLIANCE = "本工具仅核查你本人申请、后端下发的授权临时靶场（state.activeEnv），绝不向任何外部或任意地址发起扫描/探测，符合 SecTutor 合规红线（禁止非授权扫描/入侵）。";
+  function knowledgeChecklist(env) {
+    const labId = env && (env.labId || env.id);
+    const lab = (SEC_DATA.labs || []).find((l) => l.id === labId);
+    const seed = lab ? (lab.name || lab.title || labId) : ((env && env.title) || "安全靶场");
+    const docs = retrieve(seed, 6);
+    return docs.map((d) => ({ title: d.title, src: d.src || "", level: d.level || "" }));
+  }
+  function probeReach(url) {
+    if (!url) return Promise.resolve("unknown");
+    const fn = getFetch();
+    if (!fn) return Promise.resolve("unknown");
+    return fn(url, { method: "GET", mode: "no-cors", cache: "no-store" })
+      .then(() => true)
+      .catch(() => false);
+  }
+  function runScan() {
+    const env = state.activeEnv;
+    if (!env || !env.id) {
+      return "未检测到活动靶场。请先通过 launch_lab_env 申请一个临时靶场（或在「在线演练」面板生成环境），再执行自检。自检不会向任何外部地址发包。";
+    }
+    const fn = getFetch();
+    if (!fn || !state.backend || !state.backend.url) {
+      // 后端不可用：降级为纯知识清单（不联网、零外部动作）
+      return JSON.stringify({ ok: true, degraded: true, scope: "仅知识库清单（后端不可用，未做连通性探测）", env_id: env.id, vulnerabilities: knowledgeChecklist(env), compliance: SCAN_COMPLIANCE }, null, 2);
+    }
+    return envApi("/api/envs/" + encodeURIComponent(env.id), { method: "GET", cache: "no-store" })
+      .then((r) => r.json().then((d) => ({ r, d })))
+      .then(({ r, d }) => {
+        if (!r.ok || !d.ok) {
+          return JSON.stringify({ ok: false, error: (d && d.error) || ("HTTP " + r.status), hint: "环境可能已销毁或后端不可用。", compliance: SCAN_COMPLIANCE }, null, 2);
+        }
+        const live = d.env || env;
+        const accessUrl = (live.accessUrl) || (env.accessUrl) || "";
+        return probeReach(accessUrl).then((reachable) => JSON.stringify({
+          ok: true,
+          env_id: live.id,
+          title: live.title,
+          status: live.status,
+          access_url: accessUrl,
+          reachable: reachable,
+          scope: "仅限你拥有的授权靶场，未向任何外部地址发包",
+          vulnerabilities: knowledgeChecklist(live),
+          compliance: SCAN_COMPLIANCE,
+        }, null, 2));
+      })
+      .catch((e) => JSON.stringify({ ok: false, error: (e && e.message) || "网络错误", hint: "自检未向外部目标发包。", compliance: SCAN_COMPLIANCE }, null, 2));
+  }
+  async function callTool(name, args) {
     const t = AGENT_TOOLS.find((x) => x.name === name);
     if (!t) return "未知工具：" + name;
-    try { const r = t.run(args || {}); return (r == null ? "" : String(r)); } catch (e) { return "工具执行错误：" + e.message; }
+    try { const r = await t.run(args || {}); return (r == null ? "" : String(r)); } catch (e) { return "工具执行错误：" + e.message; }
   }
   function toolSchemas() { return AGENT_TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })); }
 
