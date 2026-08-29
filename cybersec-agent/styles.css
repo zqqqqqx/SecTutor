@@ -809,6 +809,12 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .api-test-res.fail { color: #dc2626; }
 .api-test-res.testing { color: var(--muted, #64748b); }
 .mcp-test-res { font-size: 11px; margin-left: 6px; }
+.api-sep { border: none; border-top: 1px dashed var(--line, #e2e8f0); margin: 14px 0; }
+.kv-section, .feat-section { margin: 2px 0 4px; }
+.kv-status { font-size: 13px; margin-bottom: 8px; color: var(--ink, #0f172a); }
+.kv-status strong { color: var(--brand, #2563eb); }
+.feat-section .field.inline { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink, #0f172a); margin-bottom: 8px; }
+.feat-section .field.inline input { width: auto; padding: 0; }
 .mcp-test-res.ok { color: #16a34a; }
 .mcp-test-res.fail { color: #dc2626; }
 

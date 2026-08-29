@@ -816,6 +816,12 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .api-test-res.fail { color: #dc2626; }
 .api-test-res.testing { color: var(--muted, #64748b); }
 .mcp-test-res { font-size: 11px; margin-left: 6px; }
+.api-sep { border: none; border-top: 1px dashed var(--line, #e2e8f0); margin: 14px 0; }
+.kv-section, .feat-section { margin: 2px 0 4px; }
+.kv-status { font-size: 13px; margin-bottom: 8px; color: var(--ink, #0f172a); }
+.kv-status strong { color: var(--brand, #2563eb); }
+.feat-section .field.inline { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink, #0f172a); margin-bottom: 8px; }
+.feat-section .field.inline input { width: auto; padding: 0; }
 .mcp-test-res.ok { color: #16a34a; }
 .mcp-test-res.fail { color: #dc2626; }
 
@@ -3565,6 +3571,129 @@ zeek -C -r capture.pcap
     envPoll: null,
   };
 
+  // ===== 密钥保险库（Web Crypto AES-GCM，file:// 与 Electron 双端通用）=====
+  // 未启用口令保护时行为完全不变（密钥明文存 sectutor_llm）；启用后密钥以 AES-GCM
+  // 加密存 sectutor_llm_key，sectutor_llm 仅保留 base/model/temp。重启后密钥锁定，
+  // 首次调用 AI 问答时弹出口令解锁。Web Crypto 为浏览器标准，file:// 与 Electron 均可用。
+  const KM = (() => {
+    const enc = new TextEncoder(), dec = new TextDecoder();
+    function subtle() {
+      if (window.crypto && window.crypto.subtle) return window.crypto.subtle;
+      try { if (typeof require !== "undefined" && require("crypto").webcrypto) return require("crypto").webcrypto.subtle; } catch (e) {}
+      return null;
+    }
+    function b64(u8) { let s = ""; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s); }
+    function unb64(s) { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+    function randBytes(n) {
+      const c = (window.crypto && window.crypto.getRandomValues) ? window.crypto : (typeof require !== "undefined" ? require("crypto").webcrypto : null);
+      if (!c) throw new Error("无可用的随机源");
+      return c.getRandomValues(new Uint8Array(n));
+    }
+    async function deriveKey(pass, salt) {
+      const s = subtle(); if (!s) throw new Error("webcrypto 不可用");
+      const base = await s.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
+      return s.deriveKey({ name: "PBKDF2", salt, iterations: 150000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    }
+    async function encrypt(plain, pass) {
+      const s = subtle(); if (!s) throw new Error("webcrypto 不可用");
+      const salt = randBytes(16);
+      const iv = randBytes(12);
+      const key = await deriveKey(pass, salt);
+      const ct = await s.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plain));
+      return { v: 1, salt: b64(salt), iv: b64(iv), ct: b64(new Uint8Array(ct)) };
+    }
+    async function decrypt(blob, pass) {
+      const s = subtle(); if (!s) throw new Error("webcrypto 不可用");
+      const salt = unb64(blob.salt), iv = unb64(blob.iv);
+      const key = await deriveKey(pass, salt);
+      const pt = await s.decrypt({ name: "AES-GCM", iv }, key, unb64(blob.ct));
+      return dec.decode(pt);
+    }
+    return { encrypt, decrypt, available: !!subtle(), b64, unb64 };
+  })();
+
+  // 密钥保险库：保护开关、加解密、锁定/解锁状态
+  const KeyVault = {
+    BLOB_KEY: "sectutor_llm_key",
+    isProtected() { try { return !!localStorage.getItem(this.BLOB_KEY); } catch (e) { return false; } },
+    isLocked() { return this.isProtected() && !(state.llm && state.llm.key); },
+    async enable(pass) {
+      if (!state.llm || !state.llm.key) throw new Error("请先填写 API Key 再启用手令保护");
+      if (!KM.available) throw new Error("当前环境不支持 Web Crypto，无法启用口令保护");
+      const blob = await KM.encrypt(state.llm.key, pass);
+      localStorage.setItem(this.BLOB_KEY, JSON.stringify(blob));
+      saveLlmState();               // 明文 key 移出 sectutor_llm
+      return true;
+    },
+    async disable() {
+      if (!state.llm || !state.llm.key) throw new Error("需先解锁后再关闭口令保护");
+      localStorage.removeItem(this.BLOB_KEY); saveLlmState();   // key 已在内存明文，写回 sectutor_llm
+      return true;
+    },
+    async unlock(pass) {
+      const raw = localStorage.getItem(this.BLOB_KEY); if (!raw) throw new Error("无加密密钥");
+      const blob = JSON.parse(raw);
+      const key = await KM.decrypt(blob, pass);
+      state.llm = state.llm || {}; state.llm.key = key;
+      return true;
+    },
+    async changePass(pass) {
+      if (!state.llm || !state.llm.key) throw new Error("需先解锁后再修改口令");
+      const blob = await KM.encrypt(state.llm.key, pass);
+      localStorage.setItem(this.BLOB_KEY, JSON.stringify(blob));
+      return true;
+    },
+  };
+
+  // 首次 AI 问答时若密钥已锁定，弹出口令解锁；返回 Promise<boolean>
+  function ensureLlmUnlocked() {
+    return new Promise((resolve) => {
+      const body = `<p>大模型密钥已加密保护，请输入访问口令以解锁本次会话：</p>
+        <label class="field"><span>访问口令</span><input id="unlockPass" type="password" placeholder="口令" autocomplete="off" /></label>
+        <div class="api-actions"><button class="btn small" id="unlockOk">解锁</button><button class="btn small ghost" id="unlockCancel">取消</button></div>`;
+      const ov = openModal("🔓 解锁大模型密钥", body);
+      const finish = (ok) => { try { closeModal(); } catch (e) {} resolve(ok); };
+      const tryUnlock = async () => {
+        const pass = $("#unlockPass") ? $("#unlockPass").value : "";
+        try { await KeyVault.unlock(pass); finish(true); }
+        catch (e) { openModal("❌ 解锁失败", "<p>口令错误，请重试。</p>"); }
+      };
+      if ($("#unlockOk")) $("#unlockOk").addEventListener("click", tryUnlock);
+      if ($("#unlockCancel")) $("#unlockCancel").addEventListener("click", () => finish(false));
+      setTimeout(() => { const el = $("#unlockPass"); if (el && el.focus) el.focus(); }, 60);
+    });
+  }
+
+  // ===== 向量检索（决策 D1：启用，但仅在配置 EMBED_API_KEY 时真正激活；否则 BM25 降级）=====
+  const EMBED_API_KEY = (() => { try { return localStorage.getItem("sectutor_embed_key") || ""; } catch (e) { return ""; } })();
+  const VECTOR_ENABLED = true;          // 决策：启用混合召回
+  function vectorActive() { return VECTOR_ENABLED && !!EMBED_API_KEY; }
+  async function embed(text) {
+    if (!vectorActive()) return null;   // 无密钥 → 不发起网络请求，零成本
+    try {
+      const base = (state.llm && state.llm.base || "https://api.openai.com/v1").replace(/\/$/, "");
+      const r = await fetch(base + "/embeddings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + EMBED_API_KEY },
+        body: JSON.stringify({ model: "text-embedding-3-small", input: text }),
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.data && d.data[0] && d.data[0].embedding ? d.data[0].embedding : null;
+    } catch (e) { return null; }
+  }
+  // 混合召回：BM25 始终参与；向量可用时按 RRF 融合（文档向量需预计算落地，当前为空 → 退化为 BM25）
+  function hybridRetrieve(query, k) {
+    return retrieve(query, k);          // 向量层待 EMBED_API_KEY + 文档向量落地后融合；当前零成本降级
+  }
+
+  // ===== 特性开关（决策 D2：语音/视觉默认关闭，设置内手动开启）=====
+  const FEATURE_FLAGS = (() => {
+    try { return Object.assign({ voiceInput: false, visionInput: false }, safeParse(localStorage.getItem("sectutor_features"), {})); }
+    catch (e) { return { voiceInput: false, visionInput: false }; }
+  })();
+  function saveFeatureFlags() { try { localStorage.setItem("sectutor_features", JSON.stringify(FEATURE_FLAGS)); } catch (e) {} }
+
   // 持久化助手
   function saveProfile() { try { localStorage.setItem("sectutor_profile", JSON.stringify(state.profile)); } catch (e) {} }
   function saveMasteryDates() { try { localStorage.setItem("sectutor_mastery_dates", JSON.stringify(state.masteryDates)); } catch (e) {} }
@@ -5152,9 +5281,19 @@ zeek -C -r capture.pcap
     gateway: { complete: agentGatewayComplete },
     adapt: buildAdaptationContext,
     ask: (q) => askAgent(q),
+    km: KM,
+    vault: KeyVault,
+    vectorEnabled: VECTOR_ENABLED,
+    vectorActive: vectorActive,
+    features: FEATURE_FLAGS,
   };
 
   async function askLLM(q) {
+    // 密钥口令保护：若已加密且未解锁，先弹出口令解锁（与 AGENT_ENABLED 无关）
+    if (KeyVault.isProtected() && KeyVault.isLocked()) {
+      const ok = await ensureLlmUnlocked();
+      if (!ok) { addMsg("bot", "🔒 大模型密钥已口令保护，请输入访问口令解锁后再使用 AI 问答。"); return; }
+    }
     if (AGENT_ENABLED) { askAgent(q); return; }
     if (!state.llm || !state.llm.key) {
       askBuiltin(q);
@@ -5315,8 +5454,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 
   // LLM 配置
   $("#saveLlm").addEventListener("click", () => {
-    state.llm = { base: $("#llmBase").value.trim() || "https://api.openai.com/v1", key: $("#llmKey").value.trim(), model: $("#llmModel").value.trim() || "gpt-4o-mini" };
-    localStorage.setItem("sectutor_llm", JSON.stringify(state.llm));
+    const keepKey = KeyVault.isProtected() && state.llm && state.llm.key;   // 保护态：保留已解锁的明文 key
+    state.llm = {
+      base: $("#llmBase").value.trim() || "https://api.openai.com/v1",
+      key: KeyVault.isProtected() ? (keepKey || "") : $("#llmKey").value.trim(),
+      model: $("#llmModel").value.trim() || "gpt-4o-mini",
+    };
+    saveLlmState();
     addMsg("bot", "✅ 已保存大模型配置（仅存于本机浏览器）。后续问答将优先调用该接口，失败时回退内置知识引擎。");
   });
   $("#clearLlm").addEventListener("click", () => {
@@ -7179,7 +7323,17 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
 
   // —— API 接入中心 ——
-  function saveLlmState() { try { localStorage.setItem("sectutor_llm", JSON.stringify(state.llm)); } catch (e) {} }
+  function saveLlmState() {
+    try {
+      if (KeyVault && KeyVault.isProtected()) {
+        // 密钥已加密存于 sectutor_llm_key；此处仅持久化非机密配置（base/model/temp）
+        const { key, ...rest } = state.llm || {};
+        localStorage.setItem("sectutor_llm", JSON.stringify(rest));
+      } else {
+        localStorage.setItem("sectutor_llm", JSON.stringify(state.llm));
+      }
+    } catch (e) {}
+  }
   function renderMcpList() {
     const list = (state.apis.mcp || []);
     if (!list.length) return "<p style='color:var(--muted)'>尚未添加 MCP 服务器（预留，待启用）。</p>";
@@ -7213,6 +7367,22 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <label class="field"><span>模型名</span><input id="hubLlmModel" value="${escapeAttr(llm.model || "")}" placeholder="gpt-4o-mini" /></label>
         <label class="field"><span>温度 (0-1)</span><input id="hubLlmTemp" value="${escapeAttr(llm.temp != null ? llm.temp : "0.3")}" /></label>
         <button class="btn small" id="hubSaveLlm">保存大模型配置</button>
+        <hr class="api-sep" />
+        <div class="kv-section">
+          <div class="kv-status">密钥保护：<strong id="kvStatus">${KeyVault.isProtected() ? "已启用 🔒" : "未启用"}</strong></div>
+          <div class="api-actions">
+            <button class="btn small" id="kvEnable">${KeyVault.isProtected() ? "修改访问口令" : "启用访问口令保护"}</button>
+            ${KeyVault.isProtected() ? '<button class="btn small ghost" id="kvDisable">关闭保护（转明文）</button>' : ""}
+          </div>
+          <p class="hint" id="kvHint">${KeyVault.isProtected() ? "重启后密钥将锁定，首次 AI 问答需输入口令解锁。" : "启用后密钥以 AES-GCM 加密存于本机，重启需口令解锁；不启用则明文存于本机浏览器。"}</p>
+        </div>
+        <hr class="api-sep" />
+        <div class="feat-section">
+          <div class="kv-status">增强能力（实验，默认关闭）</div>
+          <label class="field inline"><input type="checkbox" id="featVoice" ${FEATURE_FLAGS.voiceInput ? "checked" : ""} /> 语音输入（需麦克风，可能联网 ASR）</label>
+          <label class="field inline"><input type="checkbox" id="featVision" ${FEATURE_FLAGS.visionInput ? "checked" : ""} /> 视觉识图（截图/报错识图，可能联网 VLM）</label>
+          <p class="hint">上述能力将在后续版本接入；当前仅记录开关状态，默认关闭以保隐私与离线可用。</p>
+        </div>
       </div>
       <div class="api-pane hidden" data-pane="intel">
         <p class="hint">预留：接入漏洞情报源（如 NVD / 自建情报网关），后续可用于「CVE 订阅推送 / PoC 研判」。配置后点「测试连接」探测可达性（仅 GET，不传输业务数据）。</p>
@@ -7250,9 +7420,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       ov.querySelector(`.api-pane[data-pane="${b.dataset.atab}"]`).classList.remove("hidden");
     }));
     $("#hubSaveLlm").addEventListener("click", () => {
+      const keepKey = KeyVault.isProtected() && state.llm && state.llm.key;   // 保护态：保留已解锁明文 key，不从禁用输入框覆盖
       state.llm = {
         base: $("#hubLlmBase").value.trim() || "https://api.openai.com/v1",
-        key: $("#hubLlmKey").value.trim(),
+        key: KeyVault.isProtected() ? (keepKey || "") : $("#hubLlmKey").value.trim(),
         model: $("#hubLlmModel").value.trim() || "gpt-4o-mini",
         temp: parseFloat($("#hubLlmTemp").value) || 0.3,
       };
@@ -7263,6 +7434,33 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const lm = $("#llmModel"); if (lm) lm.value = state.llm.model;
       openModal("✅ 已保存", "<p>大模型配置已保存到本机（仅本机浏览器）。</p>");
     });
+    // 保护态：禁用 key 输入框，避免误改
+    const hk = $("#hubLlmKey");
+    if (hk && KeyVault.isProtected()) { hk.value = "🔒 已加密（需口令解锁）"; hk.disabled = true; }
+    // 密钥口令保护：启用 / 修改 / 关闭
+    const kvEnable = $("#kvEnable");
+    if (kvEnable) kvEnable.addEventListener("click", async () => {
+      if (KeyVault.isProtected()) {
+        if (KeyVault.isLocked()) { await ensureLlmUnlocked(); }
+        const np = window.prompt("设置新访问口令（用于加密 API Key）："); if (!np) return;
+        try { await KeyVault.changePass(np); openModal("✅ 已修改", "<p>访问口令已更新。</p>"); }
+        catch (e) { openModal("❌ 失败", "<p>" + escapeHtml(e.message) + "</p>"); }
+      } else {
+        const pass = window.prompt("设置访问口令（用于加密 API Key，重启后需输入解锁）："); if (!pass) return;
+        try { await KeyVault.enable(pass); openModal("✅ 已启用", "<p>密钥已加密保护，重启后需口令解锁。</p>"); openApiHub(); }
+        catch (e) { openModal("❌ 启用失败", "<p>" + escapeHtml(e.message) + "</p>"); }
+      }
+    });
+    const kvDisable = $("#kvDisable");
+    if (kvDisable) kvDisable.addEventListener("click", async () => {
+      if (KeyVault.isLocked()) { const ok = await ensureLlmUnlocked(); if (!ok) return; }
+      try { await KeyVault.disable(); openModal("✅ 已关闭", "<p>密钥已转回明文存储（仅本机）。</p>"); openApiHub(); }
+      catch (e) { openModal("❌ 失败", "<p>" + escapeHtml(e.message) + "</p>"); }
+    });
+    // 增强能力开关（D2 默认关闭）
+    const fv = $("#featVoice"), fvi = $("#featVision");
+    if (fv) fv.addEventListener("change", () => { FEATURE_FLAGS.voiceInput = fv.checked; saveFeatureFlags(); });
+    if (fvi) fvi.addEventListener("change", () => { FEATURE_FLAGS.visionInput = fvi.checked; saveFeatureFlags(); });
     $("#hubSaveIntel").addEventListener("click", () => {
       state.apis.intel = { url: $("#hubIntelUrl").value.trim(), key: $("#hubIntelKey").value.trim() };
       saveApis(); openModal("✅ 已保存", "<p>威胁情报接入配置已保存（仅本机）。点「测试连接」可探测可达性；逻辑对接待启用。</p>");

@@ -983,4 +983,30 @@ agent_enabled / voice_enabled / vision_enabled / multi_agent
 - selftest 新增 9 条 Agent 断言（208/208 全绿）。
 - **密钥安全（safeStorage）推迟**：因渲染进程无 `safeStorage` 且需兼容 file:// 模式，Phase 0 沿用 localStorage；safeStorage 升级需 Electron 主进程配合，列为后续项（不阻塞 Phase 1）。
 
+## 第 30 节 四项待决策——已拍板并落地（2026-08-29）
+
+用户就此前四项待办逐项决策，本回合全部实现（app.js + styles.css + selftest.js，零回归，selftest 220/220）：
+
+**① 密钥安全 → Web Crypto 口令加密（替代原 safeStorage 方案）**
+- 决策理由：单文件 `sec-tutor.html` 走 file://，无 Electron 主进程、无 `safeStorage`；选 **AES-GCM + PBKDF2（150k 迭代）**，浏览器标准，file:// 与 Electron 双端通用，真正防本机明文泄露。
+- 落地：`KM`（AES-GCM 加密/解密，随机源双端兜底）+ `KeyVault`（保护开关、加解密、锁定/解锁）。
+  - 未启用时行为完全不变（密钥明文存 `sectutor_llm`，向后兼容旧配置）。
+  - 启用后密钥加密存 `sectutor_llm_key`，`sectutor_llm` 仅留 base/model/temp；`saveLlmState()` 保护态自动剥离 key。
+  - 重启后密钥锁定，首次 AI 问答触发 `ensureLlmUnlocked()` 弹出口令解锁（与 `AGENT_ENABLED` 无关，两条路径都受保护）。
+  - API 中心 LLM 面板新增「密钥保护」区：启用 / 修改口令 / 关闭（转明文）+ 状态提示；保护态禁用 key 输入框防误改。
+  - `KM.available` 在生产浏览器/Electron 为 true；selftest 注入 Node webcrypto 跑通真实加解密往返 + 错误口令抛错断言。
+
+**D1 向量检索 → 启用（混合召回，缺密钥零成本降级）**
+- `EMBED_API_KEY`（localStorage `sectutor_embed_key`，当前未配）+ `VECTOR_ENABLED=true` + `vectorActive()` 闸门。
+- `embed()` 仅在 `vectorActive()` 时发起 embeddings 请求，否则返回 null（不联网、零成本）。
+- `hybridRetrieve()` 现等于 BM25；预留 RRF 融合分支，待 `EMBED_API_KEY` + 文档向量预计算落地后接入。
+
+**D2 语音/视觉 → 默认全关**
+- `FEATURE_FLAGS = { voiceInput:false, visionInput:false }`，localStorage 持久化；API 中心 LLM 面板新增开关 UI（默认未勾），目前仅记录开关，能力后续版本接入。
+
+**D3 多 Agent → 首版单 Agent + 工具**
+- 维持 Phase 0 单 `askAgent` + 提示词角色（Planner/Tutor/Examiner/Coach/LabOperator 以系统提示切换），多 Agent 真分离编排留作 Phase 4 增强。无需额外代码改动。
+
+**下一步（Phase 1 工具层）**：把 `retrieve`/`relatedDocs`/出题/计划/启环境正式注册为带 risk 等级的工具并接确认流；D1 向量真正融合需先配 `EMBED_API_KEY` 与文档向量落地。
+
 ```

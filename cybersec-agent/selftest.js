@@ -33,7 +33,12 @@ if (typeof window.TextEncoder === "undefined") window.TextEncoder = TextEncoder;
 if (typeof window.TextDecoder === "undefined") window.TextDecoder = TextDecoder;
 if (typeof window.ReadableStream === "undefined") window.ReadableStream = ReadableStream;
 // 默认 fetch 兜底（避免任何未预期的网络调用直接抛错中断测试）
-if (typeof window.fetch === "undefined") window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); };
+if (typeof window.fetch === "undefined") window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); }
+// Web Crypto（AES-GCM）用于密钥保险库自测；jsdom 默认无 crypto.subtle，注入 Node webcrypto 使其跑通真实加解密
+if (!window.crypto || !window.crypto.subtle) {
+  try { Object.defineProperty(window, "crypto", { value: require("crypto").webcrypto, configurable: true }); }
+  catch (e) { try { window.crypto = require("crypto").webcrypto; } catch (e2) {} }
+}
 
 function inject(code) {
   const s = doc.createElement("script");
@@ -865,6 +870,29 @@ $("#backLab").click();
     const p = ag.gateway.complete([{ role: "user", content: "x" }]);
     assert(p && typeof p.then === "function", "网关 complete 返回 Promise（支持异步/流式）");
   }
+
+  // ===== 30. 密钥保险库 + Web Crypto（方向①）=====
+  const ag2 = window.__agent;
+  assert(ag2 && ag2.km && typeof ag2.km.encrypt === "function", "密钥加密模块 KM.encrypt 暴露");
+  assert(ag2 && ag2.km && ag2.km.available === true, "Web Crypto(subtle) 在当前环境可用");
+  assert(ag2 && ag2.vault && typeof ag2.vault.isProtected === "function", "密钥保险库 KeyVault 暴露");
+  assert(ag2 && ag2.vault.isProtected() === false, "默认未启用口令保护（行为不变，密钥明文）");
+  assert(ag2 && ag2.vault.isLocked() === false, "默认未保护即未锁定（可直连 LLM）");
+  if (ag2 && ag2.km && ag2.km.available) {
+    const blob = await ag2.km.encrypt("sk-secret-123", "pass1");
+    assert(blob && blob.v === 1 && !!blob.ct && !!blob.salt && !!blob.iv, "KM.encrypt 产出 {v,salt,iv,ct} 密文包");
+    const back = await ag2.km.decrypt(blob, "pass1");
+    assert(back === "sk-secret-123", "KM.decrypt 用正确口令还原明文");
+    let wrongFailed = false;
+    try { await ag2.km.decrypt(blob, "wrong"); } catch (e) { wrongFailed = true; }
+    assert(wrongFailed, "KM.decrypt 用错误口令抛错（防暴力/误解）");
+  }
+
+  // ===== 31. D1 向量检索 + D2 特性开关 =====
+  assert(ag2 && ag2.vectorEnabled === true, "D1 向量检索配置为启用（VECTOR_ENABLED=true）");
+  assert(ag2 && ag2.vectorActive() === false, "无 EMBED_API_KEY 时 vectorActive=false（零成本降级 BM25）");
+  assert(ag2 && ag2.features && ag2.features.voiceInput === false && ag2.features.visionInput === false, "D2 语音/视觉默认关闭");
+  assert(ag2 && typeof ag2.vectorActive === "function", "vectorActive 为可调函数");
 
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
