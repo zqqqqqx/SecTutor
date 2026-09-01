@@ -2180,68 +2180,78 @@
     });
   }
 
-  window.__agent = {
-    enabled: AGENT_ENABLED,
-    setEnabled: (v) => { setAgentEnabled(v); },
-    gateway: { complete: agentGatewayComplete },
-    adapt: buildAdaptationContext,
-    adaptEngine: {
-      compose: composeAdaptation,
-      getAdapt: getAdapt,
-      saveAdapt: saveAdapt,
-      resetAdapt: resetAdapt,
-      scoreToLevel: scoreToLevel,
-      globalScore: adaptGlobalScore,
-      inferScenario: inferScenario,
-      recordQuizResult: recordQuizResult,
-      LEVELS: LEVELS,
-      SCENARIO_TEMPLATES: SCENARIO_TEMPLATES,
-    },
-    ask: (q, opts) => askAgent(q, opts),
-    km: KM,
-    vault: KeyVault,
-    vectorEnabled: VECTOR_ENABLED,
-    vectorActive: vectorActive,
-    features: FEATURE_FLAGS,
-    tools: listTools,
-    // 惰性取值：TOOL_RESULT_LIMIT 为后置 const，直接求值会触发 TDZ
-    get toolUtil() { return { truncateToolResult: truncateToolResult, RESULT_LIMIT: TOOL_RESULT_LIMIT, retrieveWeighted: retrieveWeighted }; },
-    requiresConfirm: toolRequiresConfirm,
-    riskOf: toolRisk,
-    confirmToolCall: confirmToolCall,
-    callTool: callTool,
-    // —— Phase 3 多 Agent 编排暴露 ——
-    // 惰性取值：AGENT_ROLES 为后置 const，直接求值会触发 TDZ（同 toolUtil 处理）
-    get roles() { return AGENT_ROLES; },
-    routeRole: routeRole,
-    getRole: getRole,
-    setAgentRole: (v) => { setAgentRole(v); },
-    getAgentRole: () => AGENT_ROLE,
-    toolSchemasForRole: toolSchemasForRole,
-    blackboard: { get: getBlackboard, save: saveBlackboard, default: defaultBlackboard },
-    // —— Phase 4 模态管线暴露 ——
-    asr: {
-      available: asrAvailable,
-      speechSupported: speechRecognitionAvailable,
-      micSupported: mediaDevicesAvailable,
-      webSpeechTranscribe: webSpeechTranscribe,
-      startCapture: startVoiceCapture,
-      transcribe: transcribeAudio,
-    },
-    vlm: {
-      available: visionAvailable,
-      describe: describeImage,
-      pickImage: pickImage,
-      captureScreen: captureScreen,
-      downscale: downscaleDataUrl,
-    },
-    setLastInputModality: setLastInputModality,
-    getLastInputModality: getLastInputModality,
-    setActiveEnv: (e) => { state.activeEnv = e; },
-    _setGateway: (fn) => { _agentGateway = fn; },
-    _setConfirm: (fn) => { _confirmToolCall = fn; },
-    _resetHooks: () => { _agentGateway = agentGatewayComplete; _confirmToolCall = confirmToolCall; },
-  };
+  // —— 技术债加固（v1.1.0）：单一惰性工厂取代「立即求值 + 零散 getter」——
+  // 旧写法在此处立即求值对象字面量，任何对后置 const（AGENT_ROLES / TOOL_RESULT_LIMIT 等）
+  // 的直接引用都会触发 TDZ 致整页崩溃（历史踩坑 3 次）。现改为 defineProperty 惰性工厂：
+  // 首次访问（运行期，脚本求值完成后）才组装完整对象，此时全部标识符均已初始化，
+  // 从根上消除 TDZ，内部也不再需要 get x() 散点防御。
+  // 已核实：脚本求值期间无任何代码读取 window.__agent（setAgentEnabled 仅由运行期交互触发）。
+  let _agentApi = null;
+  function buildAgentApi() {
+    if (_agentApi) return _agentApi;
+    _agentApi = {
+      enabled: AGENT_ENABLED,
+      setEnabled: (v) => { setAgentEnabled(v); },
+      gateway: { complete: agentGatewayComplete },
+      adapt: buildAdaptationContext,
+      adaptEngine: {
+        compose: composeAdaptation,
+        getAdapt: getAdapt,
+        saveAdapt: saveAdapt,
+        resetAdapt: resetAdapt,
+        scoreToLevel: scoreToLevel,
+        globalScore: adaptGlobalScore,
+        inferScenario: inferScenario,
+        recordQuizResult: recordQuizResult,
+        LEVELS: LEVELS,
+        SCENARIO_TEMPLATES: SCENARIO_TEMPLATES,
+      },
+      ask: (q, opts) => askAgent(q, opts),
+      km: KM,
+      vault: KeyVault,
+      vectorEnabled: VECTOR_ENABLED,
+      vectorActive: vectorActive,
+      features: FEATURE_FLAGS,
+      tools: listTools,
+      toolUtil: { truncateToolResult: truncateToolResult, RESULT_LIMIT: TOOL_RESULT_LIMIT, retrieveWeighted: retrieveWeighted },
+      requiresConfirm: toolRequiresConfirm,
+      riskOf: toolRisk,
+      confirmToolCall: confirmToolCall,
+      callTool: callTool,
+      // —— Phase 3 多 Agent 编排暴露 ——
+      roles: AGENT_ROLES,
+      routeRole: routeRole,
+      getRole: getRole,
+      setAgentRole: (v) => { setAgentRole(v); },
+      getAgentRole: () => AGENT_ROLE,
+      toolSchemasForRole: toolSchemasForRole,
+      blackboard: { get: getBlackboard, save: saveBlackboard, default: defaultBlackboard },
+      // —— Phase 4 模态管线暴露 ——
+      asr: {
+        available: asrAvailable,
+        speechSupported: speechRecognitionAvailable,
+        micSupported: mediaDevicesAvailable,
+        webSpeechTranscribe: webSpeechTranscribe,
+        startCapture: startVoiceCapture,
+        transcribe: transcribeAudio,
+      },
+      vlm: {
+        available: visionAvailable,
+        describe: describeImage,
+        pickImage: pickImage,
+        captureScreen: captureScreen,
+        downscale: downscaleDataUrl,
+      },
+      setLastInputModality: setLastInputModality,
+      getLastInputModality: getLastInputModality,
+      setActiveEnv: (e) => { state.activeEnv = e; },
+      _setGateway: (fn) => { _agentGateway = fn; },
+      _setConfirm: (fn) => { _confirmToolCall = fn; },
+      _resetHooks: () => { _agentGateway = agentGatewayComplete; _confirmToolCall = confirmToolCall; },
+    };
+    return _agentApi;
+  }
+  Object.defineProperty(window, "__agent", { get: () => buildAgentApi(), configurable: true });
 
   async function askLLM(q, opts) {
     opts = opts || {};
