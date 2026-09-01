@@ -1251,6 +1251,99 @@ $("#backLab").click();
     ag2.setActiveEnv(null);
   }
 
+  // ===== 39. Phase 5 / v1.1.0 自主流 Flow 引擎：启动/推进/hitl/持久化/续跑 =====
+  {
+    const ag2 = window.__agent;
+    assert(!!window.document.getElementById("flowBar"), "flowBar 进度条容器存在");
+    assert(ag2.flow && typeof ag2.flow.start === "function", "window.__agent.flow 已暴露");
+    const libKeys = Object.keys(ag2.flow.library);
+    assert(libKeys.length >= 3 && libKeys.indexOf("diagnose_web") >= 0, "FLOW_LIBRARY 内置 ≥3 个流程（含 diagnose_web）");
+    // 工具注册与风险映射
+    const tl = ag2.tools();
+    const sf = tl.find((x) => x.name === "start_flow"), fs = tl.find((x) => x.name === "flow_status");
+    const af = tl.find((x) => x.name === "advance_flow"), xf = tl.find((x) => x.name === "stop_flow");
+    assert(!!sf && !!fs && !!af && !!xf, "四个 Flow 工具均已注册");
+    assert(ag2.riskOf("start_flow") === "low" && ag2.riskOf("advance_flow") === "low", "Flow 工具为 low 风险免确认");
+    // planner 角色白名单可见 Flow 工具
+    const pl = ag2.toolSchemasForRole("planner").map((s) => s.function.name);
+    assert(pl.indexOf("start_flow") >= 0 && pl.indexOf("advance_flow") >= 0, "planner 角色白名单含 Flow 工具");
+    // 启动 + 持久化
+    const s1 = await ag2.callTool("start_flow", { flow_id: "exam_sprint" });
+    assert(/已启动流程/.test(s1), "start_flow 启动成功");
+    const persisted = ag2.flow.load();
+    assert(persisted && persisted.flow_id === "exam_sprint" && persisted.status === "ready" && persisted.step_index === 0, "Flow 状态已持久化（ready/第 0 步）");
+    // 进行中不可重复启动
+    const s1b = await ag2.callTool("start_flow", { flow_id: "diagnose_web" });
+    assert(/已有进行中的流程/.test(s1b), "进行中时拒绝启动新流程");
+    // 推进第 1 步（read_progress，免确认）
+    const s2 = await ag2.callTool("advance_flow", {});
+    assert(/步骤「学情速览」完成/.test(s2), "advance_flow 执行当前步骤并前进");
+    // 状态查询
+    const s3 = await ag2.callTool("flow_status", {});
+    assert(/考前冲刺刷题流/.test(s3) && /✅ 学情速览/.test(s3), "flow_status 报告流程与步骤进度");
+    // 终止 + 状态清除
+    const s4 = await ag2.callTool("stop_flow", {});
+    assert(/已结束流程/.test(s4), "stop_flow 终止流程");
+    assert(!ag2.flow.load(), "终止后持久化状态已清除");
+    // hitl 拒绝 → 暂停；确认 → 恢复执行
+    ag2._setConfirm(async () => false);
+    await ag2.callTool("start_flow", { flow_id: "lab_practice" });
+    await ag2.callTool("advance_flow", {});                       // 第 1 步 目标讲解（免确认）
+    const d2 = await ag2.callTool("advance_flow", {});            // 第 2 步 建靶自检 → 确认被拒
+    assert(/已暂停.*拒绝/.test(d2), "hitl 拒绝后流程暂停");
+    const paused = ag2.flow.load();
+    assert(paused && paused.status === "paused" && paused.step_index === 1, "暂停状态持久化（停在待确认步）");
+    ag2._setConfirm(async () => true);
+    const d3 = await ag2.callTool("advance_flow", {});            // 重试建靶自检（无后端 → 建靶失败仍记结果前进）
+    assert(/步骤「建靶自检」完成/.test(d3), "确认后步骤恢复执行");
+    await ag2.callTool("stop_flow", {});
+    ag2._resetHooks();
+  }
+
+  // ===== 40. v1.1.0 知识图谱 + 质量度量 =====
+  {
+    const ag2 = window.__agent;
+    // —— 知识图谱：数据完整性 ——
+    assert(ag2.kg && typeof ag2.kg.check === "function", "window.__agent.kg 已暴露");
+    const kg = ag2.kg.graph();
+    assert(kg.edgeCount >= 60, `知识图谱依赖边 ≥60（实际 ${kg.edgeCount} 条）`);
+    let badEdge = null;
+    ["prereq", "advanced", "peer"].forEach((type) => {
+      Object.keys(kg[type]).forEach((from) => {
+        if (!PF.allTopics().some((t) => t.id === from)) badEdge = badEdge || (type + ":" + from);
+        kg[type][from].forEach((to) => {
+          if (!PF.allTopics().some((t) => t.id === to)) badEdge = badEdge || (type + ":" + from + "->" + to);
+        });
+      });
+    });
+    assert(!badEdge, "知识图谱全部边端点均为有效知识点 id" + (badEdge ? "（非法：" + badEdge + "）" : ""));
+    // —— prereq_check 工具 ——
+    const ov = await ag2.callTool("prereq_check", {});
+    assert(/知识图谱总览/.test(ov), "prereq_check 无参返回图谱总览");
+    const pq = await ag2.callTool("prereq_check", { topicId: "jwt" });
+    assert(/JWT 安全问题/.test(pq) && /前置/.test(pq), "prereq_check 已知点返回前置链");
+    assert(/进阶/.test(pq) && /并列/.test(pq) && /反向依赖/.test(pq), "prereq_check 含进阶/并列/反向依赖");
+    const badq = await ag2.callTool("prereq_check", { topicId: "nope_x" });
+    assert(/未找到该知识点/.test(badq), "prereq_check 未知 id 友好报错");
+    const co = ag2.toolSchemasForRole("coach").map((s) => s.function.name);
+    assert(co.indexOf("prereq_check") >= 0, "coach 角色白名单含 prereq_check");
+    // —— 质量度量 ——
+    assert(ag2.metrics && typeof ag2.metrics.snapshot === "function", "window.__agent.metrics 已暴露");
+    assert(ag2.tools().some((x) => x.name === "read_metrics") && ag2.riskOf("read_metrics") === "low", "read_metrics 已注册且 low 风险");
+    ag2.metrics.reset();
+    assert(ag2.metrics.load().tool.total === 0, "度量重置后计数归零");
+    await ag2.callTool("read_progress", {});
+    await ag2.callTool("prereq_check", { topicId: "sqli" });
+    const m1 = ag2.metrics.load();
+    assert(m1.tool.total === 2 && m1.tool.ok === 2, "callTool 埋点记录调用数与成功数");
+    assert(m1.tool.by_name.read_progress && m1.tool.by_name.read_progress.total === 1, "分工具统计已记录");
+    ag2.metrics.recordFirstToken(100); ag2.metrics.recordFirstToken(200); ag2.metrics.recordFirstToken(300);
+    const snap = await ag2.callTool("read_metrics", {});
+    assert(/成功率 100%/.test(snap), "read_metrics 报告工具成功率");
+    assert(/p50 200ms \/ p95 300ms/.test(snap), "首字延迟 p50/p95 统计正确");
+    ag2.metrics.reset();
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

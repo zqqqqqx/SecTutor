@@ -219,6 +219,58 @@
   const allTopics = () => TOPICS;
   const topicName = (id) => { const t = TOPIC_BY_ID.get(id); return t ? t.name : id; };
 
+  /* ---------- 知识图谱（v1.1.0，AGENT-DESIGN 第 2 节第 3 条）----------
+     74 个知识点上的「前置/进阶/并列」依赖边（数据在 data.js knowledge_graph）。
+     构建正反向索引；未知 id（数据维护失误兜底）在构建期过滤。
+     用途：prereq_check 工具（LLM 可调）+ 规划/诊断时「学 A 前先补 B」。 */
+  const KG = (function buildKnowledgeGraph() {
+    const src = (SEC_DATA.knowledge_graph) || {};
+    const idx = {
+      prereq: {}, advanced: {}, peer: {},
+      reverse: { prereq_of: {}, advanced_of: {}, peer_of: {} },
+    };
+    ["prereq", "advanced", "peer"].forEach((type) => {
+      const m = src[type] || {};
+      Object.keys(m).forEach((from) => {
+        if (!TOPIC_BY_ID.has(from)) return;
+        const tos = (Array.isArray(m[from]) ? m[from] : []).filter((to) => TOPIC_BY_ID.has(to) && to !== from);
+        if (!tos.length) return;
+        idx[type][from] = tos;
+        const rkey = type === "prereq" ? "prereq_of" : (type === "advanced" ? "advanced_of" : "peer_of");
+        tos.forEach((to) => {
+          (idx.reverse[rkey][to] = idx.reverse[rkey][to] || []).push(from);
+        });
+      });
+    });
+    idx.edgeCount = Object.keys(idx.prereq).reduce((n, k) => n + idx.prereq[k].length, 0) +
+      Object.keys(idx.advanced).reduce((n, k) => n + idx.advanced[k].length, 0) +
+      Object.keys(idx.peer).reduce((n, k) => n + idx.peer[k].length, 0);
+    return idx;
+  })();
+  // 知识图谱单点查询：前置/进阶/并列/反向依赖 + 未学前置提醒（结合 mastery 掌握状态）
+  function prereqCheck(topicId) {
+    if (!topicId) {
+      return "知识图谱总览：" + allTopics().length + " 个知识点，共 " + KG.edgeCount + " 条依赖边（前置 " +
+        Object.keys(KG.prereq).length + " 组 / 进阶 " + Object.keys(KG.advanced).length + " 组 / 并列 " + Object.keys(KG.peer).length + " 组）。" +
+        "传入 topicId 查询单点依赖（如 sqli / jwt / stack / tls）。";
+    }
+    const t = TOPIC_BY_ID.get(topicId);
+    if (!t) return "未找到该知识点（topicId=" + topicId + "）。可在「知识体系」检索确认知识点后重试。";
+    const mastered = (id) => !!(state.mastery && state.mastery.has(id));
+    const nm = (ids) => (ids && ids.length)
+      ? ids.map((id) => topicName(id) + "（" + id + (mastered(id) ? "·已掌握" : "·未学") + "）").join("、")
+      : "无";
+    const lines = [];
+    lines.push("📘 " + t.name + "（" + topicId + " · " + (catById(t.cat).name || t.cat) + "）");
+    lines.push("① 前置（学它之前建议先补）：" + nm(KG.prereq[topicId]));
+    lines.push("② 进阶（学完可深入）：" + nm(KG.advanced[topicId]));
+    lines.push("③ 并列（同类可替代/组合学）：" + nm(KG.peer[topicId]));
+    lines.push("④ 反向依赖（后续会用到它的知识点）：" + nm(KG.reverse.prereq_of[topicId]));
+    const unlearned = (KG.prereq[topicId] || []).filter((id) => !mastered(id));
+    if (unlearned.length) lines.push("⚠️ 建议：先补 " + unlearned.map((id) => topicName(id)).join("、") + " 再学本点，理解成本更低。");
+    return lines.join("\n");
+  }
+
   /* ---------- RAG 检索（离线可运行，跨全知识库） ---------- */
   // 把「知识点 / 靶场题解 / 安全资讯 / 安全工具 / 交互靶场」统一打成可检索文档，
   // 每个文档预计算 token 集合，供本地关键词 + 二元文法检索打分。
@@ -1586,6 +1638,7 @@
     return { text, docs };
   }
   async function chatCompletions(messages, tools, onChunk) {
+    const ft0 = Date.now(); let ftDone = false;          // 质量度量：首字延迟计时起点
     const base = (state.llm.base || "https://api.openai.com/v1").replace(/\/$/, "");
     const body = {
       model: state.llm.model || "gpt-4o-mini",
@@ -1629,7 +1682,10 @@
           try {
             const ev = JSON.parse(json);
             const delta = ev.choices?.[0]?.delta || {};
-            if (delta.content) { full += delta.content; onChunk(delta.content); }
+            if (delta.content) {
+              full += delta.content; onChunk(delta.content);
+              if (!ftDone) { ftDone = true; metricRecordFirstToken(Date.now() - ft0); }
+            }
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
                 const idx = tc.index || 0;
@@ -2226,6 +2282,26 @@
       getAgentRole: () => AGENT_ROLE,
       toolSchemasForRole: toolSchemasForRole,
       blackboard: { get: getBlackboard, save: saveBlackboard, default: defaultBlackboard },
+      // —— Phase 5 自主流 Flow 引擎暴露 ——
+      flow: {
+        start: startFlow,
+        advance: advanceFlow,
+        stop: stopFlow,
+        status: flowStatusText,
+        render: renderFlowBar,
+        library: FLOW_LIBRARY,
+        load: loadFlowState,
+      },
+      // —— v1.1.0 知识图谱 + 质量度量暴露 ——
+      kg: { check: prereqCheck, graph: () => KG },
+      metrics: {
+        snapshot: metricsSnapshot,
+        reset: resetMetrics,
+        load: loadMetrics,
+        recordTool: metricRecordTool,
+        recordFirstToken: metricRecordFirstToken,
+        recordDegraded: metricRecordDegraded,
+      },
       // —— Phase 4 模态管线暴露 ——
       asr: {
         available: asrAvailable,
@@ -2268,6 +2344,7 @@
     }
     if (AGENT_ENABLED) { askAgent(q, opts); return; }
     if (!state.llm || !state.llm.key) {
+      metricRecordDegraded();          // 质量度量：无 Key 回退内置（降级触发）
       askBuiltin(q, opts);
       return;
     }
@@ -4491,6 +4568,14 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const lastQuiz = bb.last_quiz ? ("上次测验：" + (bb.last_quiz.domain || "all") + " ×" + (bb.last_quiz.count || 0) + " 题") : "暂无";
       return "学情快照｜领域诊断：" + dom + "｜已掌握知识点：" + mastery + " 个｜薄弱点：" + weak + "｜" + lastQuiz + "。";
     } },
+    // —— Phase 5 自主流 Flow 引擎工具（spec 第 20 节）：让 LLM 可启动/推进/查询/终止多步引导流程 ——
+    { name: "start_flow", description: "启动一个内置自主流（Flow）：多步骤引导式学习/实操流程。可用：diagnose_web（Web 安全系统诊断流：摸底→计划→讲解→靶场→小测→复盘）、lab_practice（靶场授权实操流：讲解→建靶自检→收靶→报告）、exam_sprint（考前冲刺刷题流）。同一时间只能有一个进行中的流程。", parameters: { type: "object", properties: { flow_id: { type: "string", description: "流程 id：diagnose_web / lab_practice / exam_sprint" }, params: { type: "object", description: "可选。覆盖流程默认参数，如 {domain:'web', lab_id:'lab_sqli'}" } }, required: ["flow_id"] }, run: (a) => startFlow(a.flow_id || a.flowId, a.params) },
+    { name: "flow_status", description: "查询当前进行中流程的名称、步骤进度、状态与各步结果摘要（只读、本地执行）。", parameters: { type: "object", properties: {}, required: [] }, run: () => flowStatusText() },
+    { name: "advance_flow", description: "推进当前流程：执行当前步骤并前进到下一步。若流程处于暂停（如用户曾拒绝确认）也会继续尝试。可附带用户针对当前步骤的输入（如答题内容）。", parameters: { type: "object", properties: { input: { type: "string", description: "可选。用户针对当前步骤的输入（如答题选项、补充说明）" } }, required: [] }, run: (a) => advanceFlow(a && a.input) },
+    { name: "stop_flow", description: "终止当前进行中的流程（已完成步骤的结果保留在对话中，流程状态清除）。", parameters: { type: "object", properties: {}, required: [] }, run: () => stopFlow() },
+    // —— v1.1.0 知识图谱 + 质量度量 ——
+    { name: "prereq_check", description: "知识图谱查询（74 知识点依赖边）：给定知识点 id，返回学它之前建议先补的前置概念（结合掌握状态标注未学项）、学完可深入的进阶方向、并列可替代知识点，以及反向依赖（哪些知识点会用到它）。规划学习路径、诊断「为什么学不动」、安排补课顺序时调用。不传 topicId 返回图谱总览。", parameters: { type: "object", properties: { topicId: { type: "string", description: "知识点 id，如 sqli / jwt / stack / tls；缺省返回总览" } }, required: [] }, run: (a) => prereqCheck(a && (a.topicId || a.topic_id) || "") },
+    { name: "read_metrics", description: "读取 Agent 质量度量快照：工具调用成功率与最常用工具、首字延迟 p50/p95、降级触发次数、Flow 步骤执行数（只读、本地执行）。", parameters: { type: "object", properties: {}, required: [] }, run: () => metricsSnapshot() },
   ];
   // —— Phase 1 工具层：风险分级 + 确认流 ——
   // 风险等级：low（本地只读/非破坏，自动执行）；high（启动环境等外部副作用，需用户确认）
@@ -4510,6 +4595,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     read_scan_reports: { level: "low", confirm: false },
     generate_quiz: { level: "low", confirm: false },
     read_progress: { level: "low", confirm: false },
+    start_flow: { level: "low", confirm: false },
+    flow_status: { level: "low", confirm: false },
+    advance_flow: { level: "low", confirm: false },
+    stop_flow: { level: "low", confirm: false },
+    prereq_check: { level: "low", confirm: false },
+    read_metrics: { level: "low", confirm: false },
   };
   function toolRisk(name) { const r = TOOL_RISK[name]; return r ? r.level : null; }
   function toolRequiresConfirm(name) { const r = TOOL_RISK[name]; return !!(r && r.confirm); }
@@ -4532,8 +4623,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan"],
-      persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。",
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check"],
+      persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
       id: "examiner", label: "考官 Examiner", emoji: "🎯",
@@ -4542,8 +4633,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress"],
-      persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。",
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics"],
+      persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {
       id: "lab", label: "靶场员 Lab", emoji: "🧪",
@@ -4732,12 +4823,290 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   async function callTool(name, args) {
     const t = AGENT_TOOLS.find((x) => x.name === name);
     if (!t) return "未知工具：" + name;
-    try { const r = await t.run(args || {}); return truncateToolResult(r == null ? "" : r); } catch (e) { return "工具执行错误：" + e.message; }
+    const t0 = Date.now();
+    try {
+      const r = await t.run(args || {});
+      const out = truncateToolResult(r == null ? "" : r);
+      metricRecordTool(name, out.indexOf("工具执行错误") !== 0, Date.now() - t0);
+      return out;
+    } catch (e) {
+      metricRecordTool(name, false, Date.now() - t0);
+      return "工具执行错误：" + e.message;
+    }
   }
   let _toolSchemas = null;
   function toolSchemas() {
     if (!_toolSchemas) _toolSchemas = AGENT_TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
     return _toolSchemas;
+  }
+
+  // —— Phase 5 / v1.1.0：自主流 Flow 引擎（spec 第 20 节）——
+  // 前端直连架构下以 JS 对象承载 Flow 定义（等价 YAML）。节点能力：
+  //   step（执行工具动作，repeat: N 可连做 N 次）／ hitl: "confirm"（人类在环确认点，
+  //   复用 _confirmToolCall 弹窗，自测可替换桩）／ condition: { contains, goto }
+  //   （执行前对上一步结果做包含匹配，命中则跳转到 goto 步）。
+  //   schedule（跨会话定时节点）为后续扩展点，本版未启用。
+  // 状态持久化到 localStorage（sectutor_flow_state），会话关闭后经进度条「继续」或
+  // advance_flow 续跑；加载时 running（崩溃残留）归一化为 ready。
+  const FLOW_STATE_KEY = "sectutor_flow_state";
+  const FLOW_LIBRARY = {
+    diagnose_web: {
+      id: "diagnose_web", name: "Web 安全系统诊断流", emoji: "🩺",
+      trigger: "想系统学 Web 安全",
+      desc: "摸底诊断 → 定制计划 → 要点讲解 → 靶场实操 → 当日小测 → 学情复盘",
+      params: { domain: "web", lab_id: "lab_sqli" },
+      steps: [
+        { id: "diag", name: "摸底诊断", action: "generate_quiz", args: { domain: "{{domain}}", count: 5 }, hitl: "none" },
+        { id: "plan", name: "定制计划", action: "generate_plan", args: { category: "{{domain}}", hours_per_week: 5, weeks: 2 }, hitl: "none" },
+        { id: "daily", name: "要点讲解", action: "search_knowledge", args: { query: "{{domain}} 入门核心要点 防御", top_k: 3 }, hitl: "none" },
+        { id: "lab", name: "靶场实操", action: "run_scan", args: { labId: "{{lab_id}}" }, hitl: "confirm" },
+        { id: "quiz", name: "当日小测", action: "generate_quiz", args: { domain: "{{domain}}", count: 3 }, hitl: "none" },
+        { id: "review", name: "学情复盘", action: "read_progress", args: {}, hitl: "none" },
+      ],
+    },
+    lab_practice: {
+      id: "lab_practice", name: "靶场授权实操流", emoji: "🧪",
+      trigger: "想完整走一遍靶场实操",
+      desc: "目标讲解 → 建靶自检（需确认）→ 收靶（需确认）→ 报告归档查看",
+      params: { lab_id: "lab_xss", topic: "XSS" },
+      steps: [
+        { id: "brief", name: "目标讲解", action: "search_knowledge", args: { query: "{{topic}} 原理 防御 靶场要点", top_k: 3 }, hitl: "none" },
+        { id: "scan", name: "建靶自检", action: "run_scan", args: { labId: "{{lab_id}}" }, hitl: "confirm" },
+        { id: "teardown", name: "收靶", action: "teardown_lab_env", args: {}, hitl: "confirm" },
+        { id: "report", name: "报告归档查看", action: "read_scan_reports", args: {}, hitl: "none" },
+      ],
+    },
+    exam_sprint: {
+      id: "exam_sprint", name: "考前冲刺刷题流", emoji: "🎯",
+      trigger: "想集中刷题备考",
+      desc: "学情速览 → 混合出题 → 薄弱点加练",
+      params: { domain: "all", level: "" },
+      steps: [
+        { id: "snap", name: "学情速览", action: "read_progress", args: {}, hitl: "none" },
+        { id: "mixed", name: "混合出题", action: "generate_quiz", args: { domain: "{{domain}}", count: 5 }, hitl: "none" },
+        { id: "weak", name: "薄弱加练", action: "generate_quiz", args: { domain: "{{domain}}", level: "{{level}}", count: 3 }, hitl: "none" },
+      ],
+    },
+  };
+  function loadFlowState() {
+    try {
+      const v = JSON.parse(localStorage.getItem(FLOW_STATE_KEY));
+      if (v && v.flow_id && FLOW_LIBRARY[v.flow_id]) {
+        if (v.status === "running") v.status = "ready";   // 崩溃/关窗残留归一化
+        return v;
+      }
+    } catch (e) {}
+    return null;
+  }
+  function saveFlowState(st) {
+    try { st.updated_at = Date.now(); localStorage.setItem(FLOW_STATE_KEY, JSON.stringify(st)); } catch (e) {}
+  }
+  function clearFlowState() { try { localStorage.removeItem(FLOW_STATE_KEY); } catch (e) {} }
+  // 模板变量解析：{{key}} 先查 params 再查已完成步骤结果（结果取前 200 字符防注入过长）
+  function resolveTpl(v, st) {
+    if (typeof v === "string") {
+      return v.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (m, k) => {
+        if (st.params && st.params[k] != null) return String(st.params[k]);
+        if (st.results && st.results[k] != null) return String(st.results[k]).slice(0, 200);
+        return "";
+      });
+    }
+    if (Array.isArray(v)) return v.map((x) => resolveTpl(x, st));
+    if (v && typeof v === "object") { const o = {}; for (const k in v) o[k] = resolveTpl(v[k], st); return o; }
+    return v;
+  }
+  // 条件分支：当前步带 condition 且上一步结果命中 contains → 跳到 goto 步下标
+  function flowNextIndex(def, st) {
+    const steps = def.steps || [];
+    const cur = steps[st.step_index];
+    if (cur && cur.condition && cur.condition.contains != null && cur.condition.goto) {
+      const keys = Object.keys(st.results || {});
+      const prev = keys.length ? String(st.results[keys[keys.length - 1]]) : "";
+      if (prev.indexOf(cur.condition.contains) >= 0) {
+        const gi = steps.findIndex((s) => s.id === cur.condition.goto);
+        if (gi >= 0) return gi;
+      }
+    }
+    return st.step_index + 1;
+  }
+  function flowProgressText(st) {
+    const def = FLOW_LIBRARY[st.flow_id] || {};
+    const n = (def.steps || []).length;
+    return "第 " + Math.min(st.step_index + 1, n) + "/" + n + " 步";
+  }
+  // 执行当前步骤：hitl 确认（拒绝→暂停）→ 调工具 → 记录结果 → 前进/完成
+  async function executeFlowStep(st) {
+    const def = FLOW_LIBRARY[st.flow_id];
+    if (!def) return { ok: false, msg: "Flow 定义缺失：" + st.flow_id };
+    const steps = def.steps || [];
+    if (st.step_index >= steps.length) {
+      st.status = "done"; saveFlowState(st); renderFlowBar();
+      return { ok: true, done: true, msg: "✅ 流程「" + def.name + "」已全部完成，共 " + steps.length + " 步。可用 stop_flow 清理，或让我基于结果复盘。" };
+    }
+    const step = steps[st.step_index];
+    if (step.hitl === "confirm" || toolRequiresConfirm(step.action)) {
+      const ok = await _confirmToolCall({ name: step.action, description: step.name }, resolveTpl(step.args || {}, st));
+      if (!ok) {
+        st.status = "paused"; st.pause_reason = "用户拒绝了步骤「" + step.name + "」的执行确认";
+        saveFlowState(st); renderFlowBar();
+        return { ok: false, paused: true, msg: "⏸ 已暂停：你拒绝了「" + step.name + "」。点进度条「继续」或让 Agent 调用 advance_flow 重试，「结束」可终止流程。" };
+      }
+    }
+    const args = resolveTpl(step.args || {}, st);
+    const times = Math.max(1, parseInt(step.repeat, 10) || 1);
+    let last = "";
+    for (let i = 0; i < times; i++) { last = await callTool(step.action, args); }
+    st.results = st.results || {};
+    st.results[step.id] = String(last);
+    st.history = st.history || [];
+    st.history.push({ step: step.id, at: Date.now(), ok: true });
+    metricRecordFlowStep();   // 质量度量：Flow 步骤执行数
+    st.step_index = flowNextIndex(def, st);
+    if (st.step_index >= steps.length) {
+      st.status = "done"; saveFlowState(st); renderFlowBar();
+      return { ok: true, done: true, msg: "✅ 步骤「" + step.name + "」完成，流程「" + def.name + "」已全部收官（" + steps.length + "/" + steps.length + "）。" };
+    }
+    st.status = "ready"; saveFlowState(st); renderFlowBar();
+    const next = steps[st.step_index];
+    return { ok: true, msg: "▶ 步骤「" + step.name + "」完成。" + (next ? "下一步：「" + next.name + "」（" + flowProgressText(st) + "）。" : "") };
+  }
+  function startFlow(flowId, params) {
+    const def = FLOW_LIBRARY[flowId];
+    if (!def) return "未找到流程「" + flowId + "」。可用流程：" + Object.keys(FLOW_LIBRARY).join(" / ");
+    const existing = loadFlowState();
+    if (existing && existing.status !== "done") {
+      return "已有进行中的流程「" + ((FLOW_LIBRARY[existing.flow_id] || {}).name || existing.flow_id) + "」（" + flowProgressText(existing) + "）。请先完成或结束它，再启动新流程。";
+    }
+    const st = {
+      flow_id: flowId, params: Object.assign({}, def.params || {}, params || {}),
+      step_index: 0, status: "ready", results: {}, history: [], inputs: {},
+      started_at: Date.now(), updated_at: Date.now(),
+    };
+    saveFlowState(st); renderFlowBar();
+    return "🚀 已启动流程「" + (def.emoji || "📋") + " " + def.name + "」（" + def.desc + "）。共 " + def.steps.length + " 步，第 1 步「" + def.steps[0].name + "」待执行：点进度条「▶ 继续」或让 Agent 调用 advance_flow 开始。";
+  }
+  async function advanceFlow(input) {
+    const st = loadFlowState();
+    if (!st) return "当前没有进行中的流程。可让 Agent 调用 start_flow 启动（可用：" + Object.keys(FLOW_LIBRARY).join(" / ") + "）。";
+    const def = FLOW_LIBRARY[st.flow_id];
+    if (st.status === "done") return "✅ 流程「" + (def.name || st.flow_id) + "」已完成，无需继续。";
+    if (typeof input === "string" && input.trim()) {
+      const cur = (def.steps || [])[st.step_index];
+      if (cur) { st.inputs = st.inputs || {}; st.inputs[cur.id] = input.trim(); }
+    }
+    st.status = "running"; saveFlowState(st); renderFlowBar();
+    const r = await executeFlowStep(st);
+    saveFlowState(st); renderFlowBar();
+    return r.msg;
+  }
+  function stopFlow() {
+    const st = loadFlowState();
+    if (!st) return "当前没有进行中的流程。";
+    const name = (FLOW_LIBRARY[st.flow_id] || {}).name || st.flow_id;
+    const done = Object.keys(st.results || {}).length;
+    clearFlowState(); renderFlowBar();
+    return "🛑 已结束流程「" + name + "」。已完成 " + done + " 步，各步结果已保留在对话与学情黑板中。";
+  }
+  function flowStatusText() {
+    const st = loadFlowState();
+    if (!st) return "当前没有进行中的流程。可用流程：" + Object.keys(FLOW_LIBRARY).map((k) => k + "（" + FLOW_LIBRARY[k].name + "）").join("、") + "。";
+    const def = FLOW_LIBRARY[st.flow_id] || {};
+    const steps = def.steps || [];
+    const cur = steps[st.step_index];
+    const lines = steps.map((s, i) => (i < st.step_index ? "✅ " : i === st.step_index ? "▶ " : "· ") + s.name).join("\n");
+    return "📋 流程「" + (def.name || st.flow_id) + "」" + flowProgressText(st) + "（状态：" + st.status + "）\n" + lines +
+      (cur ? "\n当前步骤：" + cur.name + ((cur.hitl === "confirm" || toolRequiresConfirm(cur.action)) ? "（执行前需你确认）" : "") : "") +
+      "\n用 advance_flow 推进、stop_flow 终止。";
+  }
+  // 进度条 UI：角色条下方常驻，显示步骤 chips 与 继续/结束 按钮；无流程时隐藏
+  function renderFlowBar() {
+    const bar = $("#flowBar"); if (!bar) return;
+    const st = loadFlowState();
+    if (!st || st.status === "done") {
+      const finishing = st && st.status === "done";
+      bar.innerHTML = finishing
+        ? '<div class="flow-head"><span class="flow-title">✅ 流程已完成</span><span class="flow-actions"><button class="btn small ghost" id="flowClose">关闭</button></span></div>'
+        : "";
+      bar.style.display = finishing ? "" : "none";
+      const cl = $("#flowClose"); if (cl) cl.onclick = () => { bar.style.display = "none"; };
+      return;
+    }
+    const def = FLOW_LIBRARY[st.flow_id] || {};
+    const steps = def.steps || [];
+    const chips = steps.map((s, i) => {
+      const cls = i < st.step_index ? "done" : (i === st.step_index ? "cur" : "");
+      const mark = i < st.step_index ? "✓" : (i + 1);
+      return '<span class="flow-step ' + cls + '">' + mark + " " + escapeHtml(s.name) + "</span>";
+    }).join("");
+    const statusTxt = st.status === "paused" ? "已暂停" : (st.status === "running" ? "执行中…" : "待继续");
+    bar.innerHTML =
+      '<div class="flow-head"><span class="flow-title">' + escapeHtml(def.emoji || "📋") + " " + escapeHtml(def.name || st.flow_id) + "</span>" +
+      '<span class="flow-status ' + (st.status === "paused" ? "warn" : "") + '">' + statusTxt + "</span>" +
+      '<span class="flow-actions"><button class="btn small" id="flowNext">▶ 继续</button><button class="btn small ghost" id="flowStop">结束</button></span></div>' +
+      '<div class="flow-steps">' + chips + "</div>";
+    bar.style.display = "";
+    const nx = $("#flowNext");
+    if (nx) nx.onclick = async () => {
+      nx.disabled = true;
+      const msg = await advanceFlow();
+      addMsg("user", "▶ 继续流程"); addMsg("bot", escapeHtml(msg));
+      if (typeof saveChat === "function") saveChat();
+    };
+    const sp = $("#flowStop");
+    if (sp) sp.onclick = () => {
+      const msg = stopFlow();
+      addMsg("user", "🛑 结束流程"); addMsg("bot", escapeHtml(msg));
+      if (typeof saveChat === "function") saveChat();
+    };
+  }
+  renderFlowBar();   // 会话恢复：若有未完成流程，进度条带状态重现（可续跑）
+
+  // —— 质量度量（v1.1.0，AGENT-DESIGN 第 11 节）——
+  // 指标：工具调用成功率 / 首字延迟 p50·p95 / 降级触发率 / Flow 步骤执行数。
+  // 埋点：callTool（工具成败+耗时）、askLLM onChunk（首字）、askBuiltin（降级）、
+  //       executeFlowStep（流程步）。持久化 localStorage（sectutor_metrics），可重置。
+  const METRICS_KEY = "sectutor_metrics";
+  function defaultMetrics() {
+    return { tool: { total: 0, ok: 0, fail: 0, by_name: {} }, first_token_ms: [], degraded: 0, flow_steps: 0, since: Date.now() };
+  }
+  function loadMetrics() {
+    try { const v = JSON.parse(localStorage.getItem(METRICS_KEY)); if (v && v.tool) return Object.assign(defaultMetrics(), v); } catch (e) {}
+    return defaultMetrics();
+  }
+  function saveMetrics(m) { try { localStorage.setItem(METRICS_KEY, JSON.stringify(m)); } catch (e) {} }
+  function resetMetrics() { try { localStorage.removeItem(METRICS_KEY); } catch (e) {} }
+  function metricRecordTool(name, ok, ms) {
+    const m = loadMetrics();
+    m.tool.total++;
+    if (ok) m.tool.ok++; else m.tool.fail++;
+    const b = m.tool.by_name[name] = m.tool.by_name[name] || { total: 0, ok: 0 };
+    b.total++; if (ok) b.ok++;
+    if (ms != null) m.last_tool_ms = Math.round(ms);
+    saveMetrics(m);
+  }
+  function metricRecordFirstToken(ms) {
+    const m = loadMetrics();
+    m.first_token_ms = m.first_token_ms || [];
+    m.first_token_ms.push(Math.round(ms));
+    if (m.first_token_ms.length > 200) m.first_token_ms = m.first_token_ms.slice(-200);
+    saveMetrics(m);
+  }
+  function metricRecordDegraded() { const m = loadMetrics(); m.degraded = (m.degraded || 0) + 1; saveMetrics(m); }
+  function metricRecordFlowStep() { const m = loadMetrics(); m.flow_steps = (m.flow_steps || 0) + 1; saveMetrics(m); }
+  function metricsSnapshot() {
+    const m = loadMetrics();
+    const arr = (m.first_token_ms || []).slice().sort((a, b) => a - b);
+    const pick = (p) => (arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * p))] : null);
+    const rate = m.tool.total ? Math.round(100 * m.tool.ok / m.tool.total) : null;
+    const topTools = Object.keys(m.tool.by_name || {})
+      .sort((a, b) => (m.tool.by_name[b].total - m.tool.by_name[a].total)).slice(0, 3)
+      .map((n) => n + "×" + m.tool.by_name[n].total).join("、") || "暂无";
+    return "📊 Agent 质量度量快照\n" +
+      "· 工具调用：" + m.tool.total + " 次，成功 " + m.tool.ok + "，失败 " + m.tool.fail + (rate != null ? "（成功率 " + rate + "%）" : "") + "，最常用：" + topTools + "\n" +
+      "· 首字延迟：" + (arr.length ? ("p50 " + pick(0.5) + "ms / p95 " + pick(0.95) + "ms（样本 " + arr.length + "）") : "暂无样本") + "\n" +
+      "· 降级触发（无 Key 回退内置）：" + (m.degraded || 0) + " 次\n" +
+      "· Flow 流程步骤执行：" + (m.flow_steps || 0) + " 步\n" +
+      "· 统计起点：" + new Date(m.since || Date.now()).toLocaleString() + "（可用 reset_metrics 清零）";
   }
 
   function renderToolbox() {

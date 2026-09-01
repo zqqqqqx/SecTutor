@@ -2176,3 +2176,73 @@ zeek -C -r capture.pcap
   { id:"av48", cat:"pentest", level:"高级", q:"源码泄露如 .git 目录暴露可？", options:["恢复历史提交中的源码/密钥","只影响样式","仅日志","无影响"], answer:0, explain:".git 含完整版本历史，可翻出旧版漏洞与泄露的凭据。", hint:".git 含完整版本历史。" }
   ]
 };
+
+/* ============================================================
+   v1.1.0 知识图谱（AGENT-DESIGN 第 2 节第 3 条）：74 个知识点上的
+   「前置 / 并列 / 进阶」依赖边，用于「学 A 前先补 B」的诊断与计划。
+   - prereq:   学 key 之前建议先补 to 数组中的知识点
+   - advanced: 学完 key 之后可深入 to 数组中的知识点
+   - peer:     key 与 to 并列（同类可替代 / 组合学习）
+   仅登记知识体系内的 id；未知 id 由 app.js 建索引时过滤。
+   ============================================================ */
+SEC_DATA.knowledge_graph = {
+  prereq: {
+    // —— web ——
+    sqli: ["net-proto"], xss: ["net-proto", "auth"], csrf: ["auth", "xss"],
+    ssrf: ["net-proto", "lfi"], upload: ["lfi"], cmdinj: ["net-proto"],
+    deser: ["cmdinj"], auth: ["sym", "hash"], xxe: ["lfi", "ssrf"],
+    jwt: ["auth", "asym"], clickjack: ["auth"], cors: ["net-proto"],
+    lfi: ["net-proto"], ssti: ["cmdinj"], idor: ["auth"],
+    "api-sec": ["auth", "jwt"], smuggling: ["net-proto"], "proto-poll": ["deser"],
+    graphql: ["api-sec", "idor"], "cache-poison": ["smuggling", "net-proto"],
+    // —— binary ——
+    heap: ["stack"], fmt: ["stack"], rop: ["stack", "mitigations"],
+    sandbox: ["rop", "mitigations"], mitigations: ["stack"], uaf: ["heap"],
+    "av-bypass": ["sandbox"],
+    // —— crypto ——
+    asym: ["sym"], hash: ["sym"], rand: ["sym"], ecc: ["asym"],
+    tls: ["asym", "sym", "blockmode"], pqc: ["asym", "ecc"],
+    blockmode: ["sym"], pki: ["asym", "hash"], "crypto-misuse": ["rand", "hash"],
+    "side-channel": ["sym", "asym"],
+    // —— pentest ——
+    recon: ["net-proto"], scan: ["recon", "port-scan"], privesc: ["scan"],
+    lateral: ["privesc"], report: ["scan"], oauth: ["auth", "jwt"],
+    cloud: ["iam"], ad: ["lateral"], osint: ["recon"], "priv-esc": ["scan"],
+    // —— network ——
+    "port-scan": ["net-proto"], "arp-dns": ["net-proto"],
+    "net-lateral": ["arp-dns"], "ad-pentest": ["net-lateral"], "fw-bypass": ["port-scan", "ids"],
+    // —— cloud ——
+    iam: ["shared-resp"], "container-escape": ["sandbox", "iam"],
+    k8s: ["container-escape", "iam"], serverless: ["iam", "metadata"], metadata: ["iam", "ssrf"],
+    // —— blue ——
+    ids: ["net-proto", "siem"], traffic: ["ids", "siem"],
+    ir: ["siem", "edr"], "threat-intel": ["traffic"], edr: ["siem"],
+  },
+  advanced: {
+    stack: ["rop", "heap", "fmt"], heap: ["uaf"], mitigations: ["rop", "sandbox"],
+    sym: ["blockmode", "tls"], asym: ["tls", "pki", "ecc"], hash: ["pki"],
+    rand: ["crypto-misuse"], blockmode: ["tls"], auth: ["jwt", "oauth"],
+    lfi: ["xxe"], sqli: ["deser"], recon: ["scan", "osint"],
+    scan: ["privesc"], privesc: ["lateral"], lateral: ["ad"],
+    "net-proto": ["arp-dns", "port-scan"], "port-scan": ["fw-bypass"],
+    "arp-dns": ["net-lateral"], "net-lateral": ["ad-pentest"],
+    "shared-resp": ["iam"], iam: ["metadata", "k8s"], "container-escape": ["k8s"],
+    siem: ["ids", "edr"], ids: ["traffic"], traffic: ["threat-intel"], ir: ["threat-intel"],
+  },
+  peer: {
+    sqli: ["xss", "cmdinj"], xss: ["csrf", "sqli"], csrf: ["cors", "clickjack"],
+    cmdinj: ["ssti", "deser"], ssti: ["xxe", "deser"], xxe: ["ssti", "ssrf"],
+    cors: ["csrf"], idor: ["api-sec"], "proto-poll": ["deser"],
+    // 同义/重复主题互连：可互为替代
+    intovf: ["int-overflow"], "int-overflow": ["intovf"],
+    race: ["toctou"], toctou: ["race"], fuzz: ["fuzzing"], fuzzing: ["fuzz"],
+    privesc: ["priv-esc"], "priv-esc": ["privesc"],
+    ad: ["ad-pentest"], "ad-pentest": ["ad"], lateral: ["net-lateral"], "net-lateral": ["lateral"],
+    heap: ["fmt"], fmt: ["heap"], uaf: ["race"],
+    sym: ["asym"], asym: ["sym"], hash: ["rand"], rand: ["hash"],
+    "crypto-misuse": ["side-channel"], "side-channel": ["crypto-misuse"],
+    recon: ["port-scan", "osint"], osint: ["social"], social: ["osint"],
+    "threat-intel": ["osint"], metadata: ["ssrf"], ssrf: ["metadata"],
+    ids: ["edr", "fw-bypass"], edr: ["ids"],
+  }
+};

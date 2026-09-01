@@ -1049,3 +1049,23 @@ kbd {
 .rep-table { width: 100%; border-collapse: collapse; font-size: .88em; }
 .rep-table th, .rep-table td { padding: 6px 8px; border-bottom: 1px solid var(--line, #e3e8f0); text-align: left; }
 .rep-table th { color: var(--muted, #6b7280); font-weight: 600; }
+
+/* —— Phase 5 / v1.1.0：自主流 Flow 进度条 —— */
+.flow-bar {
+  margin: 6px 0; padding: 8px 10px;
+  border: 1px solid var(--line, #e3e8f0); border-radius: 10px;
+  background: var(--card, #f8fafc);
+}
+.flow-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-title { font-weight: 700; font-size: .9em; }
+.flow-status { font-size: .78em; color: var(--muted, #6b7280); }
+.flow-status.warn { color: #d97706; }
+.flow-actions { margin-left: auto; display: flex; gap: 6px; }
+.flow-steps { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-step {
+  font-size: .76em; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line, #e3e8f0); color: var(--muted, #6b7280);
+  background: transparent;
+}
+.flow-step.done { color: #059669; border-color: #059669; }
+.flow-step.cur { color: #fff; background: #2563eb; border-color: #2563eb; font-weight: 600; }
