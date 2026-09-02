@@ -1069,3 +1069,145 @@ kbd {
 }
 .flow-step.done { color: #059669; border-color: #059669; }
 .flow-step.cur { color: #fff; background: #2563eb; border-color: #2563eb; font-weight: 600; }
+
+/* ============================================================
+   UI Polish v1.1.0（聊天工作台 + 全局视觉统一 + 交互微体验）
+   原则：纯 CSS 渐进增强，零结构改动；全部走既有双主题 token
+   （--brand/--line/--panel/--muted/--glow-*），浅色与赛博朋克暗色
+   自动适配；类名不变，selftest 断言不受影响。
+   ============================================================ */
+
+/* ---------- ① 全局统一：焦点可达性 / 按压反馈 / 滚动条 ---------- */
+:focus-visible { outline: 2px solid var(--brand, #2563eb); outline-offset: 2px; border-radius: 6px; }
+.btn { transition: transform .12s ease, box-shadow .18s ease, background .15s ease, border-color .15s ease, color .15s ease; }
+.btn:active { transform: translateY(1px) scale(.985); }
+.chat-log::-webkit-scrollbar, .panel::-webkit-scrollbar, .modal-body::-webkit-scrollbar { width: 9px; height: 9px; }
+.chat-log::-webkit-scrollbar-thumb, .panel::-webkit-scrollbar-thumb, .modal-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted, #6b7280) 34%, transparent);
+  border-radius: 999px; border: 2px solid transparent; background-clip: content-box;
+}
+.chat-log::-webkit-scrollbar-thumb:hover, .panel::-webkit-scrollbar-thumb:hover, .modal-body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted, #6b7280) 58%, transparent); background-clip: content-box;
+}
+.chat-log::-webkit-scrollbar-track, .panel::-webkit-scrollbar-track, .modal-body::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- ② 消息气泡：入场动效 / 悬停反馈 / 细节 ---------- */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.msg-row { animation: fadeUp .28s cubic-bezier(.22, .8, .36, 1); }
+.msg-row.bot .msg { transition: box-shadow .2s ease, border-color .2s ease; }
+.msg-row.bot .msg:hover { box-shadow: var(--shadow); border-color: color-mix(in srgb, var(--brand, #2563eb) 34%, var(--line, #e3e8f0)); }
+.msg .suggestions button { transition: background .15s, color .15s, transform .12s ease, box-shadow .18s ease; }
+.msg .suggestions button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px color-mix(in srgb, var(--brand, #2563eb) 22%, transparent); }
+.msg .suggestions button:active { transform: none; }
+
+/* 打字指示：品牌色圆点 + 弹跳缩放（替代单调闪烁） */
+.typing span { background: var(--brand, #2563eb); animation: typingBounce 1.15s ease-in-out infinite; opacity: .85; }
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0) scale(.85); opacity: .5; }
+  30% { transform: translateY(-4px) scale(1); opacity: 1; }
+}
+
+/* ---------- ③ 角色条：胶囊精修 / 悬停抬升 / 选中光晕 ---------- */
+.agent-roles { backdrop-filter: blur(6px); }
+.agent-roles .ar-chip {
+  transition: transform .14s ease, box-shadow .18s ease, background .15s ease, border-color .15s ease, color .15s ease;
+  border-radius: 999px;
+}
+.agent-roles .ar-chip:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.agent-roles .ar-chip:active { transform: none; }
+.agent-roles .ar-chip.active {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand, #2563eb) 55%, transparent),
+              0 4px 14px color-mix(in srgb, var(--brand, #2563eb) 26%, transparent);
+}
+
+/* ---------- ④ Flow 进度条：品牌强调线 / 当前步呼吸 / 状态徽标 ---------- */
+.flow-bar {
+  border-left: 3px solid var(--brand, #2563eb);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--brand, #2563eb) 7%, var(--panel, #fff)) 0%, var(--panel, #fff) 46%);
+  animation: fadeUp .3s cubic-bezier(.22, .8, .36, 1);
+}
+.flow-status {
+  padding: 1px 9px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--muted, #6b7280) 36%, transparent);
+}
+.flow-status.warn {
+  color: #d97706; border-color: color-mix(in srgb, #d97706 44%, transparent);
+  background: color-mix(in srgb, #d97706 10%, transparent);
+}
+.flow-step { transition: transform .14s ease, box-shadow .18s ease, background .15s ease, color .15s ease, border-color .15s ease; }
+.flow-step.done { background: color-mix(in srgb, #059669 10%, transparent); }
+.flow-step.cur {
+  background: var(--brand, #2563eb); border-color: var(--brand, #2563eb);
+  animation: flowPulse 2.1s ease-in-out infinite;
+}
+@keyframes flowPulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand, #2563eb) 42%, transparent); }
+  55% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand, #2563eb) 0%, transparent); }
+}
+
+/* ---------- ⑤ 输入区：聚焦环 / 发送键渐变 / 图标钮反馈 ---------- */
+.chat-input input { transition: border-color .16s ease, box-shadow .2s ease; }
+#sendBtn {
+  background: linear-gradient(135deg, var(--brand, #2563eb), var(--brand-2, #4f46e5));
+  border: none; color: #fff; font-weight: 600;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--brand, #2563eb) 30%, transparent);
+}
+#sendBtn:hover { box-shadow: 0 6px 18px color-mix(in srgb, var(--brand, #2563eb) 42%, transparent); filter: brightness(1.06); }
+.chat-input .btn.icon { border-radius: 12px; transition: background .15s ease, transform .14s ease, border-color .15s ease; }
+.chat-input .btn.icon:hover:not(:disabled) { background: var(--brand-soft, #e8f0ff); transform: translateY(-1px); }
+.prompt-presets { padding-top: 10px; }
+.pp-chip { transition: background .15s, border-color .15s, color .15s, transform .12s ease; }
+.pp-chip:hover { transform: translateY(-1px); }
+
+/* ---------- ⑥ 徽标与面板细节 ---------- */
+.role-badge { backdrop-filter: blur(4px); }
+.role-badge b, .role-badge strong { color: var(--brand, #2563eb); }
+
+/* ============================================================
+   Responsive v1.1.0（窄窗口适配：桌面应用可自由缩放）
+   两级断点 720px / 480px；新组件（角色条 / Flow 条 / 输入区 /
+   提示词 / 气泡）窄屏降级；prefers-reduced-motion 关闭新动效。
+   ============================================================ */
+@media (max-width: 720px) {
+  /* 消息区：留白收紧，气泡占宽提高 */
+  .chat-log { padding: 13px; gap: 11px; }
+  .msg-row { max-width: 96%; }
+  .msg { font-size: 13.5px; padding: 10px 13px; }
+  /* 角色条：横向滚动不换行（保持一列高度，节省纵向空间） */
+  .agent-roles { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding-bottom: 2px; }
+  .agent-roles::-webkit-scrollbar { display: none; }
+  .agent-roles .ar-chip { flex: none; }
+  .agent-roles .ar-label { flex: none; }
+  /* Flow 条：头部允许换行，步骤 chips 收紧 */
+  .flow-head { gap: 6px; }
+  .flow-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
+  .flow-steps { gap: 5px; }
+  .flow-step { font-size: .72em; padding: 2px 7px; }
+  /* 输入区与提示词 */
+  .chat-input { gap: 6px; padding: 10px; }
+  .chat-input input { padding: 10px 12px; }
+  #sendBtn { padding-left: 14px; padding-right: 14px; }
+  .prompt-presets { padding: 6px 10px 0; gap: 5px; }
+  .pp-chip { font-size: 11.5px; padding: 4px 9px; }
+  /* 弹窗留白收紧 */
+  .modal-body { padding: 14px; }
+}
+
+@media (max-width: 480px) {
+  .msg-row { max-width: 100%; }
+  .msg { font-size: 13px; }
+  .chat-input .btn.icon { display: none; }   /* 极窄下隐藏语音/识图钮，保输入宽度 */
+  .ar-chip { font-size: .78em; padding: 3px 8px; }
+  .flow-title { font-size: .82em; }
+  .flow-step { font-size: .68em; padding: 2px 6px; }
+  .pp-chip { font-size: 11px; padding: 3px 8px; }
+}
+
+/* 动效降级：系统开启「减少动态效果」时关闭新增动画（保留既有 blink） */
+@media (prefers-reduced-motion: reduce) {
+  .msg-row, .flow-bar { animation: none !important; }
+  .flow-step.cur { animation: none !important; }
+  .typing span { animation: blink 1.3s infinite; }
+  .btn:active { transform: none; }
+  .agent-roles .ar-chip:hover, .msg .suggestions button:hover, .pp-chip:hover, .chat-input .btn.icon:hover:not(:disabled) { transform: none; }
+}
