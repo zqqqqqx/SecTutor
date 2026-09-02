@@ -15,7 +15,19 @@ const errors = [];
 const vc = new VirtualConsole();
 vc.on("jsdomError", (e) => errors.push("jsdomError: " + (e.stack || e.message)));
 
-const dom = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/", pretendToBeVisual: true, virtualConsole: vc });
+const dom = new JSDOM(html, {
+  runScripts: "dangerously",
+  url: "http://localhost/",
+  pretendToBeVisual: true,
+  virtualConsole: vc,
+  beforeParse(window) {
+    // jsdom 的脚本 VM 不继承 Node 全局的 TextEncoder/TextDecoder，而单文件 app.js 顶层即用 new TextEncoder()。
+    // 浏览器/Electron 本身自带该全局，此处仅为 jsdom 校验环境补齐（与 selftest.js 同法），不影响产品行为。
+    const { TextEncoder, TextDecoder } = require("util");
+    if (typeof window.TextEncoder === "undefined") window.TextEncoder = TextEncoder;
+    if (typeof window.TextDecoder === "undefined") window.TextDecoder = TextDecoder;
+  },
+});
 const { window } = dom;
 const doc = window.document;
 window.addEventListener("error", (e) => errors.push("error: " + (e.error && e.error.stack || e.message)));
