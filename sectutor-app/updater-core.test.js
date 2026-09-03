@@ -1,13 +1,6 @@
 'use strict';
-/**
- * updater-core.test.js — updater-core 纯逻辑单元测试（node 直跑，不依赖 electron）
- *
- *   node sectutor-app/updater-core.test.js
- *
- * 覆盖五组判定：版本形态 / 错误分类 / 检查节流 / 安装守卫 / 重试策略。
- * 之所以单独成文件而不是散在 main.js：这些都是纯函数，脱离 Electron 也能验证，
- * 改判定逻辑时不必为了跑测试去打包一次应用。
- */
+// updater-core 的单测，node 直跑就行（不用起 electron 也不用打包）：
+//   node sectutor-app/updater-core.test.js
 const core = require('./updater-core');
 
 let pass = 0;

@@ -158,41 +158,39 @@ function setUpdateState(patch) {
   refreshTray();
 }
 
-// —— 检查失败自动重试 + 周期性复查（v1.2.1）——
-// 周期性后台静默复查间隔：4 小时。远大于 30s 节流，也远低于 GitHub 无令牌限流
-// （60 次/小时），一天最多 6 次请求，不会触发限流，也不打扰用户。
+// —— 更新重试 + 周期复查（v1.2.1）——
+// 4h 一查够用了：GitHub 无令牌限流 60 次/h，一天才 6 次请求
 const PERIODIC_CHECK_MS = 4 * 60 * 60 * 1000;
-
-// 只有「网络不可达」与「被限流」值得自动重试：前者可能只是暂时断网，后者等一会就好。
-// 其余类型（无权访问 / 无 Release / 校验失败 / 未知）重试也不会成功，交给用户手动触发，
-// 避免无意义的请求风暴。network 指数退避 30s→60s→90s；ratelimit 固定 60s。
 const MAX_AUTO_RETRY = 3;
 let updateRetryCount = 0;
 let retryTimer = null;
 let periodicCheckTimer = null;
 
+// 只有断网/被限流才值得自动重试，别的错重试也没用，让用户自己点
+// 退避策略放在 updater-core.retryDelay，那边是纯函数好测
 function scheduleUpdateRetry(kind) {
+  // 原来这里写 if (kind !== 'network' && kind !== 'ratelimit') return;
+  // 后来挪进 retryDelay 统一判了，留个痕迹
   if (updateRetryCount >= MAX_AUTO_RETRY) return;
-  if (retryTimer) return;   // 已有重试在排队，不重复排
+  if (retryTimer) return; // 已经排了就不再排
   const delay = updaterCore.retryDelay(kind, updateRetryCount + 1);
-  if (delay == null) return;   // 该类型不值得自动重试（策略见 updater-core.retryDelay）
-  updateRetryCount += 1;
-  console.log('[SecTutor] 更新检查失败（' + kind + '），' + Math.round(delay / 1000) + 's 后自动重试（第 '
-    + updateRetryCount + '/' + MAX_AUTO_RETRY + ' 次）');
+  if (delay == null) return;
+  updateRetryCount++;
+  console.log('[SecTutor] 检查更新失败(' + kind + '),' + Math.round(delay / 1000) + 's 后重试('
+    + updateRetryCount + '/' + MAX_AUTO_RETRY + ')');
   retryTimer = setTimeout(() => {
     retryTimer = null;
-    checkUpdate(true);      // 重试走 force 跳过 30s 节流；忙锁仍生效，不会并发
+    checkUpdate(true); // force 跳过 30s 节流，忙锁还在所以不会并发
   }, delay);
 }
 
-// 任一次「检查有了明确结果」都重置重试计数：说明链路是通的，之前只是偶发。
+// 检查出了明确结果（有新版/没新版/下载完）就清零，说明链路是通的，之前只是偶发
 function resetUpdateRetry() {
   updateRetryCount = 0;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
 }
 
-// 退出 / 安装前清掉两个更新定时器：避免在「停后端 → 销毁托盘 → 退出」的过程中
-// 定时器触发检查去抢网络与状态写入。虽已有空值保护，仍求流程干净。
+// 退出前把定时器清了，免得停后端/销托盘那会儿定时器还在跑
 function clearUpdateTimers() {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   if (periodicCheckTimer) { clearInterval(periodicCheckTimer); periodicCheckTimer = null; }
@@ -260,7 +258,7 @@ function setupAutoUpdater() {
     const errorKind = updaterCore.classifyError(e);
     console.error('[SecTutor] 自动更新出错（已忽略，不影响使用）:', msg, '(' + errorKind + ')');
     setUpdateState({ checking: false, downloading: false, error: msg, errorKind, checkedAt: Date.now() });
-    // 网络类/限流类失败自动重试一次；其余类型不重试，避免无意义请求。
+    // 网络类/限流类自动重试，其它不重试
     scheduleUpdateRetry(errorKind);
   });
 }
@@ -498,15 +496,15 @@ function buildTrayMenu() {
   ]);
 }
 
-// 托盘 tooltip：随更新状态变化，鼠标悬停即可看到进度，不必展开菜单。
-// 未启用自动更新 / 无进行中的更新时保持默认文案，避免噪音。
+// 托盘悬停能看到更新进度，不用点开菜单。没更新进行中就给默认文案
 function updateToolTip() {
   const en = currentLang === 'en';
   const base = en ? 'SecTutor Cybersecurity Training' : 'SecTutor 网络安全实战训练';
   const s = updateState;
   if (!s || !s.enabled) return base;
+  const pct = Math.round(s.progress || 0);
   if (s.downloaded) return base + ' — ' + (en ? 'update ' : '更新 ') + (s.version || '') + (en ? ' ready' : ' 已就绪');
-  if (s.downloading) return base + ' — ' + (en ? 'downloading ' : '正在下载 ') + Math.round(s.progress || 0) + '%';
+  if (s.downloading) return base + ' — ' + (en ? 'downloading ' : '正在下载 ') + pct + '%';
   if (s.checking) return base + ' — ' + (en ? 'checking for updates…' : '正在检查更新…');
   if (s.available) return base + ' — ' + (en ? 'new version ' : '发现新版本 ') + (s.version || '');
   return base;
@@ -689,8 +687,7 @@ if (!app.requestSingleInstanceLock()) {
     setupAutoUpdater();
     Menu.setApplicationMenu(buildAppMenu());
     setTimeout(checkUpdate, 8000);
-    // 周期性后台静默复查（默认 4 小时一次）：不弹窗、不打断，只在发现新版本时让
-    // 托盘 / 侧栏亮出「可下载」。间隔远大于 30s 节流，也远低于 GitHub 限流。
+    // 之后每 4h 静默查一次，不弹窗，有新版才在托盘/侧栏亮出来
     periodicCheckTimer = setInterval(() => checkUpdate(false), PERIODIC_CHECK_MS);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
