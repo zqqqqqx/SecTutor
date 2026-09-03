@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld('sectutor', {
   // 主进程通过顶部「设置 → 语言」菜单切换语言时，向渲染进程推送命令
   onLangCommand: (cb) => ipcRenderer.on('sectutor:lang-command', (_e, lang) => cb(lang)),
 
+  // —— 诊断（v1.2.2）——
+  // 前端异常上报给主进程落盘
+  reportError: (msg) => ipcRenderer.send('sectutor:renderer-error', msg),
+  // 打开日志文件夹（设置面板用）
+  openLogDir: () => ipcRenderer.invoke('sectutor:open-log-dir'),
+
   // —— 自动更新（v1.2.0 起）——
   // 仅暴露「查状态 / 检查 / 下载 / 安装」四个动作，不暴露版本来源与实际下载路径，
   // 渲染进程拿不到文件系统与子进程能力。

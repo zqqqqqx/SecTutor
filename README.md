@@ -98,6 +98,8 @@ node sectutor-app/updater-core.test.js   # 版本形态 / 错误分类 / 节流 
   不一定带这个头，先不折腾。
 - 免安装版（Portable）强开自动更新会在 quitAndInstall 时出问题，所以直接按运行形态禁用了，
   没做更细的兼容。
+- 没做代码签名，Windows 首次运行会弹 SmartScreen「未知发布者」，点「更多信息 → 仍要运行」即可。
+  这是目前和"成熟软件"之间最大的一块短板，等证书的事定了再处理。
 
 ## 目录结构速览
 

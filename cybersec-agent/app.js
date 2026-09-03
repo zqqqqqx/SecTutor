@@ -7,6 +7,15 @@
 (function () {
   "use strict";
 
+  // 前端异常转发给桌面壳落盘（浏览器直开时没有 sectutor 桥，静默跳过）。
+  window.onerror = function (msg, src, line) {
+    try { if (window.sectutor) window.sectutor.reportError(msg + " @" + (src || "?") + ":" + line); } catch (e) {}
+    return false;   // 不吞默认报错，控制台照常打印
+  };
+  window.addEventListener("unhandledrejection", function (ev) {
+    try { if (window.sectutor) window.sectutor.reportError("unhandledrejection: " + (ev.reason && ev.reason.stack || ev.reason)); } catch (e) {}
+  });
+
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
@@ -762,6 +771,12 @@
         </div>
       </div>
       <hr class="ctrl-divider" />
+      <div class="set-row"><span>诊断</span>
+        <div class="chips">
+          <button class="btn small ghost" id="setOpenLog">📂 打开日志文件夹</button>
+        </div>
+      </div>
+      <hr class="ctrl-divider" />
       <p class="rev-empty">
         <b>SecTutor</b> · 本地优先的网络安全学习智能 Agent。<br>
         所有内容仅用于合法授权的安全学习与防御研究。后端配置、大模型接入位于「智能问答」侧栏。
@@ -793,6 +808,10 @@
           toast("已恢复掌握进度与对话记录", "ok");
         },
       });
+    });
+    const olog = $("#setOpenLog"); if (olog) olog.addEventListener("click", () => {
+      if (window.sectutor && window.sectutor.openLogDir) window.sectutor.openLogDir();
+      else toast("浏览器直开模式没有日志目录", "info");
     });
   }
 

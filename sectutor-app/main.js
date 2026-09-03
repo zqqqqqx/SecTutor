@@ -16,11 +16,39 @@
  *  - 页面加载失败（did-fail-load）兜底显示错误页。
  */
 
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 // 自动更新的纯判定逻辑（形态 / 错误分类 / 节流 / 安装守卫），随 app.asar 打包。
 const updaterCore = require('./updater-core');
+// commit hash 等，封包时生成；开发态没有这个文件，退化为只显示版本号。
+let buildInfo = {};
+try { buildInfo = require('./build-info'); } catch (e) {}
+
+// —— 落盘日志（v1.2.2）——
+// 只记 warn/error 级别，按天一个文件。同步 appendFile 量大时会堵 IO，先凑合。
+// TODO: 换异步写入 + 大小截断（超 5MB 重开文件）。
+const LOG_DIR = path.join(app.getPath('userData'), 'logs');
+function appLog(level, msg) {
+  const line = new Date().toISOString() + ' [' + level + '] ' + msg + '\n';
+  try {
+    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+    fs.appendFileSync(path.join(LOG_DIR, 'app-' + new Date().toISOString().slice(0, 10) + '.log'), line);
+  } catch (e) { /* 写不进去就算了，不能为日志把应用搞崩 */ }
+  if (level !== 'info') console.log('[SecTutor][' + level + ']', msg);
+}
+
+// 全局兜底：崩了留痕 + 给个说法，别死得无声无息。
+process.on('uncaughtException', (err) => {
+  appLog('error', 'uncaughtException: ' + (err && err.stack || err));
+  try {
+    dialog.showErrorBox('SecTutor 遇到了问题',
+      '应用内部出现了一个错误，一般不需要重装。\n建议从托盘菜单「退出 SecTutor」后重新打开。\n\n详细日志位于：' + LOG_DIR);
+  } catch (e) {}
+});
+process.on('unhandledRejection', (reason) => {
+  appLog('error', 'unhandledRejection: ' + (reason && reason.stack || reason));
+});
 
 // 资源目录：开发态（npm start）下在应用目录的上级；打包态（npm run dist）下
 // 由 electron-builder 的 extraResources 放入 process.resourcesPath，必须分别解析，
@@ -424,6 +452,17 @@ function createWindow() {
     );
   });
 
+  // 渲染进程崩溃：留痕 + 弹框 + 自动重载一次，别让窗口直接白掉。
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    appLog('error', 'render-process-gone: ' + JSON.stringify(details));
+    dialog.showErrorBox('SecTutor 页面崩溃',
+      '页面意外崩溃（' + ((details && details.reason) || 'unknown') + '）。\n点击确定后尝试自动恢复；若仍异常请重启应用。');
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); } catch (e) {}
+  });
+  mainWindow.webContents.on('preload-error', (_e, p, err) => {
+    appLog('error', 'preload-error: ' + p + ' :: ' + (err && err.stack || err));
+  });
+
   // 后端未就绪（端口占用 / 模块加载失败）→ 直接显示错误页，绝不加载一个不认识的服务。
   if (!server) {
     const reason = !backendApp
@@ -572,10 +611,12 @@ const MENU_I18N = {
 };
 
 function showAbout() {
+  // commit 截 7 位够定位了；开发态没 build-info.json 就只显示版本号。
+  const commit = buildInfo && buildInfo.commit ? String(buildInfo.commit).slice(0, 7) : '';
   dialog.showMessageBox(mainWindow, {
     title: 'SecTutor',
     message: 'SecTutor 网络安全实战训练',
-    detail: `版本 ${app.getVersion()}\n本地优先的网络安全学习工具。\n仅用于合法授权范围内的安全学习与防御研究。`,
+    detail: `版本 ${app.getVersion()}${commit ? '（' + commit + '）' : ''}\n本地优先的网络安全学习工具。\n仅用于合法授权范围内的安全学习与防御研究。`,
     icon: loadIcon('icon.png') || undefined,
     buttons: ['确定'],
   });
@@ -715,6 +756,15 @@ ipcMain.handle('sectutor:status', async () => {
 });
 
 // 渲染进程上报当前界面语言（init 时调用），用于同步菜单「语言」子菜单的勾选。
+// 渲染进程异常上报（window.onerror / onunhandledrejection 转发过来落盘）
+ipcMain.on('sectutor:renderer-error', (_e, msg) => {
+  appLog('error', 'renderer: ' + String(msg).slice(0, 2000));
+});
+// 设置面板「打开日志文件夹」
+ipcMain.handle('sectutor:open-log-dir', async () => {
+  try { if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (e) {}
+  return shell.openPath(LOG_DIR);
+});
 ipcMain.on('sectutor:notify-lang', (_e, lang) => {
   if (lang !== 'zh' && lang !== 'en') return;
   if (lang !== currentLang) {

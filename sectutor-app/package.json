@@ -1,6 +1,6 @@
 {
   "name": "sectutor",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "SecTutor 网络安全实战训练桌面应用（内嵌后端，系统托盘常驻，按钮一键启停）",
   "main": "main.js",
   "author": {
@@ -31,6 +31,7 @@
       "main.js",
       "preload.js",
       "updater-core.js",
+      "build-info.json",
       "package.json",
       "assets/**"
     ],
@@ -74,7 +75,10 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
-      "allowElevation": false
+      "allowElevation": false,
+      "menuCategory": "SecTutor",
+      "perMachine": false,
+      "language": "2052"
     }
   },
   "dependencies": {
