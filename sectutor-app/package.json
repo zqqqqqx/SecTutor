@@ -1,6 +1,6 @@
 {
   "name": "sectutor",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "SecTutor 网络安全实战训练桌面应用（内嵌后端，系统托盘常驻，按钮一键启停）",
   "main": "main.js",
   "author": {
@@ -30,14 +30,38 @@
     "files": [
       "main.js",
       "preload.js",
+      "updater-core.js",
       "package.json",
       "assets/**"
     ],
     "extraResources": [
-      { "from": "../sectutor-backend", "to": "sectutor-backend", "filter": ["**/*", "!**/node_modules/.cache/**"] },
-      { "from": "../cybersec-agent", "to": "cybersec-agent", "filter": ["**/*", "!sec-tutor.html"] },
-      { "from": "assets/icon.png", "to": "icon.png" }
+      {
+        "from": "../sectutor-backend",
+        "to": "sectutor-backend",
+        "filter": [
+          "**/*",
+          "!**/node_modules/.cache/**"
+        ]
+      },
+      {
+        "from": "../cybersec-agent",
+        "to": "cybersec-agent",
+        "filter": [
+          "**/*",
+          "!sec-tutor.html"
+        ]
+      },
+      {
+        "from": "assets/icon.png",
+        "to": "icon.png"
+      }
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "zqqqqqx",
+      "repo": "SecTutor",
+      "releaseType": "release"
+    },
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico",
@@ -52,5 +76,8 @@
       "deleteAppDataOnUninstall": false,
       "allowElevation": false
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

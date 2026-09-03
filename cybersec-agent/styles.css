@@ -1211,3 +1211,41 @@ kbd {
   .btn:active { transform: none; }
   .agent-roles .ar-chip:hover, .msg .suggestions button:hover, .pp-chip:hover, .chat-input .btn.icon:hover:not(:disabled) { transform: none; }
 }
+
+/* ============================================================
+   v1.2.0：自动更新状态区（桌面版专属，网页版由 JS 隐藏）
+   —— 视觉语言与 .backend-ctl 保持一致（同款胶囊 + 同款边框配方），
+      只把强调色换成 accent，避免又引入一套新语义色。
+   ============================================================ */
+.update-ctl {
+  margin: 14px 0; padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.update-ctl .hint { margin-bottom: 8px; }
+.update-ctl .chips { margin-bottom: 8px; }
+
+/* 下载进度条：细条 + 品牌渐变填充，宽度由 JS 写内联 width（0-100%） */
+.update-progress {
+  margin-top: 8px; height: 6px; border-radius: 999px;
+  background: var(--chip);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.update-progress > i {
+  display: block; height: 100%; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), var(--brand-2));
+  transition: width .25s ease;
+}
+
+/* 极窄屏：与 .backend-ctl 同等收紧 */
+@media (max-width: 480px) {
+  .update-ctl { padding: 10px; }
+  .update-ctl .chips { gap: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-progress > i { transition: none; }
+}

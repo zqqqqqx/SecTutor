@@ -19,6 +19,8 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+// 自动更新的纯判定逻辑（形态 / 错误分类 / 节流 / 安装守卫），随 app.asar 打包。
+const updaterCore = require('./updater-core');
 
 // 资源目录：开发态（npm start）下在应用目录的上级；打包态（npm run dist）下
 // 由 electron-builder 的 extraResources 放入 process.resourcesPath，必须分别解析，
@@ -60,6 +62,226 @@ let quitting = false;
 // 界面语言（全局设置，默认中文）。由顶部「设置 → 语言」菜单切换，
 // 通过 IPC 推送给渲染进程，并随渲染进程 localStorage 双向同步勾选状态。
 let currentLang = 'zh';
+
+// ============================================================================
+// 自动更新（electron-updater + GitHub Releases）
+// ============================================================================
+// 设计原则（对齐「一键零失败」UX：绝不弹意外窗口、绝不需要管理员）：
+//  1. 仅在「打包并已安装」的桌面版生效。开发态（npm start）与免安装版直接跳过，
+//     不报错、不打扰，主功能零影响。
+//  2. 启动 8 秒后静默检查一次；发现新版本只提示，不自动下载（autoDownload=false），
+//     避免占用带宽、避免打断正在进行的靶场练习。
+//  3. 用户点「下载更新」才下载；下载完成后提示「安装并重启」。
+//  4. autoInstallOnAppQuit=true：下载完但用户没装就退出时，退出即静默安装，
+//     把更新摊到「本来就要关程序」的时刻，用户无需额外操作。
+//  5. 任何异常（离线 / 仓库不可达 / 未签名）都转成 error 事件吞掉，绝不影响主功能。
+//
+// 发版前置条件（不满足则更新检测永远失败）：
+//  - electron-builder 必须生成 latest.yml（由 build.publish 配置驱动）。
+//  - 发版时须把 latest.yml 与 SecTutor-Setup-<version>.exe 一并上传到 GitHub Release，
+//    且该 Release 不能是 draft / prerelease（electron-updater 只读 /releases/latest）。
+// ============================================================================
+
+// 仅在打包态加载；未打包时 autoUpdater 保持 null，后续统一用 updaterReady() 守卫。
+let autoUpdater = null;
+if (app.isPackaged) {
+  try {
+    autoUpdater = require('electron-updater').autoUpdater;
+  } catch (e) {
+    console.error('[SecTutor] electron-updater 加载失败，自动更新不可用:', (e && e.message) || e);
+  }
+}
+
+// 当前运行形态是否支持自动更新（判定逻辑见 updater-core.js，可单测）：
+//  - 开发态 npm start（!isPackaged）→ dev：不启用
+//  - Portable 免安装版（electron-builder 会设 PORTABLE_EXECUTABLE_DIR）→ portable：不启用。
+//    electron-updater 的 NSIS 更新只对「安装版」有效，Portable 强开会在 quitAndInstall
+//    时失败，还会误导用户以为能自动升级。
+//  - electron-updater 加载失败 → loader：不启用
+//  - 安装版 → ok：启用
+const EDITION = updaterCore.classifyEdition({
+  isPackaged: app.isPackaged,
+  portable: !!process.env.PORTABLE_EXECUTABLE_DIR,
+  loaded: !!autoUpdater,
+});
+
+// 更新状态机：单一数据源，主进程 → 渲染进程单向推送，UI 只消费不回写。
+let updateState = {
+  enabled: EDITION.updatable,  // 自动更新是否可用（安装版为 true）
+  reason: EDITION.reason,      // 不可用时的原因：dev / portable / loader / ok
+  checking: false,     // 正在检查
+  available: false,    // 发现新版本
+  version: null,       // 新版本号
+  currentVersion: app.getVersion(),
+  downloading: false,  // 正在下载
+  progress: 0,         // 下载进度 0-100
+  downloaded: false,   // 已下载，待重启安装
+  error: null,         // 错误原文（可为 null）
+  errorKind: null,     // 错误分类（network/ratelimit/forbidden/unreleased/corrupt/unknown）
+  checkedAt: null,     // 上次检查时间戳
+};
+
+function updaterReady() {
+  return EDITION.updatable && !!autoUpdater;
+}
+
+// 状态变更 → 广播给渲染进程 + 刷新托盘（托盘文案随状态变化）。
+// 放在此处：mainWindow 已在上方声明，refreshTray 为函数声明可提升，无 TDZ 风险。
+// 把内部状态压缩成一个「阶段」，用于判断是否需要重建菜单。
+function updatePhase() {
+  if (updateState.downloaded) return 'downloaded';
+  if (updateState.downloading) return 'downloading';
+  if (updateState.checking) return 'checking';
+  if (updateState.available) return 'available';
+  return 'idle';
+}
+
+let lastUpdatePhase = 'idle';
+
+function setUpdateState(patch) {
+  const prevPhase = updatePhase();
+  updateState = Object.assign({}, updateState, patch || {});
+  const phase = updatePhase();
+
+  // 下载进度每 0.1% 就推一次，顶部菜单没必要跟着重建（且重建会打断用户正在展开的菜单）。
+  // 只在「阶段」真正变化时重建；托盘则每次都刷，因为进度百分比要实时显示在文案里。
+  if (phase !== prevPhase && phase !== lastUpdatePhase) {
+    lastUpdatePhase = phase;
+    try { Menu.setApplicationMenu(buildAppMenu()); } catch (e) { /* 菜单尚未初始化，忽略 */ }
+  }
+
+  try {
+    if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sectutor:update-state', updateState);
+    }
+  } catch (e) { /* 窗口可能正在关闭，忽略 */ }
+  refreshTray();
+}
+
+function setupAutoUpdater() {
+  // enabled / reason 以 EDITION 为准（setupAutoUpdater 在 whenReady 后调用，广播前先落位，
+  // 前端首帧拉 updateState() 即可拿到正确形态）
+  updateState.enabled = EDITION.updatable;
+  updateState.reason = EDITION.reason;
+  if (!updaterReady()) {
+    console.log('[SecTutor] 自动更新不可用（reason=' + EDITION.reason + '），本次运行不启用。');
+    return;
+  }
+
+  autoUpdater.autoDownload = false;      // 先告知，用户决定何时下载
+  autoUpdater.allowDowngrade = true;     // 允许回退到旧版本
+  autoUpdater.autoInstallOnAppQuit = true; // 已下载未安装 → 退出时静默安装
+  // 收敛日志：debug 全部丢弃，避免把本地路径与请求细节刷进控制台。
+  autoUpdater.logger = {
+    info: (m) => console.log('[Updater]', m),
+    warn: (m) => console.warn('[Updater]', m),
+    error: (m) => console.error('[Updater]', m),
+    debug: () => {},
+  };
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdateState({ checking: true, error: null, errorKind: null });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    setUpdateState({
+      checking: false, available: true, downloading: false, downloaded: false,
+      progress: 0, version: (info && info.version) || null, error: null, errorKind: null,
+      checkedAt: Date.now(),
+    });
+    console.log('[SecTutor] 发现新版本:', updateState.version);
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    setUpdateState({
+      checking: false, available: false, downloading: false, downloaded: false,
+      progress: 0, version: null, error: null, errorKind: null, checkedAt: Date.now(),
+    });
+  });
+
+  autoUpdater.on('download-progress', (p) => {
+    const pct = p && typeof p.percent === 'number' ? p.percent : 0;
+    setUpdateState({ downloading: true, progress: Math.round(pct * 10) / 10 });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdateState({
+      checking: false, downloading: false, downloaded: true, progress: 100,
+      version: (info && info.version) || updateState.version, error: null, errorKind: null,
+    });
+    console.log('[SecTutor] 更新已下载:', updateState.version);
+  });
+
+  autoUpdater.on('error', (e) => {
+    const msg = (e && e.message) || String(e || '未知错误');
+    const errorKind = updaterCore.classifyError(e);
+    console.error('[SecTutor] 自动更新出错（已忽略，不影响使用）:', msg, '(' + errorKind + ')');
+    setUpdateState({ checking: false, downloading: false, error: msg, errorKind, checkedAt: Date.now() });
+  });
+}
+
+// —— 更新动作（供托盘菜单 / 顶部菜单 / IPC 共用）——
+// electron-updater 的 checkForUpdates 同一时刻只能跑一次（重复调用会抛
+// "checkForUpdates already in progress"），且 GitHub API 无令牌限流 60 次/小时。
+// 用「忙锁 + 30s 最短间隔」双层保护（判定见 updater-core.js）：
+//   - 忙锁：任何来源（启动静默 / 托盘 / 菜单 / IPC）同时只有一个检查在跑
+//   - 节流：用户手动点按（force=true）跳过间隔；启动静默 / 重复触发被 30s 间隔挡住
+let checkingBusy = false;
+const checkThrottle = updaterCore.createThrottle(30000);
+
+function checkUpdate(force) {
+  if (!updaterReady()) return;
+  if (checkingBusy) {
+    console.log('[SecTutor] 检查更新忙锁：忽略重复触发');
+    return;
+  }
+  if (!checkThrottle.ok(Date.now(), !!force)) {
+    console.log('[SecTutor] 检查更新节流：距上次检查不足 30s，忽略');
+    return;
+  }
+  checkingBusy = true;
+  checkThrottle.mark();
+  setUpdateState({ checking: true, error: null, errorKind: null });
+  autoUpdater.checkForUpdates()
+    .catch((e) => {
+      // 'error' 事件通常已 setUpdateState；这里兜底 catch（事件与 reject 可能二选一）
+      const errorKind = updaterCore.classifyError(e);
+      console.warn('[SecTutor] 检查更新失败（已忽略）:', (e && e.message) || e);
+      setUpdateState({ checking: false, error: (e && e.message) || String(e), errorKind, checkedAt: Date.now() });
+    })
+    .finally(() => { checkingBusy = false; });
+}
+
+function downloadUpdate() {
+  if (!updaterReady()) return;
+  setUpdateState({ downloading: true, progress: 0, error: null, errorKind: null });
+  autoUpdater.downloadUpdate().catch((e) => {
+    const errorKind = updaterCore.classifyError(e);
+    // 下载失败后回到「有新版本」态（available 保持 true），用户可重新点下载
+    setUpdateState({ downloading: false, error: (e && e.message) || String(e), errorKind });
+  });
+}
+
+// 立即退出并安装。先停后端、销毁托盘，避免安装器因文件占用 / 残留托盘失败。
+// quitAndInstall(false, true)：显示安装进度，装完自动拉起新版。
+// 返回布尔：true=已进入安装流程；false=被守卫拦截（未下载 / 已有错误 / 禁用态）。
+function installUpdate() {
+  if (!updaterReady() || !updaterCore.canInstall(updateState)) {
+    console.warn('[SecTutor] 安装更新被守卫拦截：当前状态不可安装'
+      + '（enabled=' + updateState.enabled
+      + ', downloaded=' + updateState.downloaded
+      + ', error=' + (updateState.error ? 'yes' : 'no') + '）');
+    return false;
+  }
+  setImmediate(() => {
+    quitting = true;
+    stopServer().then(() => {
+      if (tray) { tray.destroy(); tray = null; }
+      autoUpdater.quitAndInstall(false, true);
+    });
+  });
+  return true;
+}
 
 // 图标加载（容错：缺失不崩，仅降级为无图标）。
 // 打包态优先读 extraResources 根目录的图标（Windows 托盘对 asar 内路径支持不佳）。
@@ -182,6 +404,40 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+// 托盘更新区：按当前状态只给出「此刻唯一该做的那一个动作」，
+// 而不是堆一排灰掉的可选项，让用户随时知道下一步能点什么。
+function updateTrayItems() {
+  if (!updateState.enabled) return [];
+  if (updateState.downloaded) {
+    return [
+      { type: 'separator' },
+      { label: `安装更新 ${updateState.version || ''} 并重启`, click: () => installUpdate() },
+    ];
+  }
+  if (updateState.downloading) {
+    return [
+      { type: 'separator' },
+      { label: `下载更新中… ${updateState.progress}%`, enabled: false },
+    ];
+  }
+  if (updateState.checking) {
+    return [
+      { type: 'separator' },
+      { label: '正在检查更新…', enabled: false },
+    ];
+  }
+  if (updateState.available) {
+    return [
+      { type: 'separator' },
+      { label: `下载新版本 ${updateState.version || ''}`, click: () => downloadUpdate() },
+    ];
+  }
+  return [
+    { type: 'separator' },
+    { label: '检查更新…', click: () => checkUpdate(true) },
+  ];
+}
+
 function buildTrayMenu() {
   const running = !!server;
   return Menu.buildFromTemplate([
@@ -190,6 +446,7 @@ function buildTrayMenu() {
     { label: running ? '后端状态：运行中 ●' : '后端状态：已停止 ○', enabled: false },
     { label: '启动后端', enabled: !running, click: async () => { await startServer(); } },
     { label: '停止后端', enabled: running, click: async () => { await stopServer(); } },
+    ...updateTrayItems(),
     { type: 'separator' },
     { label: '退出 SecTutor', click: () => quitApp() },
   ]);
@@ -232,6 +489,11 @@ const MENU_I18N = {
     settings: '设置', language: '语言',
     zhLabel: '中文', enLabel: 'English',
     help: '帮助', about: '关于 SecTutor',
+    checkUpdate: '检查更新…',
+    updateNone: '当前已是最新版本',
+    updateFound: '发现新版本',
+    updateDownload: '下载更新',
+    updateInstall: '安装更新并重启',
   },
   en: {
     file: 'File', fileQuit: 'Quit SecTutor',
@@ -240,6 +502,11 @@ const MENU_I18N = {
     settings: 'Settings', language: 'Language',
     zhLabel: '中文', enLabel: 'English',
     help: 'Help', about: 'About SecTutor',
+    checkUpdate: 'Check for Updates…',
+    updateNone: 'You are up to date',
+    updateFound: 'A new version is available',
+    updateDownload: 'Download Update',
+    updateInstall: 'Install and Restart',
   },
 };
 
@@ -247,10 +514,30 @@ function showAbout() {
   dialog.showMessageBox(mainWindow, {
     title: 'SecTutor',
     message: 'SecTutor 网络安全实战训练',
-    detail: '版本 1.0.0\n本地优先的网络安全学习工具。\n仅用于合法授权范围内的安全学习与防御研究。',
+    detail: `版本 ${app.getVersion()}\n本地优先的网络安全学习工具。\n仅用于合法授权范围内的安全学习与防御研究。`,
     icon: loadIcon('icon.png') || undefined,
     buttons: ['确定'],
   });
+}
+
+// 顶部「帮助」菜单的更新项：与托盘同源，文案走 i18n。
+// 未启用自动更新（开发态 / 免安装版）时返回空数组，连分隔线都不留，避免菜单出现空档。
+function updateMenuItems(t) {
+  if (!updateState.enabled) return [];
+  const sep = [{ type: 'separator' }];
+  if (updateState.downloaded) {
+    return sep.concat([{ label: t.updateInstall, click: () => installUpdate() }]);
+  }
+  if (updateState.downloading) {
+    return sep.concat([{ label: `${t.updateDownload}… ${updateState.progress}%`, enabled: false }]);
+  }
+  if (updateState.available) {
+    return sep.concat([
+      { label: `${t.updateFound} ${updateState.version || ''}`, enabled: false },
+      { label: t.updateDownload, click: () => downloadUpdate() },
+    ]);
+  }
+  return sep.concat([{ label: t.checkUpdate, click: () => checkUpdate(true) }]);
 }
 
 function buildAppMenu() {
@@ -302,6 +589,7 @@ function buildAppMenu() {
       label: t.help,
       submenu: [
         { label: t.about, click: () => showAbout() },
+        ...updateMenuItems(t),
       ],
     },
   ]);
@@ -333,8 +621,11 @@ if (!app.requestSingleInstanceLock()) {
     }
     createWindow();
     createTray();
-    // 顶部原生菜单栏（中文，含「设置 → 语言」）。
+    // 自动更新：放在 createTray 之后（内部会刷新托盘），随后重建菜单让更新项按
+    // enabled 状态真正出现；再延迟 8 秒静默检查一次，避开启动高峰。
+    setupAutoUpdater();
     Menu.setApplicationMenu(buildAppMenu());
+    setTimeout(checkUpdate, 8000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
       else showWindow();
@@ -367,4 +658,33 @@ ipcMain.on('sectutor:notify-lang', (_e, lang) => {
     currentLang = lang;
     Menu.setApplicationMenu(buildAppMenu());
   }
+});
+
+// —— IPC：自动更新 ——
+// 渲染进程只能触发这四个动作，拿不到文件系统 / 进程等任何其它能力。
+// 动作统一委托给 checkUpdate / downloadUpdate / installUpdate（与托盘、菜单同一入口），
+// 忙锁 / 节流 / 安装守卫在此天然生效，杜绝多入口各判一套。
+ipcMain.handle('sectutor:update-state', async () => updateState);
+
+// 用户手动点按 → force=true（跳过 30s 节流，忙锁仍生效）
+ipcMain.handle('sectutor:check-update', async () => {
+  if (!updaterReady()) return { ok: false, reason: 'unavailable', state: updateState };
+  const busy = checkingBusy;
+  const throttled = !busy && !checkThrottle.ok(Date.now(), true);
+  if (!busy && !throttled) checkUpdate(true);
+  return { ok: true, accepted: !busy && !throttled, busy, throttled, state: updateState };
+});
+
+ipcMain.handle('sectutor:download-update', async () => {
+  if (!updaterReady()) return { ok: false, reason: 'unavailable', state: updateState };
+  if (updateState.downloaded) return { ok: true, already: true, state: updateState };
+  downloadUpdate();
+  return { ok: true, state: updateState };
+});
+
+// 安装并重启：canInstall 守卫（未下载 / 有错误 / 禁用态一律拒绝，返回 not-ready）。
+ipcMain.handle('sectutor:install-update', async () => {
+  if (!updaterReady()) return { ok: false, reason: 'unavailable' };
+  const started = installUpdate();
+  return { ok: started, reason: started ? null : 'not-ready', state: updateState };
 });

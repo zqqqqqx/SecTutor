@@ -171,6 +171,18 @@
             </div>
             <div id="backendStatus" class="backend-status">后端状态：检测中…</div>
           </div>
+          <!-- 自动更新（v1.2.0）：仅桌面版（Electron 安装版）显示。
+               网页版 / 开发态由 setupUpdater 自动隐藏，不占位、不打扰。 -->
+          <div class="update-ctl" id="updateCtl" style="display:none">
+            <p class="hint" data-i18n="update.hint">SecTutor 会在启动后自动检查更新（不打断你的操作）。你也可以随时手动检查；下载完成后可立即重启安装，或等下次退出时自动安装。</p>
+            <div class="chips">
+              <button id="checkUpdate" class="btn small ghost" data-i18n="btn.checkUpdate">🔄 检查更新</button>
+              <button id="downloadUpdate" class="btn small" data-i18n="btn.downloadUpdate" style="display:none">⬇ 下载更新</button>
+              <button id="installUpdate" class="btn small" data-i18n="btn.installUpdate" style="display:none">✅ 安装并重启</button>
+            </div>
+            <div id="updateStatus" class="backend-status">版本检测中…</div>
+            <div id="updateProgress" class="update-progress" style="display:none"><i></i></div>
+          </div>
           <div class="quick-q">
             <h3 data-i18n="h.quick">快速提问</h3>
             <div id="quickQs" class="chips"></div>

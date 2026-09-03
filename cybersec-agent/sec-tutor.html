@@ -1219,6 +1219,44 @@ kbd {
   .agent-roles .ar-chip:hover, .msg .suggestions button:hover, .pp-chip:hover, .chat-input .btn.icon:hover:not(:disabled) { transform: none; }
 }
 
+/* ============================================================
+   v1.2.0：自动更新状态区（桌面版专属，网页版由 JS 隐藏）
+   —— 视觉语言与 .backend-ctl 保持一致（同款胶囊 + 同款边框配方），
+      只把强调色换成 accent，避免又引入一套新语义色。
+   ============================================================ */
+.update-ctl {
+  margin: 14px 0; padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.update-ctl .hint { margin-bottom: 8px; }
+.update-ctl .chips { margin-bottom: 8px; }
+
+/* 下载进度条：细条 + 品牌渐变填充，宽度由 JS 写内联 width（0-100%） */
+.update-progress {
+  margin-top: 8px; height: 6px; border-radius: 999px;
+  background: var(--chip);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.update-progress > i {
+  display: block; height: 100%; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), var(--brand-2));
+  transition: width .25s ease;
+}
+
+/* 极窄屏：与 .backend-ctl 同等收紧 */
+@media (max-width: 480px) {
+  .update-ctl { padding: 10px; }
+  .update-ctl .chips { gap: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-progress > i { transition: none; }
+}
+
 </style>
 </head>
 <body>
@@ -1385,6 +1423,18 @@ kbd {
               <button id="stopBackend" class="btn small ghost" data-i18n="btn.stopBackend">■ 停止后端</button>
             </div>
             <div id="backendStatus" class="backend-status">后端状态：检测中…</div>
+          </div>
+          <!-- 自动更新（v1.2.0）：仅桌面版（Electron 安装版）显示。
+               网页版 / 开发态由 setupUpdater 自动隐藏，不占位、不打扰。 -->
+          <div class="update-ctl" id="updateCtl" style="display:none">
+            <p class="hint" data-i18n="update.hint">SecTutor 会在启动后自动检查更新（不打断你的操作）。你也可以随时手动检查；下载完成后可立即重启安装，或等下次退出时自动安装。</p>
+            <div class="chips">
+              <button id="checkUpdate" class="btn small ghost" data-i18n="btn.checkUpdate">🔄 检查更新</button>
+              <button id="downloadUpdate" class="btn small" data-i18n="btn.downloadUpdate" style="display:none">⬇ 下载更新</button>
+              <button id="installUpdate" class="btn small" data-i18n="btn.installUpdate" style="display:none">✅ 安装并重启</button>
+            </div>
+            <div id="updateStatus" class="backend-status">版本检测中…</div>
+            <div id="updateProgress" class="update-progress" style="display:none"><i></i></div>
           </div>
           <div class="quick-q">
             <h3 data-i18n="h.quick">快速提问</h3>
@@ -4673,7 +4723,9 @@ SEC_DATA.knowledge_graph = {
       "kb.path": "🗺️ 学习路径", "kb.path.on": "✅ 学习路径",
       "kb.related": "🔗 相关推荐", "kb.globalCount": "全库命中", "kb.goto": "前往",
       "kb.path.title": "按难度梯度（入门→初级→中级→高级）组织的学习路径，绿色表示已掌握",
-      "kb.globalEmpty": "全库未找到相关内容，换个关键词试试。", "kb.globalHint": "已跨 知识点/靶场题解/安全资讯/安全工具/交互靶场 检索"
+      "kb.globalEmpty": "全库未找到相关内容，换个关键词试试。", "kb.globalHint": "已跨 知识点/靶场题解/安全资讯/安全工具/交互靶场 检索",
+      "update.hint": "SecTutor 会在启动后自动检查更新（不打断你的操作）。你也可以随时手动检查；下载完成后可立即重启安装，或等下次退出时自动安装。",
+      "btn.checkUpdate": "🔄 检查更新", "btn.downloadUpdate": "⬇ 下载更新", "btn.installUpdate": "✅ 安装并重启"
     },
     en: {
       "brand.sub": "Cybersecurity learning agent · for authorized learning & defense research only",
@@ -4718,9 +4770,15 @@ SEC_DATA.knowledge_graph = {
       "kb.path": "🗺️ Path", "kb.path.on": "✅ Path",
       "kb.related": "🔗 Related", "kb.globalCount": "All-library hits", "kb.goto": "Go",
       "kb.path.title": "Learning path ordered by difficulty (Beginner→Basic→Intermediate→Advanced); green = mastered",
-      "kb.globalEmpty": "No matches across the library. Try another keyword.", "kb.globalHint": "Searched across topics / writeups / news / tools / labs"
+      "kb.globalEmpty": "No matches across the library. Try another keyword.", "kb.globalHint": "Searched across topics / writeups / news / tools / labs",
+      "update.hint": "SecTutor checks for updates after startup (without interrupting your work). You can also check manually; once downloaded, restart to install now, or let it install automatically the next time you quit.",
+      "btn.checkUpdate": "🔄 Check for updates", "btn.downloadUpdate": "⬇ Download update", "btn.installUpdate": "✅ Install & restart"
     }
   };
+  // 最近一次收到的更新状态快照。声明在此处（而非更新模块内）是为了避开 TDZ：
+  // applyLang 会在 init() 一开始就调用，此时必须已初始化。
+  let lastUpdateState = null;
+
   function applyLang(lang) {
     lang = (lang === "en") ? "en" : "zh";
     const dict = I18N[lang];
@@ -4736,6 +4794,8 @@ SEC_DATA.knowledge_graph = {
     if (lb) lb.innerHTML = lang === "en" ? "🌐 English" : "🌐 中文";
     try { localStorage.setItem("sectutor_lang", lang); } catch (e) {}
     document.documentElement.setAttribute("lang", lang === "en" ? "en" : "zh-CN");
+    // 更新状态区文案由 JS 生成（不走 data-i18n），切语言后要按新语言重绘一次。
+    if (lastUpdateState) renderUpdateState(lastUpdateState);
   }
 
   /* ---------- 导航（左图标栏） ---------- */
@@ -7730,6 +7790,162 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     }, 80);
   }
 
+  /* ---------- v1.2.0：自动更新（仅 Electron 桌面安装版） ---------- */
+  // 前端只做两件事：渲染主进程推来的状态、触发「检查 / 下载 / 安装」三个动作。
+  // 所有判断逻辑都在主进程，前端不自行判断版本号，避免出现两套真相。
+  // 网页版（window.sectutor 无 updateState）整块隐藏，不留痕迹、不报错。
+  const UPDATER = (window.sectutor && window.sectutor.updateState && window.sectutor.onUpdateState)
+    ? window.sectutor : null;
+
+  // 错误分类 → 中英文可读文案（与主进程 updater-core.classifyError 的分类对应）。
+  // 未知分类回退到通用文案 + 原始错误摘要，绝不让用户看到一段技术黑话就懵掉。
+  const UPDATE_ERR_TEXT = {
+    network: {
+      zh: "无法连接更新服务器（GitHub 网络不可达）。可稍后重试，或去 GitHub Releases 手动下载新版安装包。",
+      en: "Could not reach the update server (GitHub unreachable). Retry later or download the new installer from GitHub Releases.",
+    },
+    ratelimit: {
+      zh: "更新检查过于频繁被 GitHub 限流，请过一会儿再试。",
+      en: "Too many update checks (GitHub rate limit). Please try again later.",
+    },
+    forbidden: {
+      zh: "无权访问更新源（仓库可能为私有或访问令牌已失效）。其余功能不受影响。",
+      en: "No access to the update source (private repo or expired token). Everything else works fine.",
+    },
+    unreleased: {
+      zh: "更新源异常：最新 GitHub Release 未发布，或缺少更新清单（latest.yml）。",
+      en: "Update source issue: the latest GitHub Release is missing or has no update manifest (latest.yml).",
+    },
+    corrupt: {
+      zh: "下载内容校验失败（文件可能损坏），请重新下载。",
+      en: "The downloaded file failed its integrity check. Please download again.",
+    },
+  };
+
+  // 不可用形态（reason）的中英文说明。网页版整块隐藏不走到这；这里覆盖
+  // Electron 里的开发态 / Portable / 组件加载失败三种「壳在但更新不可用」的情况。
+  const UPDATE_DISABLED_TEXT = {
+    portable: {
+      zh: "当前为免安装版（Portable），不支持自动更新。如需自动更新，请下载安装版 SecTutor-Setup-x.y.z.exe。",
+      en: "Portable edition does not support auto-update. Install the setup edition (SecTutor-Setup-x.y.z.exe) to enable it.",
+    },
+    loader: {
+      zh: "自动更新组件未能加载，本次运行不启用更新。",
+      en: "The update component could not be loaded; updates are disabled this session.",
+    },
+    dev: {
+      zh: "开发模式不启用自动更新。",
+      en: "Auto-update is disabled in development mode.",
+    },
+  };
+
+  // 把状态对象渲染成「一句话状态 + 此刻唯一该做的动作」。
+  function renderUpdateState(st) {
+    const status = $("#updateStatus");
+    if (!status) return;
+    lastUpdateState = st;   // 供切换语言时按当前语言重绘
+    const en = curLang() === "en";
+    const pctTxt = st.progress == null ? 0 : Math.round(st.progress);
+
+    const btnCheck = $("#checkUpdate");
+    const btnDown = $("#downloadUpdate");
+    const btnInst = $("#installUpdate");
+    const bar = $("#updateProgress");
+    const fill = bar ? bar.querySelector("i") : null;
+
+    // —— 形态不可用（Portable / 开发态 / 组件失败）：整区灰态说明，隐藏全部动作 ——
+    if (st.enabled === false) {
+      if (btnCheck) btnCheck.style.display = "none";
+      if (btnDown) btnDown.style.display = "none";
+      if (btnInst) btnInst.style.display = "none";
+      if (bar) bar.style.display = "none";
+      const d = UPDATE_DISABLED_TEXT[st.reason];
+      status.textContent = (d ? d[en ? "en" : "zh"] : (en ? "Auto-update is unavailable." : "自动更新不可用。"));
+      status.className = "backend-status";
+      return;
+    }
+
+    // —— 按钮显隐：任何时刻只暴露当前该做的那一个动作 ——
+    // 出错但「有新版本」仍保留下载钮 = 上次下载失败可直接重试；出错且无版本 = 保留检查钮重试。
+    if (btnCheck) btnCheck.style.display = (st.downloading || st.downloaded) ? "none" : "";
+    if (btnDown) btnDown.style.display = (st.available && !st.downloading && !st.downloaded) ? "" : "none";
+    if (btnInst) btnInst.style.display = st.downloaded ? "" : "none";
+
+    // 进度条仅在下载中显示
+    if (bar) {
+      if (st.downloading) { bar.style.display = ""; if (fill) fill.style.width = pctTxt + "%"; }
+      else bar.style.display = "none";
+    }
+
+    let text, cls = "backend-status";
+    if (st.downloaded) {
+      text = en ? `Update ${st.version || ""} is ready. Install whenever you are done.` : `更新 ${st.version || ""} 已就绪，准备好后点击安装。`;
+      cls += " ok";
+    } else if (st.downloading) {
+      text = en ? `Downloading ${st.version || ""}… ${pctTxt}%` : `正在下载 ${st.version || ""}… ${pctTxt}%`;
+    } else if (st.checking) {
+      text = en ? "Checking for updates…" : "正在检查更新…";
+    } else if (st.available) {
+      text = en ? `New version ${st.version || ""} available (current v${st.currentVersion || ""}).` : `发现新版本 ${st.version || ""}（当前 v${st.currentVersion || ""}）。`;
+      cls += " ok";
+    } else if (st.error) {
+      // 按错误分类给可读文案；未知类型回退通用文案。更新失败绝不打断主功能：不弹窗、不阻塞。
+      const known = st.errorKind && UPDATE_ERR_TEXT[st.errorKind];
+      if (known) text = known[en ? "en" : "zh"];
+      else text = en ? ("Update failed: " + (st.error || "unknown error")) : ("更新失败：" + (st.error || "未知错误"));
+      cls += " off";
+    } else if (st.checkedAt) {
+      text = en ? `Up to date (v${st.currentVersion || ""}).` : `已是最新版本（v${st.currentVersion || ""}）。`;
+      cls += " ok";
+    } else {
+      // 尚未做过检查：不假装「已是最新」
+      text = en ? `Auto-check happens after startup. (v${st.currentVersion || ""})` : `打开后会自动检查更新（当前 v${st.currentVersion || ""}）。`;
+    }
+    status.textContent = text;
+    status.className = cls;
+  }
+
+  function setupUpdater() {
+    const box = $("#updateCtl");
+    if (!UPDATER || !box) return;
+    box.style.display = "";   // 仅桌面版显示
+    // 更新属于「锦上添花」，任何异常都静默吞掉，绝不影响学习主流程。
+    const guard = (p) => Promise.resolve(p).catch(() => {});
+
+    const btnCheck = $("#checkUpdate");
+    if (btnCheck && !btnCheck.dataset.bound) {
+      btnCheck.dataset.bound = "1";
+      btnCheck.addEventListener("click", () => {
+        btnCheck.disabled = true;
+        guard(UPDATER.checkUpdate()).then(() => { btnCheck.disabled = false; });
+      });
+    }
+    const btnDown = $("#downloadUpdate");
+    if (btnDown && !btnDown.dataset.bound) {
+      btnDown.dataset.bound = "1";
+      btnDown.addEventListener("click", () => guard(UPDATER.downloadUpdate()));
+    }
+    const btnInst = $("#installUpdate");
+    if (btnInst && !btnInst.dataset.bound) {
+      btnInst.dataset.bound = "1";
+      btnInst.addEventListener("click", () => {
+        if (btnInst.disabled) return;   // 防连点：安装会重启应用，双击会导致重复 quitAndInstall
+        btnInst.disabled = true;
+        const original = btnInst.textContent;
+        btnInst.textContent = curLang() === "en" ? "Restarting…" : "正在重启应用…";
+        guard(UPDATER.installUpdate().then((r) => {
+          // 被主进程守卫拒绝（如状态未就绪）时还原按钮，允许用户再点
+          if (!r || r.ok !== true) { btnInst.disabled = false; btnInst.textContent = original; }
+        }));
+      });
+    }
+
+    // 订阅主进程推送（检查中 / 有新版本 / 下载进度 / 已就绪 / 出错）
+    UPDATER.onUpdateState((st) => renderUpdateState(st || {}));
+    // 首帧先拉一次快照，避免刚打开界面时状态区停留在占位文案。
+    guard(UPDATER.updateState()).then((st) => { if (st) renderUpdateState(st); });
+  }
+
   function init() {
     startSplash();
     applyTheme(localStorage.getItem("sectutor_theme") || "dark");
@@ -7866,6 +8082,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const cur = document.documentElement.getAttribute("lang") === "en" ? "en" : "zh";
       window.sectutor.notifyLang(cur);
     }
+
+    // 自动更新（v1.2.0）：放在最后，桌面版才接管；网页版内部直接 return。
+    setupUpdater();
   }
 
   /* ============================================================
