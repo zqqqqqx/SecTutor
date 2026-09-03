@@ -49,14 +49,19 @@ function classifyError(err) {
 //   mark(now)        —— 发起检查后记录时间
 //   since(now)       —— 距上次检查过了多久（毫秒）
 function createThrottle(minIntervalMs) {
-  let last = 0;
+  let last = 0;   // 0 = 从未检查过
   return {
     ok(now, force) {
+      if (force) return true;
+      // 从未检查过一律放行。若写成 (now - 0) >= minIntervalMs，正确性就依赖了
+      // 「Date.now() 足够大」这个巧合，传入小时间戳（计时器 / 测试）会被误判成刚检查过。
+      if (last === 0) return true;
       const n = now || Date.now();
-      return !!force || (n - last) >= minIntervalMs;
+      return (n - last) >= minIntervalMs;
     },
     mark(now) { last = now || Date.now(); },
-    since(now) { return (now || Date.now()) - last; },
+    // 从未检查过返回 Infinity，而不是「距 1970 年的毫秒数」这种误导性的大数
+    since(now) { return last === 0 ? Infinity : (now || Date.now()) - last; },
   };
 }
 
@@ -67,4 +72,16 @@ function canInstall(state) {
   return !!(state && state.enabled && state.downloaded && !state.error);
 }
 
-module.exports = { classifyEdition, classifyError, createThrottle, canInstall };
+// —— 重试策略（v1.2.1）——
+// 只有「网络不可达」与「被限流」值得自动重试：前者可能只是暂时断网，后者等一会就好。
+// 其余类型（无权访问 / 无 Release / 校验失败 / 未知）重试也不会成功，只会在断网时
+// 制造请求风暴，一律交给用户手动触发。返回 null = 不自动重试。
+//   network   —— 指数退避：第 1/2/3 次分别 30s / 60s / 90s
+//   ratelimit —— GitHub 限流窗口按分钟计，固定 60s 退避
+function retryDelay(kind, attempt) {
+  if (kind === 'ratelimit') return 60000;
+  if (kind === 'network') return 30000 * Math.max(1, attempt | 0);
+  return null;
+}
+
+module.exports = { classifyEdition, classifyError, createThrottle, canInstall, retryDelay };

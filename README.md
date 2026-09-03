@@ -22,6 +22,28 @@
 - 🔧 **工具箱**：Base64 / MD5 / SHA256 等本地离线工具
 - 🤖 **智能问答**：内置知识引擎兜底，可配置外部 LLM（OpenAI 兼容接口）获得更深入的推理与流式输出
 
+## 下载桌面版（Windows）
+
+从 [Releases](https://github.com/zqqqqqx/SecTutor/releases) 下载最新的 `SecTutor-Setup-x.y.z.exe`，双击安装即可。
+
+> **⚠️ v1.1.0 及更早版本的用户请注意**
+>
+> 早期版本没有内置自动更新组件，**收不到任何更新通知，也无法自行升级**。请下载最新安装包**直接覆盖安装**（数据与配置不会丢失），装好之后即可在应用内自动接收更新。
+>
+> 这一点无法靠代码修复：旧版本里根本没有执行更新检查的那段代码，新版本无法"叫醒"它们，只能靠这一次手动覆盖安装完成迁移。
+
+### 自动更新
+
+自 v1.2.0 起，安装版支持应用内自动更新：
+
+| 运行形态 | 自动更新 |
+| --- | --- |
+| 安装版（Setup） | 支持。启动后自动检查，之后每 4 小时静默复查 |
+| 免安装版（Portable） | 不支持，需手动下载新版覆盖 |
+| 开发模式 | 不启用 |
+
+更新是「告知式」的：应用只负责通知有新版本，下载与安装由你决定。检查失败也不会打断使用——网络类与限流类失败会自动退避重试，其余类型在侧栏给出一句人话说明。
+
 ## 快速开始
 
 ### 方式一：纯前端（最快）
@@ -56,9 +78,15 @@ npx electron-builder --win nsis
 
 ```bash
 cd cybersec-agent
-node selftest.js          # 前端 jsdom 自测（145 项断言）
+node selftest.js          # 前端 jsdom 自测（363 项断言）
 node quiz_validate.js     # 题库结构校验
 node build-single.js && node verify-single.js   # 单文件构建与校验
+```
+
+桌面壳的自动更新判定逻辑是纯函数，单独成测，不需要 Electron：
+
+```bash
+node sectutor-app/updater-core.test.js   # 版本形态 / 错误分类 / 节流 / 安装守卫 / 重试策略（52 项断言）
 ```
 
 后端测试见 `sectutor-backend/test/`。

@@ -158,6 +158,46 @@ function setUpdateState(patch) {
   refreshTray();
 }
 
+// —— 检查失败自动重试 + 周期性复查（v1.2.1）——
+// 周期性后台静默复查间隔：4 小时。远大于 30s 节流，也远低于 GitHub 无令牌限流
+// （60 次/小时），一天最多 6 次请求，不会触发限流，也不打扰用户。
+const PERIODIC_CHECK_MS = 4 * 60 * 60 * 1000;
+
+// 只有「网络不可达」与「被限流」值得自动重试：前者可能只是暂时断网，后者等一会就好。
+// 其余类型（无权访问 / 无 Release / 校验失败 / 未知）重试也不会成功，交给用户手动触发，
+// 避免无意义的请求风暴。network 指数退避 30s→60s→90s；ratelimit 固定 60s。
+const MAX_AUTO_RETRY = 3;
+let updateRetryCount = 0;
+let retryTimer = null;
+let periodicCheckTimer = null;
+
+function scheduleUpdateRetry(kind) {
+  if (updateRetryCount >= MAX_AUTO_RETRY) return;
+  if (retryTimer) return;   // 已有重试在排队，不重复排
+  const delay = updaterCore.retryDelay(kind, updateRetryCount + 1);
+  if (delay == null) return;   // 该类型不值得自动重试（策略见 updater-core.retryDelay）
+  updateRetryCount += 1;
+  console.log('[SecTutor] 更新检查失败（' + kind + '），' + Math.round(delay / 1000) + 's 后自动重试（第 '
+    + updateRetryCount + '/' + MAX_AUTO_RETRY + ' 次）');
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    checkUpdate(true);      // 重试走 force 跳过 30s 节流；忙锁仍生效，不会并发
+  }, delay);
+}
+
+// 任一次「检查有了明确结果」都重置重试计数：说明链路是通的，之前只是偶发。
+function resetUpdateRetry() {
+  updateRetryCount = 0;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+}
+
+// 退出 / 安装前清掉两个更新定时器：避免在「停后端 → 销毁托盘 → 退出」的过程中
+// 定时器触发检查去抢网络与状态写入。虽已有空值保护，仍求流程干净。
+function clearUpdateTimers() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  if (periodicCheckTimer) { clearInterval(periodicCheckTimer); periodicCheckTimer = null; }
+}
+
 function setupAutoUpdater() {
   // enabled / reason 以 EDITION 为准（setupAutoUpdater 在 whenReady 后调用，广播前先落位，
   // 前端首帧拉 updateState() 即可拿到正确形态）
@@ -184,6 +224,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-available', (info) => {
+    resetUpdateRetry();
     setUpdateState({
       checking: false, available: true, downloading: false, downloaded: false,
       progress: 0, version: (info && info.version) || null, error: null, errorKind: null,
@@ -193,6 +234,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-not-available', () => {
+    resetUpdateRetry();
     setUpdateState({
       checking: false, available: false, downloading: false, downloaded: false,
       progress: 0, version: null, error: null, errorKind: null, checkedAt: Date.now(),
@@ -205,6 +247,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    resetUpdateRetry();
     setUpdateState({
       checking: false, downloading: false, downloaded: true, progress: 100,
       version: (info && info.version) || updateState.version, error: null, errorKind: null,
@@ -217,6 +260,8 @@ function setupAutoUpdater() {
     const errorKind = updaterCore.classifyError(e);
     console.error('[SecTutor] 自动更新出错（已忽略，不影响使用）:', msg, '(' + errorKind + ')');
     setUpdateState({ checking: false, downloading: false, error: msg, errorKind, checkedAt: Date.now() });
+    // 网络类/限流类失败自动重试一次；其余类型不重试，避免无意义请求。
+    scheduleUpdateRetry(errorKind);
   });
 }
 
@@ -275,6 +320,7 @@ function installUpdate() {
   }
   setImmediate(() => {
     quitting = true;
+    clearUpdateTimers();
     stopServer().then(() => {
       if (tray) { tray.destroy(); tray = null; }
       autoUpdater.quitAndInstall(false, true);
@@ -452,8 +498,24 @@ function buildTrayMenu() {
   ]);
 }
 
+// 托盘 tooltip：随更新状态变化，鼠标悬停即可看到进度，不必展开菜单。
+// 未启用自动更新 / 无进行中的更新时保持默认文案，避免噪音。
+function updateToolTip() {
+  const en = currentLang === 'en';
+  const base = en ? 'SecTutor Cybersecurity Training' : 'SecTutor 网络安全实战训练';
+  const s = updateState;
+  if (!s || !s.enabled) return base;
+  if (s.downloaded) return base + ' — ' + (en ? 'update ' : '更新 ') + (s.version || '') + (en ? ' ready' : ' 已就绪');
+  if (s.downloading) return base + ' — ' + (en ? 'downloading ' : '正在下载 ') + Math.round(s.progress || 0) + '%';
+  if (s.checking) return base + ' — ' + (en ? 'checking for updates…' : '正在检查更新…');
+  if (s.available) return base + ' — ' + (en ? 'new version ' : '发现新版本 ') + (s.version || '');
+  return base;
+}
+
 function refreshTray() {
-  if (tray) tray.setContextMenu(buildTrayMenu());
+  if (!tray) return;
+  tray.setContextMenu(buildTrayMenu());
+  tray.setToolTip(updateToolTip());
 }
 
 function createTray() {
@@ -465,7 +527,7 @@ function createTray() {
     );
   }
   tray = new Tray(trayIcon);
-  tray.setToolTip('SecTutor 网络安全实战训练');
+  tray.setToolTip(updateToolTip());
   tray.setContextMenu(buildTrayMenu());
   tray.on('double-click', () => showWindow());
   tray.on('click', () => showWindow());
@@ -473,6 +535,7 @@ function createTray() {
 
 function quitApp() {
   quitting = true;
+  clearUpdateTimers();
   stopServer().then(() => {
     if (tray) { tray.destroy(); tray = null; }
     app.quit();
@@ -626,6 +689,9 @@ if (!app.requestSingleInstanceLock()) {
     setupAutoUpdater();
     Menu.setApplicationMenu(buildAppMenu());
     setTimeout(checkUpdate, 8000);
+    // 周期性后台静默复查（默认 4 小时一次）：不弹窗、不打断，只在发现新版本时让
+    // 托盘 / 侧栏亮出「可下载」。间隔远大于 30s 节流，也远低于 GitHub 限流。
+    periodicCheckTimer = setInterval(() => checkUpdate(false), PERIODIC_CHECK_MS);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
       else showWindow();

@@ -1,6 +1,6 @@
 {
   "name": "sectutor",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "SecTutor 网络安全实战训练桌面应用（内嵌后端，系统托盘常驻，按钮一键启停）",
   "main": "main.js",
   "author": {
