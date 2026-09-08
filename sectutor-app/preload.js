@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld('sectutor', {
   downloadUpdate: () => ipcRenderer.invoke('sectutor:download-update'),
   // 安装并重启应用
   installUpdate: () => ipcRenderer.invoke('sectutor:install-update'),
+  // —— v1.2.3 ——
+  skipUpdate: () => ipcRenderer.invoke('sectutor:skip-update'),
+  unskipUpdate: () => ipcRenderer.invoke('sectutor:unskip-update'),
+  // 退出时自动安装（下载完没手动装就退出时）
+  setAutoInstall: (on) => ipcRenderer.invoke('sectutor:set-auto-install', !!on),
   // 主进程推送更新状态（检查中 / 有新版本 / 下载进度 / 已就绪 / 出错）
   // 返回反注册函数，便于调用方清理，避免重复叠加监听。
   onUpdateState: (cb) => {

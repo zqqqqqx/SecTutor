@@ -768,6 +768,17 @@
           <button class="btn small" id="setPdf">📄 导出学习计划</button>
           <button class="btn small ghost" id="setChat">🗑 导出对话</button>
           <button class="btn small ghost" id="setReset">♻️ 重置进度</button>
+          <button class="btn small ghost" id="setExport">💾 导出进度备份</button>
+          <button class="btn small ghost" id="setImport">📥 导入进度备份</button>
+          <input type="file" id="setImportFile" accept="application/json,.json" style="display:none" />
+        </div>
+      </div>
+      <hr class="ctrl-divider" />
+      <div class="set-row"><span>自动更新</span>
+        <div class="chips">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap">
+            <input type="checkbox" id="setAutoInstall" /> 下载完后，退出时自动安装
+          </label>
         </div>
       </div>
       <hr class="ctrl-divider" />
@@ -813,6 +824,67 @@
       if (window.sectutor && window.sectutor.openLogDir) window.sectutor.openLogDir();
       else toast("浏览器直开模式没有日志目录", "info");
     });
+
+    // 退出时自动安装开关（只有桌面壳才有这个 IPC）
+    const ai = $("#setAutoInstall");
+    if (ai) {
+      ai.checked = true;
+      if (window.sectutor && window.sectutor.updateState) {
+        try { Promise.resolve(window.sectutor.updateState()).then((st) => {
+          if (st) ai.checked = st.autoInstallOnQuit !== false;
+        }).catch(() => {}); } catch (e) {}
+      }
+      ai.addEventListener("change", () => {
+        try { if (window.sectutor && window.sectutor.setAutoInstall) window.sectutor.setAutoInstall(ai.checked); } catch (e) {}
+      });
+    }
+
+    // 进度备份：把所有 sectutor_ 开头的键打包成一个 json
+    const sExp = $("#setExport"); if (sExp) sExp.addEventListener("click", () => {
+      try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf("sectutor_") === 0) keys.push(k);
+        }
+        const bag = { _app: "SecTutor", _v: 1, exportedAt: new Date().toISOString(), data: {} };
+        keys.forEach((k) => { bag.data[k] = localStorage.getItem(k); });
+        const blob = new Blob([JSON.stringify(bag, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "sectutor-backup-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + ".json";
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+        toast("已导出 " + keys.length + " 项学习数据", "ok");
+      } catch (e) { toast("导出失败：" + ((e && e.message) || e), "info"); }
+    });
+
+    const sImp = $("#setImport"), sImpFile = $("#setImportFile");
+    if (sImp && sImpFile) {
+      sImp.addEventListener("click", () => sImpFile.click());
+      sImpFile.addEventListener("change", () => {
+        const f = sImpFile.files && sImpFile.files[0];
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => {
+          try {
+            const parsed = JSON.parse(String(rd.result));
+            const bag = parsed && parsed.data ? parsed.data : parsed;
+            if (!bag || typeof bag !== "object") throw new Error("文件格式不对");
+            let n = 0;
+            Object.keys(bag).forEach((k) => {
+              if (k.indexOf("sectutor_") !== 0) return;   // 只认自家前缀，别把别人的键写进去
+              localStorage.setItem(k, bag[k]); n++;
+            });
+            toast("已导入 " + n + " 项，正在刷新…", "ok");
+            setTimeout(() => { try { closeModal(); } catch (e) {} location.reload(); }, 800);
+          } catch (e) { toast("导入失败：" + ((e && e.message) || e), "info"); }
+          sImpFile.value = "";
+        };
+        rd.readAsText(f);
+      });
+    }
   }
 
   const btnSearch = $("#btnSearch"); if (btnSearch) btnSearch.addEventListener("click", openGlobalSearch);
@@ -3991,15 +4063,24 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const btnCheck = $("#checkUpdate");
     const btnDown = $("#downloadUpdate");
     const btnInst = $("#installUpdate");
+    const btnSkip = $("#skipUpdate");
+    const btnUnskip = $("#unskipUpdate");
+    const notesBox = $("#updateNotes");
     const bar = $("#updateProgress");
     const fill = bar ? bar.querySelector("i") : null;
+
+    if (btnSkip) btnSkip.textContent = en ? "⏭ Skip this version" : "⏭ 跳过此版本";
+    if (btnUnskip) btnUnskip.textContent = en ? "↩ Un-skip" : "↩ 取消跳过";
 
     // —— 形态不可用（Portable / 开发态 / 组件失败）：整区灰态说明，隐藏全部动作 ——
     if (st.enabled === false) {
       if (btnCheck) btnCheck.style.display = "none";
       if (btnDown) btnDown.style.display = "none";
       if (btnInst) btnInst.style.display = "none";
+      if (btnSkip) btnSkip.style.display = "none";
+      if (btnUnskip) btnUnskip.style.display = "none";
       if (bar) bar.style.display = "none";
+      if (notesBox) notesBox.style.display = "none";
       const d = UPDATE_DISABLED_TEXT[st.reason];
       status.textContent = (d ? d[en ? "en" : "zh"] : (en ? "Auto-update is unavailable." : "自动更新不可用。"));
       status.className = "backend-status";
@@ -4011,6 +4092,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     if (btnCheck) btnCheck.style.display = (st.downloading || st.downloaded) ? "none" : "";
     if (btnDown) btnDown.style.display = (st.available && !st.downloading && !st.downloaded) ? "" : "none";
     if (btnInst) btnInst.style.display = st.downloaded ? "" : "none";
+    if (btnSkip) btnSkip.style.display = (st.available && !st.downloading && !st.downloaded) ? "" : "none";
+    if (btnUnskip) btnUnskip.style.display = st.skipped ? "" : "none";
 
     // 进度条仅在下载中显示
     if (bar) {
@@ -4029,6 +4112,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } else if (st.available) {
       text = en ? `New version ${st.version || ""} available (current v${st.currentVersion || ""}).` : `发现新版本 ${st.version || ""}（当前 v${st.currentVersion || ""}）。`;
       cls += " ok";
+    } else if (st.skipped) {
+      text = en ? `New version ${st.version || ""} available — you skipped it.` : `发现新版本 ${st.version || ""}（你已跳过此版本，想装可点「取消跳过」）。`;
     } else if (st.error) {
       // 按错误分类给可读文案；未知类型回退通用文案。更新失败绝不打断主功能：不弹窗、不阻塞。
       const known = st.errorKind && UPDATE_ERR_TEXT[st.errorKind];
@@ -4044,6 +4129,17 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     }
     status.textContent = text;
     status.className = cls;
+
+    // changelog 折叠区：拿到 release notes 且确实有新版相关状态时才露出来
+    if (notesBox) {
+      const nb = notesBox.querySelector(".notes-body");
+      if (st.notes && (st.available || st.skipped || st.downloading || st.downloaded)) {
+        if (nb) nb.textContent = st.notes;
+        notesBox.style.display = "";
+      } else {
+        notesBox.style.display = "none";
+      }
+    }
   }
 
   function setupUpdater() {
@@ -4079,6 +4175,17 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
           if (!r || r.ok !== true) { btnInst.disabled = false; btnInst.textContent = original; }
         }));
       });
+    }
+
+    const btnSkip = $("#skipUpdate");
+    if (btnSkip && !btnSkip.dataset.bound) {
+      btnSkip.dataset.bound = "1";
+      btnSkip.addEventListener("click", () => guard(UPDATER.skipUpdate()));
+    }
+    const btnUnskip = $("#unskipUpdate");
+    if (btnUnskip && !btnUnskip.dataset.bound) {
+      btnUnskip.dataset.bound = "1";
+      btnUnskip.addEventListener("click", () => guard(UPDATER.unskipUpdate()));
     }
 
     // 订阅主进程推送（检查中 / 有新版本 / 下载进度 / 已就绪 / 出错）

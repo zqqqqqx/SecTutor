@@ -80,4 +80,9 @@ function retryDelay(kind, attempt) {
   return null;
 }
 
-module.exports = { classifyEdition, classifyError, createThrottle, canInstall, retryDelay };
+// 该版本是否被用户跳过（v1.2.3）。两边都没值时不算跳过，免得 undefined === undefined 误判。
+function isSkipped(version, skippedVersion) {
+  return !!version && !!skippedVersion && version === skippedVersion;
+}
+
+module.exports = { classifyEdition, classifyError, createThrottle, canInstall, retryDelay, isSkipped };

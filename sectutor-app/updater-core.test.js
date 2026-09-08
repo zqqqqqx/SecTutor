@@ -88,6 +88,12 @@ eq(core.retryDelay(core.classifyError(new Error('sha512 checksum mismatch')), 1)
 eq(core.retryDelay(core.classifyError(new Error('HttpError: 403')), 1), null,
   '链路：无权访问 → 不重试');
 
+/* —— 7. 跳过此版本（v1.2.3）—— */
+eq(core.isSkipped('1.2.3', '1.2.3'), true, '版本一致 → 跳过');
+eq(core.isSkipped('1.2.4', '1.2.3'), false, '出了更新的版本 → 不再跳过');
+eq(core.isSkipped('1.2.3', null), false, '没跳过记录 → 不跳过');
+eq(core.isSkipped(null, null), false, '两边都为空不算跳过（防 undefined 互等）');
+
 console.log('\n总计：通过 ' + pass + '/' + (pass + fail));
 if (fail > 0) {
   console.log('失败项：');

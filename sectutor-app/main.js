@@ -50,6 +50,17 @@ process.on('unhandledRejection', (reason) => {
   appLog('error', 'unhandledRejection: ' + (reason && reason.stack || reason));
 });
 
+// —— 用户偏好（v1.2.3）——
+// 就两个开关，引 electron-store 太重，一个 json 文件够用。
+const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
+let userCfg = { skippedVersion: null, autoInstallOnQuit: true };
+try {
+  userCfg = Object.assign(userCfg, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
+} catch (e) { /* 第一次跑没文件，用默认值 */ }
+function saveUserCfg() {
+  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(userCfg, null, 2)); } catch (e) {}
+}
+
 // 资源目录：开发态（npm start）下在应用目录的上级；打包态（npm run dist）下
 // 由 electron-builder 的 extraResources 放入 process.resourcesPath，必须分别解析，
 // 否则打包后相对路径失效、后端/前端都加载不到。
@@ -147,6 +158,10 @@ let updateState = {
   error: null,         // 错误原文（可为 null）
   errorKind: null,     // 错误分类（network/ratelimit/forbidden/unreleased/corrupt/unknown）
   checkedAt: null,     // 上次检查时间戳
+  // v1.2.3
+  skipped: false,      // 当前版本是否被用户跳过（跳过=不主动提示，但仍可手动装）
+  notes: null,         // 新版本的 release notes（GitHub Release 正文，截断后下发）
+  autoInstallOnQuit: userCfg.autoInstallOnQuit,
 };
 
 function updaterReady() {
@@ -236,7 +251,7 @@ function setupAutoUpdater() {
 
   autoUpdater.autoDownload = false;      // 先告知，用户决定何时下载
   autoUpdater.allowDowngrade = true;     // 允许回退到旧版本
-  autoUpdater.autoInstallOnAppQuit = true; // 已下载未安装 → 退出时静默安装
+  autoUpdater.autoInstallOnAppQuit = userCfg.autoInstallOnQuit; // 已下载未安装 → 退出时静默安装（可在设置里关）
   // 收敛日志：debug 全部丢弃，避免把本地路径与请求细节刷进控制台。
   autoUpdater.logger = {
     info: (m) => console.log('[Updater]', m),
@@ -251,12 +266,18 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-available', (info) => {
     resetUpdateRetry();
+    const ver = (info && info.version) || null;
+    const skipped = updaterCore.isSkipped(ver, userCfg.skippedVersion);
+    // release notes 是 GitHub Release 正文，可能很长，截一段够看就行。
+    // TODO: 前端按 markdown 渲染，现在是纯文本凑合看。
+    const notes = info && info.releaseNotes ? String(info.releaseNotes).slice(0, 4000) : null;
     setUpdateState({
-      checking: false, available: true, downloading: false, downloaded: false,
-      progress: 0, version: (info && info.version) || null, error: null, errorKind: null,
-      checkedAt: Date.now(),
+      checking: false, available: !skipped, skipped, downloading: false, downloaded: false,
+      progress: 0, version: ver, notes, error: null, errorKind: null, checkedAt: Date.now(),
     });
-    console.log('[SecTutor] 发现新版本:', updateState.version);
+    console.log('[SecTutor] 发现新版本:', ver, skipped ? '(已跳过，不主动提示)' : '');
+    // 出了更新的版本就把过期的跳过记录清掉，免得留着一条永远对不上的字符串
+    if (!skipped && userCfg.skippedVersion) { userCfg.skippedVersion = null; saveUserCfg(); }
   });
 
   autoUpdater.on('update-not-available', () => {
@@ -331,6 +352,25 @@ function downloadUpdate() {
     // 下载失败后回到「有新版本」态（available 保持 true），用户可重新点下载
     setUpdateState({ downloading: false, error: (e && e.message) || String(e), errorKind });
   });
+}
+
+// —— 跳过此版本 / 退出自动安装（v1.2.3）——
+// 跳过只是「不主动提示」，不是拒绝更新：卡片里随时能取消跳过再下载。
+function skipVersion() {
+  userCfg.skippedVersion = updateState.version;
+  saveUserCfg();
+  setUpdateState({ available: false, skipped: true });
+}
+function unskipVersion() {
+  userCfg.skippedVersion = null;
+  saveUserCfg();
+  setUpdateState({ skipped: false, available: !!updateState.version });
+}
+function setAutoInstall(on) {
+  userCfg.autoInstallOnQuit = !!on;
+  saveUserCfg();
+  if (autoUpdater) autoUpdater.autoInstallOnQuit = userCfg.autoInstallOnQuit;
+  setUpdateState({ autoInstallOnQuit: userCfg.autoInstallOnQuit });
 }
 
 // 立即退出并安装。先停后端、销毁托盘，避免安装器因文件占用 / 残留托盘失败。
@@ -796,6 +836,9 @@ ipcMain.handle('sectutor:download-update', async () => {
 });
 
 // 安装并重启：canInstall 守卫（未下载 / 有错误 / 禁用态一律拒绝，返回 not-ready）。
+ipcMain.handle('sectutor:skip-update', async () => { skipVersion(); return updateState; });
+ipcMain.handle('sectutor:unskip-update', async () => { unskipVersion(); return updateState; });
+ipcMain.handle('sectutor:set-auto-install', async (_e, on) => { setAutoInstall(on); return updateState; });
 ipcMain.handle('sectutor:install-update', async () => {
   if (!updaterReady()) return { ok: false, reason: 'unavailable' };
   const started = installUpdate();

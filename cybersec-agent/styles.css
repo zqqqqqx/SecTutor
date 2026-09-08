@@ -1249,3 +1249,28 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .update-progress > i { transition: none; }
 }
+
+/* 更新卡片：changelog 折叠区（v1.2.3） */
+.update-notes {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--border, #2a3550);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, .12);
+}
+.update-notes > summary {
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.update-notes .notes-body {
+  margin-top: 6px;
+  max-height: 190px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+  font-family: ui-monospace, Consolas, monospace;
+}
