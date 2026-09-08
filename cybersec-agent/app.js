@@ -4053,6 +4053,45 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   };
 
   // 把状态对象渲染成「一句话状态 + 此刻唯一该做的动作」。
+  // Release 正文是 markdown，直接 textContent 会把 #、-、| 全露出来，很难看。
+  // 没引 marked 之类：为一段更新说明加个依赖不值当，自己糊个够用的。
+  // 支持：标题 / 列表 / 粗体 / 行内代码 / 链接；表格退化成「·」分隔的纯文本。
+  // TODO: 表格没做对齐，凑合能读
+  function mdLite(src) {
+    const lines = String(src || "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .split(/\r?\n/);
+    let out = "", inList = false;
+    const closeList = () => { if (inList) { out += "</ul>"; inList = false; } };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trimEnd();
+      if (/^\s*```/.test(line)) { closeList(); continue; }        // 代码块标记整行丢掉
+      const h = line.match(/^(#{1,4})\s+(.*)$/);
+      if (h) { closeList(); const lv = Math.min(Number(h[1].length) + 2, 6);
+               out += "<h" + lv + ">" + inline(h[2]) + "</h" + lv + ">"; continue; }
+      const li = line.match(/^\s*[-*]\s+(.*)$/);
+      if (li) { if (!inList) { out += "<ul>"; inList = true; }
+                out += "<li>" + inline(li[1]) + "</li>"; continue; }
+      closeList();
+      if (!line.trim()) continue;
+      if (line.indexOf("|") >= 0) {   // 表格行：拆格子拼成一行
+        const cells = line.split("|").map((c) => c.trim())
+          .filter((c) => c && !/^:?-{2,}:?$/.test(c));
+        if (cells.length) { out += "<p>" + cells.map(inline).join(" · ") + "</p>"; continue; }
+      }
+      out += "<p>" + inline(line) + "</p>";
+    }
+    closeList();
+    return out;
+
+    function inline(s) {
+      return String(s)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+  }
+
   function renderUpdateState(st) {
     const status = $("#updateStatus");
     if (!status) return;
@@ -4134,7 +4173,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     if (notesBox) {
       const nb = notesBox.querySelector(".notes-body");
       if (st.notes && (st.available || st.skipped || st.downloading || st.downloaded)) {
-        if (nb) nb.textContent = st.notes;
+        if (nb) nb.innerHTML = mdLite(st.notes);
         notesBox.style.display = "";
       } else {
         notesBox.style.display = "none";

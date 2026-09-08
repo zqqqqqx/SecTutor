@@ -61,6 +61,47 @@ function saveUserCfg() {
   try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(userCfg, null, 2)); } catch (e) {}
 }
 
+// —— 启动自检 / 安全模式（v1.2.4）——
+// 上次是否正常结束，靠 userData/last-launch.json 里的 clean 标记判断：
+// 启动时写 clean:false，窗口建好后再改成 true；下次起来发现还是 false，说明上次没走完。
+const LAUNCH_FILE = path.join(app.getPath('userData'), 'last-launch.json');
+let safeMode = false;
+
+function readLastLaunch() {
+  try { return JSON.parse(fs.readFileSync(LAUNCH_FILE, 'utf8')); } catch (e) { return null; }
+}
+function markLaunch(clean) {
+  try { fs.writeFileSync(LAUNCH_FILE, JSON.stringify({ at: Date.now(), clean: !!clean })); } catch (e) {}
+}
+
+// 启动时把环境事实打进日志，报障时一眼能看出是哪种环境出的问题
+function selfCheck(crashedLastTime) {
+  const feOk = fs.existsSync(path.join(frontendDir, 'index.html'));
+  if (!feOk) appLog('warn', '前端目录缺失或没有 index.html: ' + frontendDir);
+  if (!backendApp) appLog('warn', '后端模块未加载，靶场能力不可用');
+  appLog('info', 'startup: version=' + app.getVersion()
+    + ' electron=' + process.versions.electron
+    + ' node=' + process.versions.node
+    + ' packaged=' + app.isPackaged
+    + ' port=' + config.port
+    + ' backend=' + (backendApp ? 'ok' : 'missing')
+    + ' frontend=' + (feOk ? 'ok' : 'missing')
+    + ' lastLaunchClean=' + !crashedLastTime);
+}
+
+// 上次没正常结束才问；正常启动是默认项，别把偶发一次崩溃搞得像故障报案
+function askSafeMode() {
+  return dialog.showMessageBox({
+    type: 'question',
+    title: 'SecTutor',
+    message: '上次启动似乎没有正常结束',
+    detail: '可能是程序崩溃或被强制结束。\n\n安全模式会跳过「自动启动后端」和「自动检查更新」，之后可在托盘菜单手动开启。\n一般直接正常启动就行，反复出问题再试安全模式。',
+    buttons: ['正常启动', '安全模式启动'],
+    defaultId: 0,
+    cancelId: 0,
+  }).then((r) => r.response === 1).catch(() => false);
+}
+
 // 资源目录：开发态（npm start）下在应用目录的上级；打包态（npm run dist）下
 // 由 electron-builder 的 extraResources 放入 process.resourcesPath，必须分别解析，
 // 否则打包后相对路径失效、后端/前端都加载不到。
@@ -757,9 +798,20 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => showWindow());
 
   app.whenReady().then(async () => {
-    const r = await startServer();
-    if (!r.ok) {
-      console.error('[SecTutor] 后端未能自动启动，reason =', r.reason, '；窗口将提示用户。');
+    const prev = readLastLaunch();
+    const crashedLastTime = !!prev && prev.clean === false;
+    markLaunch(false);
+    selfCheck(crashedLastTime);
+    if (crashedLastTime) safeMode = await askSafeMode();
+
+    let r = { ok: false, reason: safeMode ? 'safe-mode' : null };
+    if (safeMode) {
+      appLog('info', '安全模式启动：跳过自动启动后端与自动更新检查');
+    } else {
+      r = await startServer();
+      if (!r.ok) {
+        console.error('[SecTutor] 后端未能自动启动，reason =', r.reason, '；窗口将提示用户。');
+      }
     }
     createWindow();
     createTray();
@@ -767,9 +819,12 @@ if (!app.requestSingleInstanceLock()) {
     // enabled 状态真正出现；再延迟 8 秒静默检查一次，避开启动高峰。
     setupAutoUpdater();
     Menu.setApplicationMenu(buildAppMenu());
-    setTimeout(checkUpdate, 8000);
-    // 之后每 4h 静默查一次，不弹窗，有新版才在托盘/侧栏亮出来
-    periodicCheckTimer = setInterval(() => checkUpdate(false), PERIODIC_CHECK_MS);
+    if (!safeMode) {
+      setTimeout(checkUpdate, 8000);
+      // 之后每 4h 静默查一次，不弹窗，有新版才在托盘/侧栏亮出来
+      periodicCheckTimer = setInterval(() => checkUpdate(false), PERIODIC_CHECK_MS);
+    }
+    markLaunch(true);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
       else showWindow();

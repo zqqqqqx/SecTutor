@@ -1269,8 +1269,18 @@ kbd {
   margin-top: 6px;
   max-height: 190px;
   overflow: auto;
-  white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.55;
+  line-height: 1.6;
+  font-size: 12px;
+}
+.update-notes .notes-body h3,
+.update-notes .notes-body h4,
+.update-notes .notes-body h5 { margin: 8px 0 4px; font-size: 12px; color: var(--text, #dbe4ff); }
+.update-notes .notes-body p { margin: 4px 0; }
+.update-notes .notes-body ul { margin: 4px 0; padding-left: 18px; }
+.update-notes .notes-body code {
+  padding: 1px 4px; border-radius: 3px;
+  background: rgba(255, 255, 255, .08);
   font-family: ui-monospace, Consolas, monospace;
 }
+.update-notes .notes-body a { color: var(--accent, #6ea8ff); }
