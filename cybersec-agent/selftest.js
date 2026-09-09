@@ -1344,6 +1344,35 @@ $("#backLab").click();
     ag2.metrics.reset();
   }
 
+  // ===== 41. UI 清债防回潮（U1 · v1.3.0）=====
+  // 守两条约定：① 模板里不再出现写死的内联样式，动态值只允许用自定义属性传
+  //    （style="--w:${pct}%"）；② 模板用到的 u-* 工具类必须在 styles.css 里有定义
+  //    —— 类名拼错会静默失效、肉眼难察，只能靠断言兜住。
+  {
+    const cssText = fs.readFileSync(path.join(dir, "styles.css"), "utf8");
+    const inlineList = appJs.match(/style="[^"]*"/g) || [];
+    const illegal = inlineList.filter((s) => !/^style="--[a-z-]+:/.test(s));
+    assert(inlineList.length <= 8 && illegal.length === 0,
+      `内联样式仅剩自定义属性形态（当前 ${inlineList.length} 处，非法 ${illegal.length} 处）`);
+
+    // index.html：静态内联已清干净，只留下「JS 显隐控制」那一类（app.js 会直接写
+    // el.style.display，换成 class 会残留 none 导致元素再也显示不出来，详见文件内注释）
+    const htmlText = fs.readFileSync(path.join(dir, "index.html"), "utf8");
+    const htmlInline = htmlText.match(/style="[^"]*"/g) || [];
+    const htmlIllegal = htmlInline.filter((s) => !/^style="display: ?none"$/.test(s));
+    assert(htmlIllegal.length === 0,
+      `index.html 内联样式仅剩 JS 显隐控制用（当前 ${htmlInline.length} 处，其它 ${htmlIllegal.length} 处）`);
+
+    const usedU = new Set();
+    (appJs.match(/class="[^"]*"/g) || []).forEach((attr) => {
+      attr.slice(7, -1).split(/\s+/).forEach((c) => { if (c.startsWith("u-")) usedU.add(c); });
+    });
+    const cssNoComment = cssText.replace(/\/\*[\s\S]*?\*\//g, "");
+    const missingU = Array.from(usedU).filter((c) => !new RegExp("\\." + c + "(?![\\w-])").test(cssNoComment));
+    assert(usedU.size >= 20, `模板确实在用 u-* 工具类（当前 ${usedU.size} 个）`);
+    assert(missingU.length === 0, `u-* 工具类在 styles.css 中均有定义（缺失：${missingU.join(",") || "无"}）`);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

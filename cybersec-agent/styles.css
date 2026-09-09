@@ -7,6 +7,11 @@
    仅扩展视觉，不影响 app.js 逻辑与 selftest 断言。
    ============================================================ */
 
+/* ==================================================================
+   【第 1 段 · 令牌层】深色/浅色主题变量 + 尺度令牌（U1）
+   边界：从这里到「第 2 段」为止，只定义变量，不出现任何选择器。
+   改视觉先想「能不能落到令牌」，不行才写死值。
+   ================================================================== */
 /* ---------- 主题变量 ---------- */
 :root, [data-theme="light"] {
   --bg: #eef2f7;
@@ -120,6 +125,38 @@
   --glow-cyan: 0 0 12px rgba(10,166,196,.26);
 }
 
+/* ==================================================================
+   U1 令牌审计（v1.3.0：只审计不换代，值一个都没动）
+   本文件的主题变量分三层，改样式前先看这里：
+   · 第 1 层「核心调色」：--bg / --panel / --panel-2 / --ink / --muted / --line /
+     --brand / --brand-2 / --accent / --warn / --chip / --code-* / --grid / --glass /
+     --mag / --cyan 及其 -soft 派生。深浅两套主题真正的取值来源。
+   · 第 2 层「组件别名」：--card / --card-2 / --border / --text，全部指向第 1 层。
+     组件样式优先用别名，换主题只动第 1 层。
+   · 第 3 层「尺度」：--sp-* / --r-* / --fs-* / --lh-*（本版新增，见下方）+
+     动效组（--dur-* / --ease-* / --move-* / --scale-*，见文件后段的动效规范）。
+     主题无关，任何主题下取值相同。
+   ⚠ 已知重复定义：浅色主题变量写了两遍——本节上方第 1 个块
+     `:root, [data-theme="light"]` 与第 3 个块 `[data-theme="light"]`。
+     同特异性下方者胜，真正生效的是**最后一个块**；两者在 --bg-grad / --brand /
+     --brand-2 / --brand-soft / --grid 上取值不同，改第 1 个块不会有任何效果。
+     U3 归并时删除被遮蔽的那份。
+   ================================================================== */
+:root {
+  /* 间距：4px 栅格（取值对齐现有散落魔法数） */
+  --sp-1: 4px; --sp-2: 6px; --sp-3: 8px; --sp-4: 10px; --sp-5: 12px; --sp-6: 16px; --sp-8: 24px;
+  /* 圆角：三档，中/大档复用既有 --radius / --radius-lg */
+  --r-sm: 8px; --r-md: var(--radius); --r-lg: var(--radius-lg);
+  /* 字号层级（取值对齐现有散落字号） */
+  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-15: 15px; --fs-17: 17px; --fs-85: .85em;
+  /* 行高层级 */
+  --lh-base: 1.62; --lh-relax: 1.7;
+}
+
+/* ==================================================================
+   【第 2 段 · 基础层】盒模型重置 / body / 氛围层 / 滚动条
+   边界：重置到「第 3 段」为止。只影响全局 Baseline，不含任何业务组件。
+   ================================================================== */
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -161,6 +198,11 @@ main, .topbar, .footer { position: relative; z-index: 1; }
 }
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 70%, transparent); background-clip: padding-box; }
 
+/* ==================================================================
+   【第 3 段 · 外壳布局】rail 图标栏 / .app / topbar / main / footer
+   边界：到「第 4 段」为止。这层决定「页面怎么分区」，不含面板内部内容。
+   注：U4 计划把 .rail 从 <div> 语义化为 <nav>，届时此处结构不动、只补样式钩子。
+   ================================================================== */
 /* ---------- 应用布局：左侧图标栏 + 主区 ---------- */
 /* 固定视口高度：rail 与 .app 均被 stretch 为 100vh，main 获得确定高度后可滚动，
    左侧底部按钮（主题滑块/掌握徽章）也始终固定在视口左下角（此前 min-height 会随
@@ -271,6 +313,15 @@ body { display: flex; height: 100vh; min-height: 100vh; overflow: hidden; }
 .icon-btn .notif { position: absolute; top: -4px; right: -4px; min-width: 17px; height: 17px; border-radius: 9px;
   background: var(--mag); color: #1a0306; font-size: 10px; font-weight: 800; display: grid; place-items: center; box-shadow: var(--glow-mag); }
 
+/* ==================================================================
+   【第 4 段 · 面板与功能区】面板容器 + 各业务面板
+   （知识库 / 知识中枢 / 聊天 / 靶场 / 学习计划 / 资讯 / 工具 / 自测）
+   边界：到「第 5 段」为止。
+   ⚠ 已知：本段夹带 3 个 @media 块（900px / print / 720+480 的一部分），
+     它们是跟着所属面板一起写的；U3 归并组件时统一迁到第 6 段，本版不动。
+   ⚠ 已知：kb-side / range-side / tools-side / quiz-side 是四套重复实现，
+     U3 合并为单一 .side-list 组件再统一改样式。
+   ================================================================== */
 /* ---------- 主区域 ---------- */
 main { flex: 1; overflow: hidden; padding: 0; }
 .panel { display: none; }
@@ -882,6 +933,13 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
   --scale-pop: 1.04;
 }
 
+/* ==================================================================
+   【第 5 段 · 状态组件与动效】焦点环 / Toast / 按钮态 / 骨架屏 / 角标 /
+   快捷键表 / 动效规范（含 --dur-* 等动效令牌，属第 1 层的尺度令牌组）
+   边界：到「第 6 段」为止。
+   约定：布局与配色无条件生效；只有「动画属性」包在
+   prefers-reduced-motion: no-preference 里，系统减弱动效时自动降级。
+   ================================================================== */
 /* ===== 焦点可见环（无障碍，始终生效）===== */
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
 
@@ -1168,6 +1226,10 @@ kbd {
    两级断点 720px / 480px；新组件（角色条 / Flow 条 / 输入区 /
    提示词 / 气泡）窄屏降级；prefers-reduced-motion 关闭新动效。
    ============================================================ */
+/* ==================================================================
+   【第 6 段 · 响应式与降级】断点 900 / 720 / 480 + 减弱动效降级
+   注：个别 @media 仍随第 4 段面板分散，U3 一并迁到本段。
+   ================================================================== */
 @media (max-width: 720px) {
   /* 消息区：留白收紧，气泡占宽提高 */
   .chat-log { padding: 13px; gap: 11px; }
@@ -1284,3 +1346,59 @@ kbd {
   font-family: ui-monospace, Consolas, monospace;
 }
 .update-notes .notes-body a { color: var(--accent, #6ea8ff); }
+
+/* ==================================================================
+   【第 7 段 · 工具类（U1 收编内联样式用）】
+   来由：把 app.js 模板里 60 处写死的 style="..." 逐条等价搬到这里。
+   三条硬约定：
+     ① 值与搬走前逐字一致，连属性顺序都一样 —— 所以视觉零变化；
+     ② 本段必须留在文件末尾：原先内联样式是「最高优先级」，
+        换成 class 后只有在最后定义才能在同特异性下照样赢；
+     ③ 只有当某条既有的高特异性规则会反超时才用复合选择器兜住
+        （目前仅 .tool-row.u-row-plain 一例，对应 .tool-row:last-child）。
+   动态值约定：进度类不再写死 CSS 属性，统一走自定义属性
+        class="u-fill" style="--w:${pct}%"，与既有 .stat-ring 的 --p 同一套路。
+        因此 app.js 里唯一允许存在的内联样式形态是 style="--xxx:..."，
+        selftest 有断言守着（详见第 5 步）。
+   U2 全面重设计时，本段按语义并入各自组件规则。
+   ================================================================== */
+
+/* —— 文字色 / 字号 / 行高 / 空白 —— */
+.u-muted { color: var(--muted); }
+.u-accent { color: var(--accent); }
+.u-warn { color: var(--warn); }
+.u-f11 { font-size: var(--fs-11); }
+.u-f12 { font-size: var(--fs-12); }
+.u-f13 { font-size: var(--fs-13); }
+.u-f85 { font-size: var(--fs-85); }
+.u-lh17 { line-height: var(--lh-relax); }
+.u-pre { white-space: pre-wrap; }
+
+/* —— 间距（注意：margin-top:Npx 与 margin:Npx 0 0 不等价，后者会把下边距归零，故分开两） —— */
+.u-mt6 { margin-top: var(--sp-2); }
+.u-mt8 { margin-top: var(--sp-3); }
+.u-mt10 { margin-top: var(--sp-4); }
+.u-mb8 { margin-bottom: var(--sp-3); }
+.u-mb10 { margin-bottom: var(--sp-4); }
+.u-mb12 { margin-bottom: var(--sp-5); }
+.u-mt8-mb0 { margin: var(--sp-3) 0 0; }
+.u-mt0-mb6 { margin: 0 0 var(--sp-2); }
+.u-mt4-mb0 { margin: var(--sp-1) 0 0; }
+.u-mt4-mb2 { margin: var(--sp-1) 0 2px; }
+
+/* —— 尺寸 / 布局 —— */
+.u-w60 { width: 60%; }
+.u-w72 { width: 72%; }
+.u-w100 { width: 100%; }
+.u-fill { width: var(--w, 100%); }        /* 动态进度条：配合 style="--w:${pct}%" */
+.u-inline-block { display: inline-block; }
+.u-flex-inline { display: flex; align-items: center; gap: var(--sp-2); white-space: nowrap; }
+.u-scroll-box { max-height: 300px; overflow: auto; }
+.u-btn-block { display: block; width: 100%; margin: var(--sp-2) 0; text-align: left; }
+
+/* —— 复合体（一次性负责多个属性，避免模板里堆一堆 u-*） —— */
+.u-thumb { max-width: 220px; max-height: 160px; border: 1px solid var(--line); border-radius: var(--r-sm); margin-top: var(--sp-2); }
+.u-h-plain { text-transform: none; letter-spacing: 0; color: var(--ink); margin-bottom: var(--sp-1); }
+/* .tool-row:last-child（0,2,0）会把 margin-bottom 归零，比单一的 .u-row-plain 强，
+   不加复合选择器的话最后一张工具卡会少 18px 间距，故这里用 .tool-row.u-row-plain 同级后置取胜 */
+.tool-row.u-row-plain, .u-row-plain { display: block; border: none; padding: 0; margin-bottom: 18px; }

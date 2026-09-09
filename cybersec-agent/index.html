@@ -152,7 +152,7 @@
             <label class="field"><span data-i18n="f.llmModel">模型名</span><input id="llmModel" placeholder="gpt-4o-mini" /></label>
             <button id="saveLlm" class="btn small" data-i18n="btn.saveLlm">保存配置</button>
             <button id="clearLlm" class="btn small ghost" data-i18n="btn.clearLlm">清除</button>
-            <button id="apiHubBtn" class="btn small ghost" style="margin-top:8px;width:100%">⚙️ API 接入中心</button>
+            <button id="apiHubBtn" class="btn small ghost u-mt8 u-w100">⚙️ API 接入中心</button>
           </details>
           <details class="llm-config">
             <summary data-i18n="backend.title">可选：临时靶场后端（真实靶机）</summary>
@@ -172,7 +172,11 @@
             <div id="backendStatus" class="backend-status">后端状态：检测中…</div>
           </div>
           <!-- 自动更新（v1.2.0）：仅桌面版（Electron 安装版）显示。
-               网页版 / 开发态由 setupUpdater 自动隐藏，不占位、不打扰。 -->
+               网页版 / 开发态由 setupUpdater 自动隐藏，不占位、不打扰。
+               注：本块剩下的行内 style 写死的 display:none 是**故意不收编**的——
+               这些元素的显隐由 app.js 用 el.style.display = "" / "none" 直接切换，
+               一旦换成 class（哪怕是普通的 .u-hide），JS 清空内联 display 后
+               class 的 none 会残留，元素再也显示不出来。UI 清债（U1）保留此处内联。 -->
           <div class="update-ctl" id="updateCtl" style="display:none">
             <p class="hint" data-i18n="update.hint">SecTutor 会在启动后自动检查更新（不打断你的操作）。你也可以随时手动检查；下载完成后可立即重启安装，或等下次退出时自动安装。</p>
             <div class="chips">
@@ -189,8 +193,8 @@
           <div class="quick-q">
             <h3 data-i18n="h.quick">快速提问</h3>
             <div id="quickQs" class="chips"></div>
-            <button id="clearChat" class="btn ghost small" style="margin-top:10px;width:100%" data-i18n="btn.clearChat">🗑 清空对话</button>
-            <button id="exportChat" class="btn ghost small" style="margin-top:8px;width:100%">⬇ 导出对话</button>
+            <button id="clearChat" class="btn ghost small u-mt10 u-w100" data-i18n="btn.clearChat">🗑 清空对话</button>
+            <button id="exportChat" class="btn ghost small u-mt8 u-w100">⬇ 导出对话</button>
           </div>
         </div>
         <div class="chat-main">
@@ -329,7 +333,7 @@
           <div id="quizScore" class="quiz-score hidden"></div>
         </div>
         <div class="quiz-main" id="quizMain">
-          <p style="color:var(--muted)" data-i18n="quiz.startNote">点击「开始自测」随机抽题。每题单选，提交后立即看到解析。</p>
+          <p class="u-muted" data-i18n="quiz.startNote">点击「开始自测」随机抽题。每题单选，提交后立即看到解析。</p>
         </div>
       </div>
     </section>

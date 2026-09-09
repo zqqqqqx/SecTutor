@@ -601,9 +601,9 @@
     n = n || 6;
     let html = "";
     for (let i = 0; i < n; i++) {
-      html += `<div class="sk-card"><div class="sk-line sk-shimmer" style="width:60%"></div>` +
-        `<div class="sk-line sk-shimmer" style="width:100%"></div>` +
-        `<div class="sk-line sk-shimmer" style="width:72%"></div></div>`;
+      html += `<div class="sk-card"><div class="sk-line sk-shimmer u-w60"></div>` +
+        `<div class="sk-line sk-shimmer u-w100"></div>` +
+        `<div class="sk-line sk-shimmer u-w72"></div></div>`;
     }
     box.innerHTML = html;
     return function clear() { if (box.querySelector(".sk-card")) box.innerHTML = ""; };
@@ -770,13 +770,13 @@
           <button class="btn small ghost" id="setReset">♻️ 重置进度</button>
           <button class="btn small ghost" id="setExport">💾 导出进度备份</button>
           <button class="btn small ghost" id="setImport">📥 导入进度备份</button>
-          <input type="file" id="setImportFile" accept="application/json,.json" style="display:none" />
+          <input type="file" id="setImportFile" accept="application/json,.json" class="hidden" />
         </div>
       </div>
       <hr class="ctrl-divider" />
       <div class="set-row"><span>自动更新</span>
         <div class="chips">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap">
+          <label class="u-flex-inline u-f12 u-muted">
             <input type="checkbox" id="setAutoInstall" /> 下载完后，退出时自动安装
           </label>
         </div>
@@ -1242,7 +1242,7 @@
     if (q) {
       const hits = allTopics().filter((t) => matchSearch(t, q));
       if (hits.length === 0) {
-        grid.innerHTML = `<p style="color:var(--muted)">未找到与「${escapeHtml(kbSearch.trim())}」相关的知识点，换个关键词试试。</p>`;
+        grid.innerHTML = `<p class="u-muted">未找到与「${escapeHtml(kbSearch.trim())}」相关的知识点，换个关键词试试。</p>`;
         return;
       }
       sortTopics(hits).forEach((t) => {
@@ -1257,7 +1257,7 @@
       (t) => kbLevelFilter === "all" || t.level === kbLevelFilter
     );
     if (topics.length === 0) {
-      grid.innerHTML = `<p style="color:var(--muted)">该难度下暂无知识点，试试其他筛选。</p>`;
+      grid.innerHTML = `<p class="u-muted">该难度下暂无知识点，试试其他筛选。</p>`;
       return;
     }
     sortTopics(topics).forEach((t) => {
@@ -1278,7 +1278,7 @@
       <div class="tc-hd"><h4>${escapeHtml(t.name)}</h4><span class="dom-tag">${escapeHtml(cat.name)}</span></div>
       <span class="lvl-tag lvl-${t.level}">${t.level}</span>
       <p>${escapeHtml(t.summary)}</p>
-      <div class="mast"><div class="ml"><span>掌握度</span><b>${mastPct}%</b></div><div class="bar" role="progressbar" aria-valuenow="${mastPct}" aria-valuemin="0" aria-valuemax="100" aria-label="掌握度 ${mastPct}%"><i style="width:${mastPct}%"></i></div></div>
+      <div class="mast"><div class="ml"><span>掌握度</span><b>${mastPct}%</b></div><div class="bar" role="progressbar" aria-valuenow="${mastPct}" aria-valuemin="0" aria-valuemax="100" aria-label="掌握度 ${mastPct}%"><i class="u-fill" style="--w:${mastPct}%"></i></div></div>
       <div class="refs">${refs.map((r) => `<span class="ref${r.cve ? " cve" : ""}">${escapeHtml(r.t)}</span>`).join("")}</div>
       <div class="tc-ft">
         <button class="tc-btn ghost" data-ai="${t.id}"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button>
@@ -1311,12 +1311,12 @@
     const cnt = $("#kbSearchCount");
     const docs = retrieve(q, 40);
     if (!docs.length) {
-      grid.innerHTML = `<p style="color:var(--muted)">${t("kb.globalEmpty")}</p>`;
+      grid.innerHTML = `<p class="u-muted">${t("kb.globalEmpty")}</p>`;
       if (cnt) cnt.textContent = "";
       return;
     }
     if (cnt) cnt.textContent = `${t("kb.globalCount")} ${docs.length} 条`;
-    grid.innerHTML = `<p style="color:var(--muted);font-size:13px;margin-bottom:10px">${t("kb.globalHint")}</p>`;
+    grid.innerHTML = `<p class="u-muted u-f13 u-mb10">${t("kb.globalHint")}</p>`;
     docs.forEach((d) => {
       const typeMap = { "知识点": "📘", "靶场题解": "🎯", "安全资讯": "📰", "安全工具": "🛠️", "交互靶场": "🧪" };
       const body = (d.render().body || "").replace(/\n+/g, " ").slice(0, 90);
@@ -1353,7 +1353,7 @@
       <div class="hero-icon">${cat.icon}</div>
       <div><h2>${cat.name} · ${t("kb.path")}</h2><p>${escapeHtml(cat.desc)}</p></div>
       <div class="hero-stat"><b>${cat.topics.length}</b><span>个知识点</span></div>`;
-    grid.innerHTML = `<p style="color:var(--muted);font-size:13px;margin-bottom:12px">${t("kb.path.title")}</p>`;
+    grid.innerHTML = `<p class="u-muted u-f13 u-mb12">${t("kb.path.title")}</p>`;
     order.forEach((lv) => {
       const items = cat.topics.filter((x) => x.level === lv);
       if (!items.length) return;
@@ -1364,7 +1364,7 @@
       group.innerHTML = `
         <div class="path-head">
           <span class="lvl-tag lvl-${lv}">${lv}</span>
-          <span class="path-prog"><span class="path-bar" style="width:${pct}%"></span></span>
+          <span class="path-prog"><span class="path-bar u-fill" style="--w:${pct}%"></span></span>
           <span class="path-count">${done}/${items.length}</span>
         </div>`;
       const wrap = document.createElement("div");
@@ -1426,12 +1426,12 @@
     detail.innerHTML = `
       <button class="back-btn" id="backKb">← 返回列表</button>
       <h2>${topic.name} <span class="lvl-tag lvl-${topic.level}">${topic.level}</span></h2>
-      <p style="color:var(--muted)">所属领域：${catById(topic.cat).name} ｜ 当前以【${lvl}】档位讲解</p>
+      <p class="u-muted">所属领域：${catById(topic.cat).name} ｜ 当前以【${lvl}】档位讲解</p>
       <div class="kb-section"><h4>📘 ${lvl} 讲解</h4><div>${renderInline(body)}</div></div>
       <div class="kb-section"><h4>💡 代码示例（安全/修复视角）</h4>
         <pre><code class="language-${topic.codeLang}">${escapeHtml(topic.code)}</code></pre></div>
       <div class="kb-section"><h4>🛠 推荐工具</h4><p>${escapeHtml(topic.tool)}</p></div>
-      <div class="kb-section"><h4>📚 延伸阅读</h4><p style="color:var(--muted)">${escapeHtml(topic.refs)}</p></div>
+      <div class="kb-section"><h4>📚 延伸阅读</h4><p class="u-muted">${escapeHtml(topic.refs)}</p></div>
       <div class="kb-section"><h4>🔗 ${t("kb.related")}</h4><div class="rel-box" id="relBox"></div></div>
       <div class="ai-helpers"><button class="btn ghost small" id="topicAiBtn">🤖 AI 辅助（讲解/自测/拓展）</button></div>
       <button class="learn-btn${learned ? " mastered" : ""}" id="learnBtn" aria-pressed="${learned ? "true" : "false"}">${learned ? "✓ 已掌握（点击取消）" : "我已掌握此知识点"}</button>
@@ -1682,7 +1682,7 @@
     const p0 = primary.render();
     const tag = intent.defense ? " · 偏重防御" : intent.tool ? " · 偏重工具" : intent.example ? " · 偏重实战" : "";
     const defenseHint = (intent.defense || /防御|防护|修复|安全/.test(q))
-      ? `<p style="margin-top:8px"><strong>🛡 防御要点：</strong>本应用所有内容仅用于合法授权的学习与防御研究。${p0.tool ? "相关工具：" + escapeHtml(p0.tool) + "。" : ""}</p>`
+      ? `<p class="u-mt8"><strong>🛡 防御要点：</strong>本应用所有内容仅用于合法授权的学习与防御研究。${p0.tool ? "相关工具：" + escapeHtml(p0.tool) + "。" : ""}</p>`
       : "";
 
     let html = `<strong>${escapeHtml(primary.title)}</strong>（按【${level}】档讲解${tag}）${t("src.offline")}：<br>${renderInline(p0.body || "")}`;
@@ -1691,19 +1691,19 @@
     // 领答非知识点时，补充关联知识点原理，保证「讲清楚原理」
     if (primaryKind !== "topic" && topicDoc && topicDoc !== primary) {
       const t0 = topicDoc.render();
-      html += `<p style="margin-top:8px"><strong>📘 关联知识点：</strong>${escapeHtml(topicDoc.title)} — ${renderInline((t0.body || "").slice(0, 160))}</p>`;
+      html += `<p class="u-mt8"><strong>📘 关联知识点：</strong>${escapeHtml(topicDoc.title)} — ${renderInline((t0.body || "").slice(0, 160))}</p>`;
     }
     const extras = [];
     if (p0.tool) extras.push("工具：" + p0.tool);
     if (p0.refs) extras.push("参考：" + p0.refs);
-    if (extras.length) html += `<p style="margin-top:6px;color:var(--muted);font-size:.85em">${extras.map(escapeHtml).join(" ｜ ")}</p>`;
+    if (extras.length) html += `<p class="u-mt6 u-muted u-f85">${extras.map(escapeHtml).join(" ｜ ")}</p>`;
     const related = docs.filter((d) => d !== primary).slice(0, 4);
     if (related.length) {
-      html += `<p style="margin-top:8px;color:var(--muted)">${t("src.related")}：` +
+      html += `<p class="u-mt8 u-muted">${t("src.related")}：` +
         related.map((d) => `<span class="cite" data-id="${escapeHtml(d.id)}">${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
     }
     const moreTopics = allTopics().filter((x) => x.cat === topicDoc.cat && x.id !== topicId).slice(0, 3);
-    html += `<p style="margin-top:6px;color:var(--muted)">${t("src.more")}：` + suggestionButtons(moreTopics) + `</p>`;
+    html += `<p class="u-mt6 u-muted">${t("src.more")}：` + suggestionButtons(moreTopics) + `</p>`;
     addMsg("bot", html);
     bindSuggestions();
   }
@@ -2133,7 +2133,7 @@
       const onChunk = (d) => { if (!bubble) return; streamed += d; bubble.innerHTML = escapeHtml(streamed).replace(/\n/g, "<br>"); autoScrollChat($("#chatLog")); };
       let reply = await _agentGateway(messages, tools, { onChunk });
       if (reply.offline) { state.history.pop(); removeTyping(); addMsg("bot", "⚠️ 已进入离线模式（无可用大模型）："); askBuiltin(q); return; }
-      const srcTitleHtml = (ds) => `<p style="margin-top:8px;color:var(--muted);font-size:.85em">${t("src.title")}：` + ds.map((d, i) => `<span class="cite" data-id="${escapeHtml(d.id)}">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
+      const srcTitleHtml = (ds) => `<p class="u-mt8 u-muted u-f85">${t("src.title")}：` + ds.map((d, i) => `<span class="cite" data-id="${escapeHtml(d.id)}">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
       if (reply.toolCalls && reply.toolCalls.length) {
         if (bubble) bubble.innerHTML = ""; streamed = "";
         let rounds = 0;
@@ -2468,7 +2468,7 @@
 ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安全常识作答，但仍须保持防御视角）"}
 --- 资料结束 ---`;
     const tools = toolSchemas();
-    const srcTitleHtml = (ds) => `<p style="margin-top:8px;color:var(--muted);font-size:.85em">${t("src.title")}：` +
+    const srcTitleHtml = (ds) => `<p class="u-mt8 u-muted u-f85">${t("src.title")}：` +
       ds.map((d, i) => `<span class="cite" data-id="${escapeHtml(d.id)}">[${i + 1}] ${escapeHtml(d.src)}·${escapeHtml(d.title)}</span>`).join("  ") + `</p>`;
     try {
       const messages = [{ role: "system", content: sys }, ...state.history.map((m) => ({ role: m.role, content: m.content }))];
@@ -2550,7 +2550,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const q = raw.trim();
     if (!q || state.thinking) return;
     let userHtml = escapeHtml(q);
-    if (opts.image) userHtml += `<br><img src="${opts.image}" style="max-width:220px;max-height:160px;border:1px solid var(--line);border-radius:8px;margin-top:6px" />`;
+    if (opts.image) userHtml += `<br><img src="${opts.image}" class="u-thumb" />`;
     addMsg("user", userHtml);
     if (input) input.value = "";
     clearDraft();
@@ -2781,7 +2781,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       card.className = "range-card";
       card.innerHTML = `<h4>${escapeHtml(r.title)}</h4>
         <div class="meta"><span class="lvl-tag lvl-${r.level}">${r.level}</span><span>${catById(r.cat).name}</span></div>
-        <p style="font-size:13px;color:var(--muted);margin:8px 0 0">${escapeHtml(r.summary)}</p>`;
+        <p class="u-f13 u-muted u-mt8-mb0">${escapeHtml(r.summary)}</p>`;
       card.addEventListener("click", () => showRange(r.id));
       list.appendChild(card);
     });
@@ -2793,7 +2793,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     detail.innerHTML = `
       <button class="back-btn" id="backRange">← 返回列表</button>
       <h2>${escapeHtml(r.title)} <span class="lvl-tag lvl-${r.level}">${r.level}</span></h2>
-      <p style="color:var(--muted)">领域：${catById(r.cat).name}</p>
+      <p class="u-muted">领域：${catById(r.cat).name}</p>
       <div class="lab-setup"><strong>🧪 实验环境：</strong>${escapeHtml(r.setup)}</div>
       <div class="kb-section"><h4>🎯 解题思路</h4><p>${escapeHtml(r.writeup)}</p></div>
       <div class="kb-section"><h4>🪜 推荐步骤</h4><ol>${r.steps.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol></div>
@@ -2801,7 +2801,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       <div class="ai-helpers">
         <button class="btn ghost small" id="rangeAiBtn">🤖 AI 辅助</button>
       </div>
-      <p class="muted" style="font-size:12px;color:var(--muted)">⚠️ 请仅在本地或已获书面授权的靶场环境中练习，禁止对非授权系统使用。</p>`;
+      <p class="muted u-f12 u-muted">⚠️ 请仅在本地或已获书面授权的靶场环境中练习，禁止对非授权系统使用。</p>`;
     $("#backRange").addEventListener("click", renderRangeList);
     const rangeAi = $("#rangeAiBtn");
     if (rangeAi) rangeAi.addEventListener("click", () => aiAssistForRange(r));
@@ -2840,7 +2840,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         slice.map((t) => `<li>${escapeHtml(t.name)}（${t.level}）— ${escapeHtml(t.summary)}</li>`).join("") +
         `</ul></div>`;
     }
-    html += `<p style="color:var(--muted);font-size:13px">提示：每周完成后在「知识体系」对应知识点点击「我已掌握」即可在下方跟踪进度；已掌握的知识点会自动排到计划末尾。</p>`;
+    html += `<p class="u-muted u-f13">提示：每周完成后在「知识体系」对应知识点点击「我已掌握」即可在下方跟踪进度；已掌握的知识点会自动排到计划末尾。</p>`;
     $("#planOutput").innerHTML = html;
     renderProgress();
     // 反馈闭环：原先生成后无任何提示，用户不确定是否已生效
@@ -2859,8 +2859,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       parts.push(`
         <div class="pcard">
           <div><strong>${c.icon} ${c.name}</strong></div>
-          <div style="font-size:13px;color:var(--muted)">${done}/${total} 已掌握</div>
-          <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(c.name)}掌握进度 ${pct}%"><i style="width:${pct}%"></i></div>
+          <div class="u-f13 u-muted">${done}/${total} 已掌握</div>
+          <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(c.name)}掌握进度 ${pct}%"><i class="u-fill" style="--w:${pct}%"></i></div>
         </div>`);
     });
     board.innerHTML = parts.join("");
@@ -2978,7 +2978,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       card.className = "range-card";
       card.innerHTML = `<h4>${escapeHtml(l.title)}</h4>
         <div class="meta"><span class="lvl-tag lvl-${l.level}">${l.level}</span><span>${catById(l.cat).name}</span>${solved ? '<span class="lvl-tag lvl-入门">✓</span>' : ""}</div>
-        <p style="font-size:13px;color:var(--muted);margin:8px 0 0">${escapeHtml(l.brief.split("\n")[0])}</p>`;
+        <p class="u-f13 u-muted u-mt8-mb0">${escapeHtml(l.brief.split("\n")[0])}</p>`;
       card.addEventListener("click", () => renderLab(l));
       list.appendChild(card);
     });
@@ -3040,7 +3040,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     box.innerHTML = `
       <div class="kb-section env-section">
         <h4>🌐 临时靶场（真实隔离环境）</h4>
-        <p class="muted" style="font-size:12px;color:var(--muted)">点击下方按钮向 SecTutor 后端申请一个独立的临时靶机（默认 30 分钟绝对 TTL + 10 分钟空闲回收，到期自动销毁并释放资源，不影响原环境与其他用户）。后端不可用时将自动回退到本页前端仿真演练。AI 问答中可让 Agent 自动建靶 → 自检 → 收靶，报告自动归档。</p>
+        <p class="muted u-f12 u-muted">点击下方按钮向 SecTutor 后端申请一个独立的临时靶机（默认 30 分钟绝对 TTL + 10 分钟空闲回收，到期自动销毁并释放资源，不影响原环境与其他用户）。后端不可用时将自动回退到本页前端仿真演练。AI 问答中可让 Agent 自动建靶 → 自检 → 收靶，报告自动归档。</p>
         <button class="btn small" id="genEnvBtn">⚡ 生成临时环境</button>
         <button class="btn small ghost" id="scanReportsBtn">🧾 自检报告归档</button>
         <div id="envPanel" class="env-panel hidden"></div>
@@ -3061,14 +3061,14 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <td>${(x.vulnerabilities || []).length}</td>
         <td><button class="btn tiny" data-repview="${escapeAttr(x.id)}">查看</button> <button class="btn tiny ghost" data-repdel="${escapeAttr(x.id)}">删除</button></td>
       </tr>`;
-    }).join("") : `<tr><td colspan="6" style="color:var(--muted)">暂无归档报告。执行一次 run_scan（或让 Agent「帮我自检靶场」）后自动归档。</td></tr>`;
+    }).join("") : `<tr><td colspan="6" class="u-muted">暂无归档报告。执行一次 run_scan（或让 Agent「帮我自检靶场」）后自动归档。</td></tr>`;
     const body = `
       <table class="rep-table"><thead><tr><th>#</th><th>时间</th><th>靶场</th><th>状态</th><th>脆弱点</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <div class="modal-actions" style="margin-top:10px">
+      <div class="modal-actions u-mt10">
         ${list.length ? '<button class="btn small" id="repExportAll">⬇ 导出全部(JSON)</button> <button class="btn small ghost" id="repClearAll">🗑 清空归档</button>' : ""}
       </div>
-      <pre id="repDetail" class="tb-out hidden" style="max-height:300px;overflow:auto"></pre>`;
+      <pre id="repDetail" class="tb-out hidden u-scroll-box"></pre>`;
     openModal("🧾 自检报告归档（本地存储，最新 20 条）", body);
     $$("#modalOverlay [data-repview]").forEach((b) => b.addEventListener("click", () => {
       const hit = loadScanReports().find((x) => x.id === b.dataset.repview);
@@ -3149,14 +3149,14 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   function showEnvReady(panel, btn, env) {
     state.activeEnv = env;
     const accessBlock = env.simulated
-      ? `<div class="env-status muted" style="font-size:12px;color:var(--muted)">🧪 本地仿真模式：无真实容器，已用前端演练替代（无需后端）。</div>`
+      ? `<div class="env-status muted u-f12">🧪 本地仿真模式：无真实容器，已用前端演练替代（无需后端）。</div>`
       : `<div class="env-url">🔗 访问靶场（经后端鉴权反向代理）：<a href="${escapeHtml(proxyUrl(env))}" target="_blank" rel="noopener">${escapeHtml(proxyUrl(env))}</a></div>`;
     panel.innerHTML = `
       <div class="env-status ok">✅ 临时环境已就绪（${escapeHtml(env.status || "running")}）</div>
       ${accessBlock}
       <div class="env-meta">⏳ 剩余时间：<span id="envCountdown">--</span></div>
       <button class="btn small ghost" id="destroyEnvBtn">🛑 结束并销毁（释放资源）</button>
-      <div id="envPoll" class="env-status muted" style="font-size:12px;color:var(--muted)">状态轮询已启动…</div>`;
+      <div id="envPoll" class="env-status muted u-f12">状态轮询已启动…</div>`;
     if (btn) btn.disabled = false;
     startCountdown(env.expiresAt);
     const db = $("#destroyEnvBtn");
@@ -3211,7 +3211,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     area.innerHTML = `
       <button class="back-btn" id="backLab">← 返回列表</button>
       <h2>${escapeHtml(lab.title)} <span class="lvl-tag lvl-${lab.level}">${lab.level}</span> ${solved ? '<span class="lvl-tag lvl-入门">✓ 已完成</span>' : ""}</h2>
-      <div class="kb-section"><h4>📝 背景</h4><p style="white-space:pre-wrap">${escapeHtml(lab.brief)}</p></div>
+      <div class="kb-section"><h4>📝 背景</h4><p class="u-pre">${escapeHtml(lab.brief)}</p></div>
       <div class="kb-section"><h4>🎯 任务</h4><p>${escapeHtml(lab.task)}</p></div>
       ${lab.topic ? `<div class="kb-section"><h4>📚 相关知识点</h4><p>本题对应知识库条目：<button class="btn small ghost" id="labTopicBtn">查看「${escapeHtml(topicName(lab.topic))}」知识点 →</button></p></div>` : ""}
       <div id="labInput"></div>
@@ -3224,7 +3224,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <button class="btn ghost small" id="labAiBtn">🤖 AI 辅助</button>
       </div>
       <div id="envSection"></div>
-      <p class="muted" style="font-size:12px;color:var(--muted)">⚠️ 本页基础演练为前端模拟环境，不会向任何真实服务器发送请求，仅用于理解漏洞原理与防御。需要真实隔离靶机时，可点击下方「生成临时环境」（需自建后端）。</p>`;
+      <p class="muted u-f12 u-muted">⚠️ 本页基础演练为前端模拟环境，不会向任何真实服务器发送请求，仅用于理解漏洞原理与防御。需要真实隔离靶机时，可点击下方「生成临时环境」（需自建后端）。</p>`;
     $("#backLab").addEventListener("click", renderLabList);
     buildLabInput(lab);
     const tb = $("#labTopicBtn");
@@ -3274,7 +3274,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } else if (lab.type === "xss") {
       box.innerHTML = `<label class="field"><span>payload</span><input id="li1" placeholder="如 <script>alert(1)</script>" /></label>
         <div class="lab-actions"><button class="btn" id="liRun">提交并预览</button>${exampleBtn}</div>${liveBox}
-        <div id="xssPrev" style="margin-top:10px"></div>`;
+        <div id="xssPrev" class="u-mt10"></div>`;
       const upd = () => { $("#labLive").textContent = "页面将回显 → " + $("#li1").value; };
       $("#li1").addEventListener("input", upd); upd(); bindEx();
       $("#liRun").addEventListener("click", () => {
@@ -3328,7 +3328,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } else if (lab.type === "quiz") {
       box.innerHTML = `<pre><code>${escapeHtml(lab.code)}</code></pre>
         <p><strong>${escapeHtml(lab.question)}</strong></p>
-        <div id="quizOpts">${lab.options.map((o, i) => `<button class="btn ghost" data-i="${i}" style="display:block;width:100%;margin:6px 0;text-align:left">${i + 1}. ${escapeHtml(o)}</button>`).join("")}</div>`;
+        <div id="quizOpts">${lab.options.map((o, i) => `<button class="btn ghost u-btn-block" data-i="${i}">${i + 1}. ${escapeHtml(o)}</button>`).join("")}</div>`;
       $$("#quizOpts button").forEach((b) => b.addEventListener("click", () => {
         const i = parseInt(b.dataset.i, 10);
         const ok = i === lab.answer;
@@ -3493,7 +3493,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <h3>${escapeHtml(n.title)}</h3>
         <div class="date">${escapeHtml(n.date)} ｜ ${catById(n.cat).name}</div>
         <p>${escapeHtml(n.summary)}</p>
-        <p style="color:var(--accent)"><strong>🛡 防御：</strong>${escapeHtml(n.defense)}</p>
+        <p class="u-accent"><strong>🛡 防御：</strong>${escapeHtml(n.defense)}</p>
         <div class="ai-helpers"><button class="btn ghost small news-ai-btn" data-id="${escapeHtml(n.id)}">🤖 AI 辅助（解读/关联/加固）</button></div>
       </div>`).join("");
     list.querySelectorAll(".news-ai-btn").forEach((b) => {
@@ -3516,12 +3516,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const catName = catById(n.cat).name;
     const body = `
       <div class="news-detail">
-        ${n.cve ? `<div class="tag" style="display:inline-block;margin-bottom:8px">${escapeHtml(n.cve)}</div>` : ""}
-        <h2 style="margin:0 0 6px">${escapeHtml(n.title)}</h2>
-        <div class="date" style="margin-bottom:12px">${escapeHtml(n.date)} ｜ ${escapeHtml(catName)}</div>
-        <p style="line-height:1.7">${escapeHtml(n.summary)}</p>
-        <p style="line-height:1.7"><strong style="color:var(--accent)">🛡 防御建议：</strong>${escapeHtml(n.defense)}</p>
-        <button class="btn" id="newsDetailAi" style="margin-top:8px">🤖 AI 辅助（解读/关联/加固）</button>
+        ${n.cve ? `<div class="tag u-inline-block u-mb8">${escapeHtml(n.cve)}</div>` : ""}
+        <h2 class="u-mt0-mb6">${escapeHtml(n.title)}</h2>
+        <div class="date u-mb12">${escapeHtml(n.date)} ｜ ${escapeHtml(catName)}</div>
+        <p class="u-lh17">${escapeHtml(n.summary)}</p>
+        <p class="u-lh17"><strong class="u-accent">🛡 防御建议：</strong>${escapeHtml(n.defense)}</p>
+        <button class="btn u-mt8" id="newsDetailAi">🤖 AI 辅助（解读/关联/加固）</button>
       </div>`;
     openModal("安全资讯 · " + escapeHtml(catName), body);
     const aiBtn = $("#newsDetailAi");
@@ -3546,12 +3546,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const main = $("#toolDetail");
     const items = SEC_DATA.tools.filter((t) => toolActiveCat === "all" || t.cat === toolActiveCat);
     main.innerHTML = items.map((t) => `
-      <div class="tool-row" style="display:block;border:none;padding:0;margin-bottom:18px">
-        <h3 style="text-transform:none;letter-spacing:0;color:var(--ink);margin-bottom:4px">${escapeHtml(t.name)} <span style="font-size:12px;color:var(--muted)">（${catById(t.cat).name}）</span></h3>
+      <div class="tool-row u-row-plain">
+        <h3 class="u-h-plain">${escapeHtml(t.name)} <span class="u-f12 u-muted">（${catById(t.cat).name}）</span></h3>
         <p>${escapeHtml(t.desc)}</p>
         <p><strong>用法：</strong>${escapeHtml(t.usage)}</p>
         <pre><code>${escapeHtml(t.example)}</code></pre>
-        <p style="color:var(--warn)"><strong>⚠ 合规提示：</strong>${escapeHtml(t.note)}</p>
+        <p class="u-warn"><strong>⚠ 合规提示：</strong>${escapeHtml(t.note)}</p>
         <div class="ai-helpers">
           <button class="btn ghost small tool-ai-btn" data-tool="${escapeAttr(t.id)}">🤖 AI 辅助</button>
         </div>
@@ -3944,7 +3944,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       <div class="quiz-result">
         <h3>🎉 自测完成</h3>
         <div class="quiz-score-big">${st.score} / ${total}（${pct}%）</div>
-        <p style="color:var(--muted)">${pct >= 80 ? "掌握得很扎实！" : pct >= 60 ? "基础不错，薄弱环节再回到「知识体系」复习对应知识点。" : "建议回到「知识体系」重点复习标红领域。"}</p>
+        <p class="u-muted">${pct >= 80 ? "掌握得很扎实！" : pct >= 60 ? "基础不错，薄弱环节再回到「知识体系」复习对应知识点。" : "建议回到「知识体系」重点复习标红领域。"}</p>
         <button class="btn" id="quizAgain">再来一组</button>
       </div>`;
     $("#quizAgain").addEventListener("click", startQuiz);
@@ -4517,7 +4517,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         // Phase 2 适配信号：复习正确率按知识点所属领域计入分域升降级
         const revDomain = (() => { const t = allTopics().find((x) => x.id === ids[0]); return t ? t.cat : null; })();
         recordQuizResult(revDomain, items.length ? score / items.length : null, items.length);
-        openModal("🔔 复习完成", `<p>本次复习 ${items.length} 题，答对 <b>${score}</b> 题。</p><p style="color:var(--muted)">相关知识点已推进到下一轮复习周期。</p>`);
+        openModal("🔔 复习完成", `<p>本次复习 ${items.length} 题，答对 <b>${score}</b> 题。</p><p class="u-muted">相关知识点已推进到下一轮复习周期。</p>`);
         renderReviewCard();
         return;
       }
@@ -4560,7 +4560,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <div class="wstat"><b>${chats}</b><span>问答次数</span></div>
         <div class="wstat"><b>${days}</b><span>学习天数</span></div>
       </div>
-      <p style="color:var(--muted);font-size:13px">${masters + labs + reviews + diags ? "保持节奏，Agent 会按记忆曲线提醒你复习已掌握内容。" : "这周还没开始？做一道题或看一个知识点，周报就会记录你的进度。"}</p>`;
+      <p class="u-muted u-f13">${masters + labs + reviews + diags ? "保持节奏，Agent 会按记忆曲线提醒你复习已掌握内容。" : "这周还没开始？做一道题或看一个知识点，周报就会记录你的进度。"}</p>`;
   }
 
   // —— 学习中心总渲染 ——
@@ -4573,7 +4573,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const box = $("#profileCard"); if (!box) return;
     if (!state.profile) {
       box.innerHTML = `<div class="acard-head">🧠 能力画像</div>
-        <p style="color:var(--muted)">还没诊断过。做一次能力诊断，Agent 会据此为你定制学习路径与复习节奏。</p>
+        <p class="u-muted">还没诊断过。做一次能力诊断，Agent 会据此为你定制学习路径与复习节奏。</p>
         <button class="btn small" id="diagStart">开始能力诊断（约 12 题 / 2 分钟）</button>`;
       bindOnce("#diagStart", startDiagnosis);
       return;
@@ -4589,7 +4589,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       }
       const pv = p[d.id] || 0;
       return `<div class="pbar-row"><span class="pbar-name">${d.icon} ${d.name}</span>` +
-        `<span class="pbar-track" role="progressbar" aria-valuenow="${pv}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(d.name)}能力评分 ${pv}"><i style="width:${pv}%"></i></span>` +
+        `<span class="pbar-track" role="progressbar" aria-valuenow="${pv}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(d.name)}能力评分 ${pv}"><i class="u-fill" style="--w:${pv}%"></i></span>` +
         `<span class="pbar-val">${pv}</span></div>${lvHtml}`;
     }).join("");
     const weakest = DOMAINS.reduce((w, d) => ((p[d.id] || 0) < (p[w.id] || 0) ? d : w), DOMAINS[0]);
@@ -4627,13 +4627,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const due = dueReviews();
     if (!due.length) {
       box.innerHTML = `<div class="acard-head">🔔 复习提醒</div>
-        <p style="color:var(--muted)">暂无到期复习项。掌握知识点后，Agent 会按记忆曲线（1/2/4/7/15/30 天）提醒你复习。</p>
-        <div class="review-curve-wrap">${reviewCurveSvg()}<p class="muted" style="font-size:11px;margin:4px 0 0">遗忘曲线（红点=复习检查点）：越靠右记忆留存越低，到点复习可重置曲线。</p></div>`;
+        <p class="u-muted">暂无到期复习项。掌握知识点后，Agent 会按记忆曲线（1/2/4/7/15/30 天）提醒你复习。</p>
+        <div class="review-curve-wrap">${reviewCurveSvg()}<p class="muted u-f11 u-mt4-mb0">遗忘曲线（红点=复习检查点）：越靠右记忆留存越低，到点复习可重置曲线。</p></div>`;
       return;
     }
     const chips = due.map((d) => `<button class="rel-chip" data-id="${escapeAttr(d.id)}">${escapeHtml(topicName(d.id))}</button>`).join("");
     box.innerHTML = `<div class="acard-head">🔔 复习提醒 <span class="count">${due.length}</span></div>
-      <div class="review-curve-wrap">${reviewCurveSvg()}<p class="muted" style="font-size:11px;margin:4px 0 2px">遗忘曲线（红点=复习检查点）：以下知识点已到复习节点。</p></div>
+      <div class="review-curve-wrap">${reviewCurveSvg()}<p class="muted u-f11 u-mt4-mb2">遗忘曲线（红点=复习检查点）：以下知识点已到复习节点。</p></div>
       <div class="rel-box">${chips}</div>
       <button class="btn small" id="reviewStart">开始复习（${due.length} 题）</button>`;
     box.querySelectorAll(".rel-chip").forEach((b) => { if (b.dataset.bound) return; b.dataset.bound = "1"; b.addEventListener("click", () => showTopicDetail(b.dataset.id)); });
