@@ -1242,7 +1242,7 @@
     if (q) {
       const hits = allTopics().filter((t) => matchSearch(t, q));
       if (hits.length === 0) {
-        grid.innerHTML = `<p class="u-muted">未找到与「${escapeHtml(kbSearch.trim())}」相关的知识点，换个关键词试试。</p>`;
+        grid.innerHTML = `<p class="u-muted empty-state">未找到与「${escapeHtml(kbSearch.trim())}」相关的知识点，换个关键词试试。</p>`;
         return;
       }
       sortTopics(hits).forEach((t) => {
@@ -1257,7 +1257,7 @@
       (t) => kbLevelFilter === "all" || t.level === kbLevelFilter
     );
     if (topics.length === 0) {
-      grid.innerHTML = `<p class="u-muted">该难度下暂无知识点，试试其他筛选。</p>`;
+      grid.innerHTML = `<p class="u-muted empty-state">该难度下暂无知识点，试试其他筛选。</p>`;
       return;
     }
     sortTopics(topics).forEach((t) => {
@@ -1281,8 +1281,8 @@
       <div class="mast"><div class="ml"><span>掌握度</span><b>${mastPct}%</b></div><div class="bar" role="progressbar" aria-valuenow="${mastPct}" aria-valuemin="0" aria-valuemax="100" aria-label="掌握度 ${mastPct}%"><i class="u-fill" style="--w:${mastPct}%"></i></div></div>
       <div class="refs">${refs.map((r) => `<span class="ref${r.cve ? " cve" : ""}">${escapeHtml(r.t)}</span>`).join("")}</div>
       <div class="tc-ft">
-        <button class="tc-btn ghost" data-ai="${t.id}"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button>
-        <button class="tc-btn solid" data-go="${t.id}"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button>
+        <button class="tc-btn btn small ghost" data-ai="${t.id}"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button>
+        <button class="tc-btn btn small" data-go="${t.id}"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button>
       </div>`;
     card.addEventListener("click", (e) => {
       if (e.target.closest(".tc-btn")) return;
@@ -1326,7 +1326,7 @@
         <div class="gl-head"><span class="gl-src">${typeMap[d.src] || "📄"} ${escapeHtml(d.src)}</span><span class="cat-tag">${escapeHtml(catById(d.cat).name)}</span></div>
         <h4>${escapeHtml(d.title)}</h4>
         <p>${escapeHtml(body)}…</p>
-        <button class="gl-go" data-id="${escapeHtml(d.id)}">${t("kb.goto")} →</button>`;
+        <button class="gl-go btn tiny soft" data-id="${escapeHtml(d.id)}">${t("kb.goto")} →</button>`;
       card.querySelector(".gl-go").addEventListener("click", () => gotoCorpusDoc(d));
       grid.appendChild(card);
     });
@@ -1434,7 +1434,7 @@
       <div class="kb-section"><h4>📚 延伸阅读</h4><p class="u-muted">${escapeHtml(topic.refs)}</p></div>
       <div class="kb-section"><h4>🔗 ${t("kb.related")}</h4><div class="rel-box" id="relBox"></div></div>
       <div class="ai-helpers"><button class="btn ghost small" id="topicAiBtn">🤖 AI 辅助（讲解/自测/拓展）</button></div>
-      <button class="learn-btn${learned ? " mastered" : ""}" id="learnBtn" aria-pressed="${learned ? "true" : "false"}">${learned ? "✓ 已掌握（点击取消）" : "我已掌握此知识点"}</button>
+      <button class="learn-btn btn accent${learned ? " mastered" : ""}" id="learnBtn" aria-pressed="${learned ? "true" : "false"}">${learned ? "✓ 已掌握（点击取消）" : "我已掌握此知识点"}</button>
     `;
     const rel = relatedDocs(topic);
     if (rel.length) {
@@ -4627,7 +4627,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const due = dueReviews();
     if (!due.length) {
       box.innerHTML = `<div class="acard-head">🔔 复习提醒</div>
-        <p class="u-muted">暂无到期复习项。掌握知识点后，Agent 会按记忆曲线（1/2/4/7/15/30 天）提醒你复习。</p>
+        <p class="u-muted empty-state">暂无到期复习项。掌握知识点后，Agent 会按记忆曲线（1/2/4/7/15/30 天）提醒你复习。</p>
         <div class="review-curve-wrap">${reviewCurveSvg()}<p class="muted u-f11 u-mt4-mb0">遗忘曲线（红点=复习检查点）：越靠右记忆留存越低，到点复习可重置曲线。</p></div>`;
       return;
     }

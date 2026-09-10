@@ -13,116 +13,133 @@
    改视觉先想「能不能落到令牌」，不行才写死值。
    ================================================================== */
 /* ---------- 主题变量 ---------- */
+/* Orbitron：随包分发的 latin 子集（11.8KB，OFL）。中文字形缺失会按字回落到下一顺位，
+   所以可以放心放在中英混排标题的最前面——英文与数字用 Orbitron，中文自动用系统字体。 */
+@font-face {
+  font-family: "Orbitron";
+  src: url("assets/fonts/orbitron-latin.woff2") format("woff2");
+  font-weight: 400 900;
+  font-display: swap;
+}
 :root, [data-theme="light"] {
-  --bg: #eef2f7;
-  --bg-grad: radial-gradient(1200px 620px at 82% -12%, #dbeafe 0%, transparent 55%),
-             radial-gradient(900px 520px at -8% 8%, #d1fae5 0%, transparent 50%);
-  --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --ink: #0f172a;
-  --muted: #5e6c82;   /* 原 #64748b 在页面底色上仅 4.23:1（低于 AA 4.5:1）；改后 bg 4.74 / panel 5.33 / panel-2 5.09 全部达标 */
-  --line: #e6ebf2;
-  --brand: #2563eb;
-  --brand-2: #4f46e5;
-  --brand-soft: #e8f0ff;
-  --accent: #0d9488;
-  --accent-soft: #cdfbf1;
-  --warn: #b45309;
-  --warn-bg: #fff7ed;
-  --chip: #eef2f7;
-  --shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 34px rgba(15,23,42,.07);
-  --shadow-sm: 0 1px 3px rgba(15,23,42,.09);
-  --shadow-lg: 0 18px 50px rgba(15,23,42,.14);
-  --radius: 12px;
-  --radius-lg: 18px;
-  --code-bg: #0f172a;
-  --code-ink: #e2e8f0;
-  --glass: rgba(255,255,255,.65);
-  --grid: rgba(37,99,235,.05);
-  /* 方向①/⑩ 新增组件别名（指向既有主题 token，保证深浅主题一致） */
-  --card: var(--panel);
-  --card-2: var(--panel-2);
-  --border: var(--line);
-  --text: var(--ink);
-  /* 自测题对错配色（v2 漏定义，此处补回） */
-  --ok: #16a34a; --ok-bg: #dcfce7; --ok-ink: #14532d;
-  --bad: #dc2626; --bad-bg: #fee2e2; --bad-ink: #7f1d1d;
-  /* 赛博朋克双霓虹（浅色模式回退为蓝/靛） */
-  --mag: #d61fa6; --cyan: #0aa6c4; --mag-soft: #fce7f6; --cyan-soft: #e0f7fb;
-  --glow-mag: 0 0 12px rgba(214,31,166,.28);
-  --glow-cyan: 0 0 12px rgba(10,166,196,.26);
+  /* —— 核心调色（浅色：冷灰绿底 + 青绿主色）—— */
+  --bg: #eaeff0;
+  --bg-grad: radial-gradient(1100px 600px at 84% -14%, rgba(13,148,136,.10), transparent 58%),
+             radial-gradient(900px 520px at -8% 6%, rgba(14,116,144,.08), transparent 55%);
+  /* panel = 玻璃容器（半透明，配合 backdrop-filter）；panel-2 = 实底（阅读区/密集列表） */
+  --panel: rgba(255,255,255,.88);
+  --panel-2: #ffffff;
+  --glass: rgba(255,255,255,.72);
+  --glass-2: rgba(255,255,255,.55);
+  --ink: #10201f;                        /* 正文 14.50:1 ✅ */
+  --muted: #5b6f6c;                      /* bg 4.60 / panel 5.14 / 白 5.34 ✅ */
+  --line: rgba(16,32,31,.10);            /* 装饰描边 */
+  --border: #7f8f8c;                     /* 控件边界 3.26 ✅ */
+  --brand: #0b7a71;                      /* 主按钮填充：白字 5.20 ✅ */
+  --brand-2: #0d9488;                    /* 渐变另一端 */
+  --brand-hi: #0d9488;                   /* 选中强调 3.23 ✅（控件标准） */
+  --brand-soft: #dff5f2; --accent-soft: #d7f0f7;
+  --link: #0e7490;                       /* 链接 bg 4.62 / panel 5.16 ✅ */
+  --accent: #0e7490;
+  --focus: #0b7a71;                      /* 焦点环 5.01 ✅ */
+  --on-brand: #ffffff;                   /* 主色填充上的文字色 */
+  --hl-top: rgba(255,255,255,.55);       /* 玻璃顶部高光线 */
+  --chip: rgba(16,32,31,.05);
+  --shadow: 0 1px 2px rgba(16,32,31,.05), 0 10px 28px rgba(16,32,31,.07);
+  --shadow-sm: 0 1px 2px rgba(16,32,31,.05), 0 2px 8px rgba(16,32,31,.04);
+  --shadow-lg: 0 18px 50px rgba(16,32,31,.16);
+  --code-bg: #0f172a; --code-ink: #e2e8f0;
+  --grid: rgba(13,148,136,.05);
+  /* —— 组件别名层 —— */
+  --card: var(--panel); --card-2: var(--panel-2); --text: var(--ink);
+  /* —— 语义色（状态灯专用，配白字）—— */
+  --ok: #15803d; --ok-bg: #dcfce7; --ok-ink: #14532d;                /* 白字 5.02 ✅ */
+  --bad: #c2262a; --bad-bg: #fee2e2; --bad-ink: #7f1d1d;             /* 白字 5.83 ✅ */
+  --warn: #a4530a; --warn-bg: #fff7ed;                               /* 白字 5.50 ✅ */
+  /* —— 旧「双霓虹」令牌：不再做第二主色，统一归入青绿一脉（保留名前为避免改调用点）—— */
+  --mag: #0d9488; --cyan: #0e7490;
+  --mag-soft: #dff5f2; --cyan-soft: #dff5f2;
+  --glow-mag: 0 0 10px rgba(13,148,136,.18);
+  --glow-cyan: 0 0 10px rgba(14,116,144,.16);
 }
 [data-theme="dark"], :root:not([data-theme]) {
-  --bg: #0a0e14;
-  --bg-grad: radial-gradient(900px 500px at 82% -8%, rgba(255,43,214,.10), transparent 60%),
-             radial-gradient(900px 600px at 4% 108%, rgba(0,229,255,.10), transparent 60%);
-  --panel: #111824;
-  --panel-2: #0c121b;
-  --ink: #d7e6f2;
-  --muted: #7d93a8;
-  --line: rgba(0,229,255,.14);
-  --brand: #00e5ff;
-  --brand-2: #ff2bd6;
-  --brand-soft: rgba(0,229,255,.10);
-  --accent: #36d399;
-  --accent-soft: rgba(54,211,153,.12);
-  --warn: #ffb454;
-  --warn-bg: rgba(255,180,84,.12);
-  --chip: #0f1826;
-  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 12px 34px rgba(0,0,0,.45);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,.5);
+  /* —— 核心调色（深色：墨绿底 + 亮青主色）—— */
+  --bg: #071110;
+  --bg-grad: radial-gradient(1000px 560px at 82% -10%, rgba(45,212,191,.12), transparent 60%),
+             radial-gradient(900px 560px at 2% 108%, rgba(125,211,252,.09), transparent 60%);
+  --panel: rgba(19,35,32,.86);
+  --panel-2: #0d1a19;
+  --glass: rgba(19,35,32,.72);
+  --glass-2: rgba(19,35,32,.55);
+  --ink: #dcedea;                        /* 15.82:1 ✅ */
+  --muted: #8ea8a4;                      /* bg 7.56 / panel 6.77 ✅ */
+  --line: rgba(255,255,255,.09);
+  --border: #527a71;                     /* 控件边界 3.58 ✅ */
+  --brand: #2dd4bf;                      /* 主按钮填充：深墨字 10.27 ✅ */
+  --brand-2: #14b8a6;                    /* 深墨字 7.68 ✅ */
+  --brand-hi: #2dd4bf;
+  --brand-soft: rgba(45,212,191,.12); --accent-soft: rgba(125,211,252,.12);
+  --link: #5eead4;                       /* bg 12.94 / panel 11.59 ✅ */
+  --accent: #7dd3fc;                     /* panel 10.29 ✅ */
+  --focus: #2dd4bf;                      /* 焦点环 9.21 ✅ */
+  --on-brand: #04120f;                   /* 亮青填充上必须配深墨字 */
+  --hl-top: rgba(255,255,255,.07);
+  --chip: rgba(255,255,255,.06);
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 28px rgba(0,0,0,.45);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.35);
   --shadow-lg: 0 20px 55px rgba(0,0,0,.6);
-  --radius: 12px;
-  --radius-lg: 18px;
-  --code-bg: #060b16;
-  --code-ink: #cbd5e1;
-  --glass: rgba(17,24,36,.62);
-  --grid: rgba(0,229,255,.05);
-  --card: var(--panel);
-  --card-2: var(--panel-2);
-  --border: var(--line);
-  --text: var(--ink);
-  --ok: #4ade80; --ok-bg: #14331f; --ok-ink: #bbf7d0;
-  --bad: #f87171; --bad-bg: #3a1620; --bad-ink: #fecaca;
-  /* 赛博朋克双霓虹 */
-  --mag: #ff2bd6; --cyan: #00e5ff; --mag-soft: rgba(255,43,214,.10); --cyan-soft: rgba(0,229,255,.10);
-  --glow-mag: 0 0 14px rgba(255,43,214,.55);
-  --glow-cyan: 0 0 14px rgba(0,229,255,.50);
+  --code-bg: #060b16; --code-ink: #cbd5e1;
+  --grid: rgba(45,212,191,.05);
+  --card: var(--panel); --card-2: var(--panel-2); --text: var(--ink);
+  --ok: #4ade80; --ok-bg: rgba(74,222,128,.12); --ok-ink: #bbf7d0;   /* 9.84 ✅ */
+  --bad: #f87171; --bad-bg: rgba(248,113,113,.12); --bad-ink: #fecaca; /* 6.20 ✅ */
+  --warn: #fbbf24; --warn-bg: rgba(251,191,36,.12);                  /* 10.27 ✅ */
+  --mag: #2dd4bf; --cyan: #7dd3fc;
+  --mag-soft: rgba(45,212,191,.12); --cyan-soft: rgba(125,211,252,.10);
+  --glow-mag: 0 0 12px rgba(45,212,191,.35);
+  --glow-cyan: 0 0 12px rgba(125,211,252,.30);
 }
 /* 浅色主题显式切换（用户点滑块 → data-theme="light"） */
 [data-theme="light"] {
-  --bg: #eef2f7;
-  --bg-grad: radial-gradient(1200px 620px at 82% -12%, #fce7f6 0%, transparent 55%),
-             radial-gradient(900px 520px at -8% 8%, #e0f7fb 0%, transparent 50%);
-  --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --ink: #0f172a;
-  --muted: #5e6c82;   /* 原 #64748b 在页面底色上仅 4.23:1（低于 AA 4.5:1）；改后 bg 4.74 / panel 5.33 / panel-2 5.09 全部达标 */
-  --line: #e6ebf2;
-  --brand: #0aa6c4;
-  --brand-2: #d61fa6;
-  --brand-soft: #e0f7fb;
-  --accent: #0d9488;
-  --accent-soft: #cdfbf1;
-  --warn: #b45309;
-  --warn-bg: #fff7ed;
-  --chip: #eef2f7;
-  --shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 34px rgba(15,23,42,.07);
-  --shadow-sm: 0 1px 3px rgba(15,23,42,.09);
-  --shadow-lg: 0 18px 50px rgba(15,23,42,.14);
-  --code-bg: #0f172a;
-  --code-ink: #e2e8f0;
-  --glass: rgba(255,255,255,.65);
-  --grid: rgba(10,166,196,.05);
-  --card: var(--panel);
-  --card-2: var(--panel-2);
-  --border: var(--line);
-  --text: var(--ink);
-  --ok: #16a34a; --ok-bg: #dcfce7; --ok-ink: #14532d;
-  --bad: #dc2626; --bad-bg: #fee2e2; --bad-ink: #7f1d1d;
-  --mag: #d61fa6; --cyan: #0aa6c4; --mag-soft: #fce7f6; --cyan-soft: #e0f7fb;
-  --glow-mag: 0 0 12px rgba(214,31,166,.28);
-  --glow-cyan: 0 0 12px rgba(10,166,196,.26);
+  /* —— 核心调色（浅色：冷灰绿底 + 青绿主色）—— */
+  --bg: #eaeff0;
+  --bg-grad: radial-gradient(1100px 600px at 84% -14%, rgba(13,148,136,.10), transparent 58%),
+             radial-gradient(900px 520px at -8% 6%, rgba(14,116,144,.08), transparent 55%);
+  /* panel = 玻璃容器（半透明，配合 backdrop-filter）；panel-2 = 实底（阅读区/密集列表） */
+  --panel: rgba(255,255,255,.88);
+  --panel-2: #ffffff;
+  --glass: rgba(255,255,255,.72);
+  --glass-2: rgba(255,255,255,.55);
+  --ink: #10201f;                        /* 正文 14.50:1 ✅ */
+  --muted: #5b6f6c;                      /* bg 4.60 / panel 5.14 / 白 5.34 ✅ */
+  --line: rgba(16,32,31,.10);            /* 装饰描边 */
+  --border: #7f8f8c;                     /* 控件边界 3.26 ✅ */
+  --brand: #0b7a71;                      /* 主按钮填充：白字 5.20 ✅ */
+  --brand-2: #0d9488;                    /* 渐变另一端 */
+  --brand-hi: #0d9488;                   /* 选中强调 3.23 ✅（控件标准） */
+  --brand-soft: #dff5f2;
+  --link: #0e7490;                       /* 链接 bg 4.62 / panel 5.16 ✅ */
+  --accent: #0e7490;
+  --focus: #0b7a71;                      /* 焦点环 5.01 ✅ */
+  --on-brand: #ffffff;                   /* 主色填充上的文字色 */
+  --hl-top: rgba(255,255,255,.55);       /* 玻璃顶部高光线 */
+  --chip: rgba(16,32,31,.05);
+  --shadow: 0 1px 2px rgba(16,32,31,.05), 0 10px 28px rgba(16,32,31,.07);
+  --shadow-sm: 0 1px 2px rgba(16,32,31,.05), 0 2px 8px rgba(16,32,31,.04);
+  --shadow-lg: 0 18px 50px rgba(16,32,31,.16);
+  --code-bg: #0f172a; --code-ink: #e2e8f0;
+  --grid: rgba(13,148,136,.05);
+  /* —— 组件别名层 —— */
+  --card: var(--panel); --card-2: var(--panel-2); --text: var(--ink);
+  /* —— 语义色（状态灯专用，配白字）—— */
+  --ok: #15803d; --ok-bg: #dcfce7; --ok-ink: #14532d;                /* 白字 5.02 ✅ */
+  --bad: #c2262a; --bad-bg: #fee2e2; --bad-ink: #7f1d1d;             /* 白字 5.83 ✅ */
+  --warn: #a4530a; --warn-bg: #fff7ed;                               /* 白字 5.50 ✅ */
+  /* —— 旧「双霓虹」令牌：不再做第二主色，统一归入青绿一脉（保留名前为避免改调用点）—— */
+  --mag: #0d9488; --cyan: #0e7490;
+  --mag-soft: #dff5f2; --cyan-soft: #dff5f2;
+  --glow-mag: 0 0 10px rgba(13,148,136,.18);
+  --glow-cyan: 0 0 10px rgba(14,116,144,.16);
 }
 
 /* ==================================================================
@@ -136,17 +153,16 @@
    · 第 3 层「尺度」：--sp-* / --r-* / --fs-* / --lh-*（本版新增，见下方）+
      动效组（--dur-* / --ease-* / --move-* / --scale-*，见文件后段的动效规范）。
      主题无关，任何主题下取值相同。
-   ⚠ 已知重复定义：浅色主题变量写了两遍——本节上方第 1 个块
-     `:root, [data-theme="light"]` 与第 3 个块 `[data-theme="light"]`。
-     同特异性下方者胜，真正生效的是**最后一个块**；两者在 --bg-grad / --brand /
-     --brand-2 / --brand-soft / --grid 上取值不同，改第 1 个块不会有任何效果。
-     U3 归并时删除被遮蔽的那份。
+   ⚠ 重复定义已消除（U2b）：浅色主题原本写两遍（`:root, [data-theme="light"]` 与
+     `[data-theme="light"]`），且第 2 块会遮蔽第 1 块的部分取值 —— 现在两块取值完全一致，
+     改哪一边都生效，U3 归并时直接删掉被遮蔽的那份即可。
    ================================================================== */
 :root {
   /* 间距：4px 栅格（取值对齐现有散落魔法数） */
   --sp-1: 4px; --sp-2: 6px; --sp-3: 8px; --sp-4: 10px; --sp-5: 12px; --sp-6: 16px; --sp-8: 24px;
-  /* 圆角：三档，中/大档复用既有 --radius / --radius-lg */
-  --r-sm: 8px; --r-md: var(--radius); --r-lg: var(--radius-lg);
+  /* 圆角：三档（U2b 提到此处统一定义，主题无关） */
+  --radius: 14px; --radius-lg: 20px;
+  --r-sm: 10px; --r-md: var(--radius); --r-lg: var(--radius-lg);
   /* 字号层级（取值对齐现有散落字号） */
   --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-15: 15px; --fs-17: 17px; --fs-85: .85em;
   /* 行高层级 */
@@ -275,7 +291,7 @@ body { display: flex; height: 100vh; min-height: 100vh; overflow: hidden; }
 
 /* 掌握徽章（图标栏底部） */
 .mastery-badge {
-  background: linear-gradient(135deg, var(--accent), #0891b2); color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--brand-2)); color: var(--on-brand);
   padding: 6px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; white-space: nowrap;
   box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent); display: inline-flex; align-items: center; gap: 4px;
 }
@@ -292,8 +308,9 @@ body { display: flex; height: 100vh; min-height: 100vh; overflow: hidden; }
 .topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background: linear-gradient(90deg, transparent, var(--mag), var(--cyan), transparent); opacity: .55; }
 .crumb { display: flex; align-items: center; gap: 10px; }
-.crumb .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: var(--glow-cyan); animation: pulse 2.4s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+.crumb .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: var(--glow-cyan); animation: breath-op 2.4s infinite; --op-min: .35; }
+/* 透明度呼吸：pulse / cdPulse 合并而来，幅度用 --op-min 传入 */
+@keyframes breath-op { 0%, 100% { opacity: 1; } 50% { opacity: var(--op-min, .4); } }
 .crumb b { font-family: "Orbitron","Rajdhani",sans-serif; font-weight: 700; letter-spacing: .06em; font-size: 15px;
   background: linear-gradient(90deg, var(--mag), var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .crumb-sub { color: var(--muted); font-size: 12.5px; font-weight: 600; }
@@ -327,7 +344,6 @@ main { flex: 1; overflow: hidden; padding: 0; }
 .panel { display: none; }
 .panel.active { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; padding: 24px 26px; box-sizing: border-box; animation: panelIn .12s ease; }
 @keyframes panelIn { from { opacity: 0; } to { opacity: 1; } }
-:focus-visible { outline: 2px solid color-mix(in srgb, var(--cyan) 60%, transparent); outline-offset: 2px; border-radius: 6px; }
 h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.2px; font-weight: 800; }
 
 /* ---------- 布局 ---------- */
@@ -361,7 +377,7 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   padding: 6px 12px; border-radius: 18px; cursor: pointer; font-size: 13px; transition: background .15s, color .15s, border-color .15s, transform .15s;
 }
 .chip:hover { border-color: var(--brand); transform: translateY(-1px); }
-.chip.active { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff; border-color: transparent; box-shadow: 0 4px 12px color-mix(in srgb, var(--brand) 35%, transparent); }
+.chip.active { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); border-color: transparent; box-shadow: 0 4px 12px color-mix(in srgb, var(--brand) 35%, transparent); }
 
 /* ---------- 知识页导读 ---------- */
 .kb-hero {
@@ -416,22 +432,13 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .topic-card .mast .ml { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
 .topic-card .mast .ml b { color: var(--ink); font-family: "Consolas",monospace; }
 .topic-card .refs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 13px; }
-.topic-card .ref { font-size: 11px; font-weight: 600; font-family: "Consolas",monospace; padding: 3px 8px; border-radius: 6px;
-  color: #3aa0ff; background: rgba(58,160,255,.1); border: 1px solid rgba(58,160,255,.3); }
+.topic-card .ref { font-family: "Consolas", monospace;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 .topic-card .ref.cve { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .topic-card .tc-ft { display: flex; gap: 9px; }
-.topic-card .tc-btn { flex: 1; justify-content: center; font-family: "Rajdhani","Segoe UI",sans-serif; font-weight: 700; font-size: 13px;
-  padding: 9px; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: .16s; border: 1px solid transparent; }
-.topic-card .tc-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.topic-card .tc-btn.ghost { background: transparent; border-color: color-mix(in srgb, var(--mag) 40%, transparent); color: var(--cyan); }
-.topic-card .tc-btn.ghost:hover { background: var(--cyan-soft); box-shadow: var(--glow-cyan); }
-.topic-card .tc-btn.solid { background: linear-gradient(135deg, var(--cyan), #0aa6ff); color: #04222b; border: none; }
-.topic-card .tc-btn.solid:hover { transform: translateY(-2px); box-shadow: var(--glow-cyan); }
-.topic-card .tc-btn:active { transform: scale(.97); }
+/* .tc-btn 已收编进「按钮家族」：外观走 .btn，差异见后面的「按钮变体」段 */
 
-.lvl-tag {
-  display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 12px; margin-top: 10px; font-weight: 700;
-}
+.lvl-tag { margin-top: 10px; }
 .lvl-入门 { background: #dcfce7; color: #15803d; }
 .lvl-初级 { background: #dbeafe; color: #1d4ed8; }
 .lvl-中级 { background: #fef3c7; color: #b45309; }
@@ -469,15 +476,7 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .dom .meta { flex: 1; min-width: 0; }
 .dom .meta .nm { font-weight: 700; font-size: 14px; }
 .dom .meta .ct { font-size: 11.5px; color: var(--muted); font-family: "Consolas",monospace; }
-.path-btn {
-  margin-top: 8px; width: 100%; justify-content: center;
-  background: linear-gradient(135deg, var(--mag), #c81fff); color: #fff; border: none;
-  border-radius: 8px; padding: 11px; font-family: "Rajdhani","Segoe UI",sans-serif; font-weight: 700; font-size: 13.5px;
-  cursor: pointer; display: flex; align-items: center; gap: 8px; box-shadow: var(--glow-mag); transition: .16s;
-}
-.path-btn svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 2; }
-.path-btn:hover { transform: translateY(-2px); box-shadow: 0 0 22px rgba(255,43,214,.8); }
-.path-btn:active { transform: scale(.98); }
+/* .path-btn 已收编进「按钮家族」：外观走 .btn + .btn.block，差异见后面的「按钮变体」段 */
 
 .kb-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 6px 0 8px; }
 .kb-search { flex: 1; display: flex; align-items: center; gap: 9px; background: var(--panel-2); border: 1px solid var(--line);
@@ -507,10 +506,10 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 /* ---------- Block2：全库搜索 / 学习路径 / 相关推荐 ---------- */
 .kb-scope { margin-left: auto; }
 .kb-scope .chip { padding: 6px 12px; font-size: 12.5px; border:1px solid var(--line); background:var(--panel); color:var(--muted); }
-.kb-scope .chip.active { background: var(--brand); color:#fff; border-color: var(--brand); }
+.kb-scope .chip.active { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 .path-filter { margin-top: 16px; }
 .path-filter h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; letter-spacing: .5px; }
-#kbPathBtn.active { background: var(--brand); color:#fff; border-color: var(--brand); }
+#kbPathBtn.active { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 
 .gl-card {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
@@ -521,11 +520,6 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .gl-src { font-size: 12px; font-weight: 700; color: var(--brand); }
 .gl-card h4 { margin: 2px 0 6px; font-size: 15.5px; }
 .gl-card p { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
-.gl-go {
-  background: var(--brand-soft); color: var(--brand); border: none; border-radius: 10px;
-  padding: 5px 12px; font-size: 12.5px; cursor: pointer; font-weight: 600; transition: background .15s;
-}
-.gl-go:hover { background: var(--brand); color:#fff; }
 
 .path-group { margin-bottom: 18px; }
 .path-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -544,7 +538,7 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 14px;
   padding: 6px 12px; font-size: 12.5px; cursor: pointer; transition: background .15s, color .15s, border-color .15s, transform .15s;
 }
-.rel-chip:hover { background: var(--brand); color:#fff; border-color: var(--brand); }
+.rel-chip:hover { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 
 /* ---------- 详情 ---------- */
 .topic-detail, .range-detail {
@@ -562,9 +556,7 @@ pre {
 }
 code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .inline-code { background: var(--chip); padding: 1px 7px; border-radius: 5px; font-size: 12.5px; }
-.learn-btn { background: linear-gradient(135deg, var(--accent), #0891b2); color:#fff; border:none; padding:9px 18px; border-radius:9px; cursor:pointer; margin-top:10px; font-weight:600; box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 35%, transparent); transition: transform .15s, filter .15s; }
-.learn-btn:hover { filter: brightness(1.06); transform: translateY(-1px); }
-.learn-btn:active { transform: translateY(1px); }
+/* .learn-btn 已收编进「按钮家族」：配色走 .btn.accent，只保留外边距（见「按钮变体」段） */
 
 /* ---------- 聊天 ---------- */
 .chat-main { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; height: 100%; box-shadow: var(--shadow); overflow: hidden; }
@@ -573,16 +565,16 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .msg-row.user { align-self: flex-end; flex-direction: row-reverse; }
 .avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; flex-shrink: 0; box-shadow: var(--shadow-sm); }
 .avatar.bot { background: var(--brand-soft); }
-.avatar.user { background: linear-gradient(135deg, var(--accent), #0891b2); color: #fff; }
+.avatar.user { background: linear-gradient(135deg, var(--accent), var(--brand-2)); color: var(--on-brand); }
 .msg { max-width: 100%; padding: 12px 15px; border-radius: 16px; font-size: 14px; box-shadow: var(--shadow-sm); line-height: 1.6; }
 .msg-row.bot .msg { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
-.msg-row.user .msg { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff; border-bottom-right-radius: 5px; box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 35%, transparent); }
+.msg-row.user .msg { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); border-bottom-right-radius: 5px; box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 35%, transparent); }
 .msg.bot pre { margin: 8px 0; }
 .msg .suggestions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; }
 .msg .suggestions button { background: var(--panel); border: 1px solid var(--brand); color: var(--brand); border-radius: 16px; padding: 5px 11px; cursor: pointer; font-size: 12.5px; transition: background .15s, color .15s, border-color .15s; }
-.msg .suggestions button:hover { background: var(--brand); color: #fff; }
+.msg .suggestions button:hover { background: var(--brand); color: var(--on-brand); }
 .cite { display: inline-block; background: var(--chip); border: 1px solid var(--line); color: var(--muted); border-radius: 10px; padding: 2px 9px; font-size: 12px; margin: 2px 3px 2px 0; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
-.cite:hover { background: var(--brand); color: #fff; border-color: var(--brand); }
+.cite:hover { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 .code-wrap { margin: 8px 0; }
 .code-wrap pre { margin: 0; }
 
@@ -633,7 +625,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .news-detail h2 { color: var(--ink); }
 .news-detail .date { color: var(--muted); font-size: 13px; }
 .news-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
-.news-card .tag { font-size: 11px; background: var(--warn-bg); color: var(--warn); padding: 3px 9px; border-radius: 8px; font-weight: 700; }
+.news-card .tag { background: var(--warn-bg); color: var(--warn); }
 .news-card h3 { color: var(--ink); text-transform: none; margin: 10px 0; font-size: 16px; letter-spacing: 0; }
 .news-card .date { font-size: 12px; color: var(--muted); }
 .news-card p { font-size: 13.5px; }
@@ -652,7 +644,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
   padding: 9px 18px; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background .15s, color .15s, border-color .15s, transform .15s; box-shadow: var(--shadow-sm);
 }
 .seg-btn:hover { border-color: var(--brand); transform: translateY(-1px); }
-.seg-btn.active { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff; border-color: transparent; box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 35%, transparent); }
+.seg-btn.active { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); border-color: transparent; box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 35%, transparent); }
 
 /* ---------- 在线演练结果 ---------- */
 .lab-result { margin-top: 16px; border-radius: 12px; padding: 16px; border: 1px solid var(--line); animation: fade .25s ease; }
@@ -699,7 +691,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .env-meta { font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
 #envCountdown { font-weight: 700; color: var(--brand); }
 
-.btn { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff; border: none; padding: 10px 18px; border-radius: 11px; cursor: pointer; font-size: 14px; font-weight: 600; box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 32%, transparent); transition: transform .15s, filter .15s, box-shadow .15s; }
+.btn { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); border: none; padding: 10px 18px; border-radius: 11px; cursor: pointer; font-size: 14px; font-weight: 600; box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 32%, transparent); transition: transform .15s, filter .15s, box-shadow .15s; }
 .btn:hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--shadow); }
 .btn:active { transform: translateY(1px); box-shadow: var(--shadow-sm); }
 .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; transform: none; }
@@ -799,7 +791,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .agent-center .acard:last-child { grid-column: 1 / -1; }
 .acard { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 12px; padding: 14px 16px; }
 .acard-head { font-weight: 700; font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-.acard-head .count, .acard-tip .count { background: var(--brand, #4f46e5); color: #fff; border-radius: 999px; padding: 1px 9px; font-size: 12px; margin-left: auto; }
+.acard-head .count, .acard-tip .count { background: var(--brand, #4f46e5); color: var(--on-brand); border-radius: 999px; padding: 1px 9px; font-size: 12px; margin-left: auto; }
 .acard-tip { margin-top: 10px; font-size: 13px; color: var(--muted); }
 .pbar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; font-size: 13px; }
 .pbar-name { width: 92px; flex: none; }
@@ -863,7 +855,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 
 /* —— Phase 1 工具层：风险徽标 + 确认弹窗操作区 —— */
 .risk-low { color: var(--ok, #2ecc71); font-weight: 600; }
-.risk-high { color: var(--danger, #e74c3c); font-weight: 600; }
+.risk-high { color: var(--bad, #e74c3c); font-weight: 600; }
 .risk-medium { color: var(--warn, #f39c12); font-weight: 600; }
 .modal-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .modal-actions .btn { min-width: 88px; }
@@ -899,12 +891,13 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .sp-logo {
   width: 92px; height: 92px; margin: 0 auto 22px; border-radius: 26px;
   display: grid; place-items: center;
-  font-family: "Orbitron","Rajdhani","Segoe UI",sans-serif; font-size: 46px; font-weight: 900; color: #fff;
+  font-family: "Orbitron","Rajdhani","Segoe UI",sans-serif; font-size: 46px; font-weight: 900; color: var(--on-brand);
   background: linear-gradient(135deg, var(--mag), var(--cyan));
   box-shadow: 0 0 34px color-mix(in srgb, var(--mag) 45%, transparent), 0 0 64px color-mix(in srgb, var(--cyan) 25%, transparent);
-  animation: spPulse 1.6s ease-in-out infinite;
+  animation: breath-scale 1.6s ease-in-out infinite;
 }
-@keyframes spPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+/* 缩放呼吸：幅度用 --sc 传入 */
+@keyframes breath-scale { 0%, 100% { transform: scale(1); } 50% { transform: scale(var(--sc, 1.05)); } }
 .sp-name { font-family: "Orbitron","Rajdhani","Segoe UI",sans-serif; font-weight: 800; font-size: 26px; letter-spacing: .18em; color: var(--ink); }
 .sp-tag { margin-top: 6px; font-size: 13px; color: var(--muted); letter-spacing: .08em; }
 .sp-bar { width: 240px; height: 5px; margin: 24px auto 0; border-radius: 6px; background: var(--line); overflow: hidden; }
@@ -921,9 +914,9 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
    prefers-reduced-motion: no-preference，系统开启减弱动效时自动降级。
    ================================================================== */
 :root {
-  --dur-fast: 180ms;
-  --dur-base: 260ms;
-  --dur-slow: 340ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
   --ease-out: cubic-bezier(.16, .84, .44, 1);
   --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
   --move-sm: 12px;
@@ -941,7 +934,6 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
    prefers-reduced-motion: no-preference 里，系统减弱动效时自动降级。
    ================================================================== */
 /* ===== 焦点可见环（无障碍，始终生效）===== */
-:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
 
 /* ===== Toast 通知 ===== */
 .toast-host {
@@ -959,7 +951,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .toast-ok { border-left-color: var(--ok, #16a34a); }
 .toast-err { border-left-color: var(--bad, #dc2626); }
 .toast-info { border-left-color: var(--brand); }
-.toast-ic { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--brand); }
+.toast-ic { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--on-brand); background: var(--brand); }
 .toast-ok .toast-ic { background: var(--ok, #16a34a); }
 .toast-err .toast-ic { background: var(--bad, #dc2626); }
 .toast-msg { flex: 1 1 auto; word-break: break-word; }
@@ -1046,8 +1038,7 @@ kbd {
     100% { transform: scale(1); }
   }
   /* 靶场倒计时最后 60 秒告警 */
-  #envCountdown.warn { animation: cdPulse 1s ease-in-out infinite; }
-  @keyframes cdPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+  #envCountdown.warn { animation: breath-op 1s ease-in-out infinite; --op-min: .55; }
   .modal { animation: modalIn 300ms var(--ease-spring); }
   @keyframes modalIn {
     from { opacity: 0; transform: translateY(var(--move-lg)) scale(.9); }
@@ -1082,7 +1073,7 @@ kbd {
 }
 .agent-roles .ar-chip:hover { border-color: var(--brand, #2563eb); }
 .agent-roles .ar-chip.active {
-  background: var(--brand, #2563eb); border-color: var(--brand, #2563eb); color: #fff; font-weight: 600;
+  background: var(--brand, #2563eb); border-color: var(--brand, #2563eb); color: var(--on-brand); font-weight: 600;
 }
 
 /* —— Phase 4：语音/视觉输入按钮 —— */
@@ -1092,10 +1083,10 @@ kbd {
 }
 .chat-input .btn.icon:disabled { opacity: .4; cursor: not-allowed; }
 .chat-input .btn.icon.recording {
-  background: #e11d48; border-color: #e11d48; color: #fff;
-  animation: recpulse 1.1s infinite;
+  background: var(--bad); border-color: var(--bad); color: var(--on-brand);
+  animation: breath-ring 1.1s infinite; --ring-c: rgba(225,29,72,.45); --ring-spread: 6px;
 }
-@keyframes recpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(225,29,72,.45); } 50% { box-shadow: 0 0 0 6px rgba(225,29,72,0); } }
+/* recpulse 已并入 breath-ring（仅此处用红色环，表示正在录音） */
 
 /* —— P3 优化：auto 编排角色徽标 —— */
 .role-badge {
@@ -1126,7 +1117,7 @@ kbd {
   background: transparent;
 }
 .flow-step.done { color: #059669; border-color: #059669; }
-.flow-step.cur { color: #fff; background: #2563eb; border-color: #2563eb; font-weight: 600; }
+.flow-step.cur { color: var(--on-brand); background: var(--brand); border-color: var(--brand); font-weight: 600; }
 
 /* ============================================================
    UI Polish v1.1.0（聊天工作台 + 全局视觉统一 + 交互微体验）
@@ -1136,7 +1127,7 @@ kbd {
    ============================================================ */
 
 /* ---------- ① 全局统一：焦点可达性 / 按压反馈 / 滚动条 ---------- */
-:focus-visible { outline: 2px solid var(--brand, #2563eb); outline-offset: 2px; border-radius: 6px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
 .btn { transition: transform .12s ease, box-shadow .18s ease, background .15s ease, border-color .15s ease, color .15s ease; }
 .btn:active { transform: translateY(1px) scale(.985); }
 .chat-log::-webkit-scrollbar, .panel::-webkit-scrollbar, .modal-body::-webkit-scrollbar { width: 9px; height: 9px; }
@@ -1196,18 +1187,20 @@ kbd {
 .flow-step.done { background: color-mix(in srgb, #059669 10%, transparent); }
 .flow-step.cur {
   background: var(--brand, #2563eb); border-color: var(--brand, #2563eb);
-  animation: flowPulse 2.1s ease-in-out infinite;
+  animation: breath-ring 2.1s ease-in-out infinite;
+  --ring-c: color-mix(in srgb, var(--brand, #0d9488) 42%, transparent); --ring-spread: 5px;
 }
-@keyframes flowPulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand, #2563eb) 42%, transparent); }
-  55% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand, #2563eb) 0%, transparent); }
+/* 环形呼吸：flowPulse / recpulse 合并而来，颜色与扩散距离用 --ring-c / --ring-spread 传入 */
+@keyframes breath-ring {
+  0%, 100% { box-shadow: 0 0 0 0 var(--ring-c, rgba(13,148,136,.42)); }
+  55% { box-shadow: 0 0 0 var(--ring-spread, 6px) transparent; }
 }
 
 /* ---------- ⑤ 输入区：聚焦环 / 发送键渐变 / 图标钮反馈 ---------- */
 .chat-input input { transition: border-color .16s ease, box-shadow .2s ease; }
 #sendBtn {
   background: linear-gradient(135deg, var(--brand, #2563eb), var(--brand-2, #4f46e5));
-  border: none; color: #fff; font-weight: 600;
+  border: none; color: var(--on-brand); font-weight: 600;
   box-shadow: 0 4px 14px color-mix(in srgb, var(--brand, #2563eb) 30%, transparent);
 }
 #sendBtn:hover { box-shadow: 0 6px 18px color-mix(in srgb, var(--brand, #2563eb) 42%, transparent); filter: brightness(1.06); }
@@ -1346,6 +1339,115 @@ kbd {
   font-family: ui-monospace, Consolas, monospace;
 }
 .update-notes .notes-body a { color: var(--accent, #6ea8ff); }
+
+/* ==================================================================
+   【第 6.5 段 · 玻璃表面 / 字体 / 顺滑度（U2b 换血）】
+   依据 DESIGN-SPEC.md：玻璃只给「静态承载者」，阅读区与密集列表保持实底，
+   否则长文会发虚、滚动还会掉帧。放在第 7 段工具类之前，保证工具类仍压轴。
+   ================================================================== */
+
+/* —— 玻璃表面：图标栏 / 顶栏 / 侧栏 / 弹层 / Toast —— */
+.rail, .topbar, .modal, .toast,
+.kb-side, .chat-side, .quiz-side, .tools-side, .range-side {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
+  backdrop-filter: blur(14px) saturate(125%);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--hl-top);
+}
+/* 不支持毛玻璃时降级为不透明底，保证文字可读（老 WebView / 关闭硬件加速） */
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .rail, .topbar, .modal, .toast,
+  .kb-side, .chat-side, .quiz-side, .tools-side, .range-side {
+    background: var(--panel-2);
+  }
+}
+
+/* —— 字体：Orbitron 服务英文标题与数字，中文按字回落系统栈 —— */
+.panel h2, .kb-hero h2, .topic-detail h2, .range-detail h2, .news-detail h2,
+.stat-ring span, .path-count, .quiz-score, .kb-search-count, .mastery-badge {
+  font-family: "Orbitron", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+
+/* —— 顺滑度：交互元素统一过渡（时长与缓动全部走令牌，不写死数值）—— */
+.btn, .chip, .rail-item, .dom-item, .tc-btn,
+.topic-card, .news-card, .gl-card, .range-card, .pcard,
+.kb-search input, .field select, .field input, .chat-input input,
+.quiz-main button, .update-ctl button {
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out),
+              filter var(--dur-fast) var(--ease-out);
+}
+/* 滚动条出现时不再挤动布局（避免面板宽度跳动） */
+.panel, .modal-body, .chat-log, .kb-main { scrollbar-gutter: stable; }
+/* 滚动条统一到主色一脉，不再用中性灰抢注意力 */
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--brand) 35%, transparent);
+  border-radius: 8px; border: 3px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--brand) 60%, transparent); background-clip: padding-box;
+}
+
+/* ==================================================================
+   【按钮变体（U3 归并）】按钮只有 .btn 一套实现，其余都是修饰类。
+   旧类名（.tc-btn / .path-btn / .gl-go / .learn-btn）全部保留并多挂修饰类，
+   所以 app.js 与 selftest 里的选择器一个都不用改。
+   这段必须放在 .btn 定义之后，否则差异会被 .btn 的默认值覆盖。
+   ================================================================== */
+.btn.soft { background: var(--brand-soft); color: var(--brand); box-shadow: none; }
+.btn.soft:hover { background: var(--brand); color: var(--on-brand); }
+.btn.accent { background: linear-gradient(135deg, var(--accent), var(--brand-2)); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 32%, transparent); }
+.btn.block { display: block; width: 100%; }
+
+/* 知识卡双按钮：只留卡片内的布局与图标差异 */
+.topic-card .tc-btn { flex: 1; justify-content: center; display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; }
+.topic-card .tc-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.topic-card .tc-btn.ghost { border-color: color-mix(in srgb, var(--mag) 40%, transparent); color: var(--cyan); }
+.topic-card .tc-btn.ghost:hover { background: var(--cyan-soft); box-shadow: var(--glow-cyan); }
+.topic-card .tc-btn.solid:hover { transform: translateY(-2px); box-shadow: var(--glow-cyan); }
+.topic-card .tc-btn:active { transform: scale(.97); }
+
+/* 侧栏整宽按钮（生成学习路径） */
+.path-btn { margin-top: 8px; justify-content: center; display: flex; align-items: center; gap: 8px; box-shadow: var(--glow-mag); }
+.path-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+.path-btn:hover { transform: translateY(-2px); box-shadow: 0 0 22px color-mix(in srgb, var(--mag) 45%, transparent); }
+.path-btn:active { transform: scale(.98); }
+
+/* 学习路径卡「前往」走 .btn.tiny.soft；知识点「我已掌握」走 .btn.accent，只留外边距 */
+.learn-btn { margin-top: 10px; }
+
+/* ==================================================================
+   【小徽章统一（U3 归并）】.lvl-tag / .tag / .dom-tag / .ref 四类小徽章
+   共用一套盒模型，各自只保留颜色。改圆角或字号只需动这一处。
+   ================================================================== */
+.lvl-tag, .tag, .dom-tag, .ref {
+  display: inline-block; font-size: 11.5px; font-weight: 700; line-height: 1.6;
+  padding: 3px 9px; border-radius: var(--r-sm); white-space: nowrap;
+}
+
+/* ==================================================================
+   【三态组件（U3）】空态 / 加载 / 出错三态统一外观，替掉各处临时拼的提示。
+   用法：在原有元素上多挂一个 .empty-state（或 .loading-state / .error-state）即可，
+   不换标签、不改文案，所以对 selftest 与 JS 选择器零影响。
+   ================================================================== */
+.empty-state, .loading-state, .error-state {
+  padding: 18px 16px; text-align: center; border-radius: var(--r-md);
+  border: 1px dashed var(--line); background: var(--panel-2); color: var(--muted);
+}
+.loading-state { border-style: solid; }
+.error-state { border-color: color-mix(in srgb, var(--bad) 40%, transparent); color: var(--bad); background: var(--bad-bg); }
+
+/* ==================================================================
+   【可达性（U4）】rail 条目已由 <div> 改为 <button>，可获得键盘焦点与原生语义；
+   这里补上按钮默认样式的重置（背景/字体/内边距），让外观与改造前一致。
+   ================================================================== */
+button.rail-item { background: none; font: inherit; color: inherit; padding: 0; -webkit-appearance: none; appearance: none; }
 
 /* ==================================================================
    【第 7 段 · 工具类（U1 收编内联样式用）】

@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="M5T9vpNVgyZqqlvWcgoiax">
+<head data-page-node-id="J4GEtd8knv20OTYUEnBBnc">
+<meta charset="utf-8" data-page-node-id="fY4RTaumbVXJfKQgFTlv62" />
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="qcCSyFfdGjyxqEErMbCBoJ" />
+<title>SecTutor 视觉样张 · 轻科幻玻璃风（U2a）</title>
+<style>
+/* Orbitron latin 子集：随包分发，离线可用 */
+@font-face {
+  font-family: "Orbitron";
+  src: url("assets/fonts/orbitron-latin.woff2") format("woff2");
+  font-weight: 400 900;
+  font-display: swap;
+}
+
+/* ==================================================================
+   拟提议的第 1 段：主题令牌（浅色）
+   ================================================================== */
+[data-theme="light"] {
+  --bg: #eaeff0;
+  --bg-grad: radial-gradient(1100px 600px at 84% -14%, rgba(13,148,136,.10), transparent 58%),
+             radial-gradient(900px 520px at -8% 6%, rgba(14,116,144,.08), transparent 55%);
+  --panel: rgba(255,255,255,.72);
+  --panel-2: #ffffff;
+  --glass: rgba(255,255,255,.72);
+  --glass-2: rgba(255,255,255,.55);
+  --ink: #10201f;
+  --muted: #5b6f6c;
+  --line: rgba(16,32,31,.10);
+  --border: #7f8f8c;
+  --brand: #0b7a71;
+  --brand-2: #0d9488;
+  --brand-hi: #0d9488;
+  --brand-soft: #dff5f2;
+  --link: #0e7490;
+  --focus: #0b7a71;
+  --accent: #0e7490;
+  --on-brand: #ffffff;
+  --hl-top: rgba(255,255,255,.55);
+  --ok: #15803d; --ok-bg: #dcfce7;
+  --warn: #a4530a; --warn-bg: #fff7ed;
+  --bad: #c2262a; --bad-bg: #fee2e2;
+}
+/* ==================================================================
+   拟提议的第 1 段：主题令牌（深色）
+   ================================================================== */
+[data-theme="dark"] {
+  --bg: #071110;
+  --bg-grad: radial-gradient(1000px 560px at 82% -10%, rgba(45,212,191,.12), transparent 60%),
+             radial-gradient(900px 560px at 2% 108%, rgba(125,211,252,.09), transparent 60%);
+  --panel: rgba(19,35,32,.72);
+  --panel-2: #0d1a19;
+  --glass: rgba(19,35,32,.72);
+  --glass-2: rgba(19,35,32,.55);
+  --ink: #dcedea;
+  --muted: #8ea8a4;
+  --line: rgba(255,255,255,.09);
+  --border: #527a71;
+  --brand: #2dd4bf;
+  --brand-2: #14b8a6;
+  --brand-hi: #2dd4bf;
+  --brand-soft: rgba(45,212,191,.12);
+  --link: #5eead4;
+  --focus: #2dd4bf;
+  --accent: #7dd3fc;
+  --on-brand: #04120f;
+  --hl-top: rgba(255,255,255,.07);
+  --ok: #4ade80; --ok-bg: rgba(74,222,128,.12);
+  --warn: #fbbf24; --warn-bg: rgba(251,191,36,.12);
+  --bad: #f87171; --bad-bg: rgba(248,113,113,.12);
+}
+
+/* 尺度令牌（U1 已有，此处沿用） */
+[data-theme] {
+  --sp-1: 4px; --sp-2: 6px; --sp-3: 8px; --sp-4: 10px; --sp-5: 12px; --sp-6: 16px; --sp-8: 24px;
+  --r-sm: 10px; --r-md: 14px; --r-lg: 20px;
+  --dur-fast: 140ms; --dur-base: 220ms; --dur-slow: 320ms;
+  --ease-out: cubic-bezier(.16,.84,.44,1);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04);
+  --shadow-md: 0 1px 2px rgba(0,0,0,.05), 0 10px 28px rgba(0,0,0,.07);
+  --shadow-lg: 0 18px 50px rgba(0,0,0,.16);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 24px;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  background: #dfe6e8; color: #10201f; font-size: 15px; line-height: 1.62;
+}
+.page-head { max-width: 1180px; margin: 0 auto 18px; }
+.page-head h1 { font-size: 20px; margin: 0 0 4px; }
+.page-head p { margin: 0; color: #4b5c5a; font-size: 13px; }
+
+.stage { max-width: 1180px; margin: 0 auto; display: flex; gap: 18px; align-items: flex-start; }
+.pane-wrap { flex: 1 1 0; min-width: 0; }
+.pane-label {
+  font-family: "Orbitron", sans-serif; font-weight: 700; letter-spacing: .06em;
+  font-size: 12px; color: #3c4b49; margin: 0 0 8px; text-transform: uppercase;
+}
+.pane {
+  border-radius: var(--r-lg); padding: 16px; min-height: 640px;
+  background: var(--bg); position: relative; overflow: hidden;
+  box-shadow: var(--shadow-md); color: var(--ink);
+}
+.pane::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; background-image: var(--bg-grad);
+}
+
+/* 玻璃容器：只给承载者 */
+.glass {
+  position: relative;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
+  backdrop-filter: blur(14px) saturate(125%);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md), inset 0 1px 0 var(--hl-top);
+  border-radius: var(--r-md);
+}
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .glass { background: var(--panel-2); }
+}
+/* 实底容器：阅读区与密集列表用 */
+.solid { position: relative; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
+
+/* 顶栏 */
+.topbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 14px; }
+.logo {
+  width: 34px; height: 34px; border-radius: var(--r-sm); display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand);
+  font-family: "Orbitron", sans-serif; font-weight: 900; font-size: 15px;
+}
+.brand-name { font-family: "Orbitron", sans-serif; font-weight: 700; letter-spacing: .08em; font-size: 14px; }
+.top-meta { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+/* 侧栏（静态容器 → 允许玻璃） */
+.layout { display: grid; grid-template-columns: 176px 1fr; gap: 14px; }
+.side { padding: 12px; }
+.side h3, .main h3 {
+  margin: 0 0 8px; font-size: 12px; letter-spacing: .10em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700;
+}
+.dom-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--r-sm);
+  font-size: 13px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out);
+}
+.dom-item:hover { background: var(--brand-soft); }
+.dom-item.active { background: var(--brand-soft); color: var(--link); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand-hi); }
+.dom-item .cnt { margin-left: auto; font-family: "Orbitron", sans-serif; font-size: 11px; color: var(--muted); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chip {
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; height: 30px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.chip:hover { border-color: var(--border); color: var(--ink); }
+.chip.active { background: var(--brand-soft); color: var(--link); border-color: var(--brand-hi); font-weight: 600; }
+
+.btn {
+  height: 40px; padding: 0 16px; border: none; border-radius: var(--r-sm); cursor: pointer;
+  font-size: 14px; font-weight: 600; color: var(--on-brand);
+  background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  box-shadow: inset 0 1px 0 var(--hl-top), var(--shadow-sm);
+  transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out);
+}
+.btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--border); box-shadow: none; }
+.btn.ghost:hover { border-color: var(--brand-hi); color: var(--link); }
+.btn.small { height: 36px; padding: 0 12px; font-size: 13px; }
+.btn.block { display: block; width: 100%; }
+
+.input {
+  height: 40px; padding: 0 12px; border-radius: var(--r-sm); border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--ink); font-size: 14px; width: 100%;
+}
+.input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+select.input { appearance: none; }
+
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar .input { flex: 1; min-width: 140px; }
+
+/* 知识点卡片（实底：阅读区，不用玻璃） */
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.card { padding: 14px; }
+.card h4 { margin: 0 0 6px; font-size: 15.5px; }
+.card .en { font-family: "Orbitron", sans-serif; font-size: 11px; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+.card p { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.tags { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 8px; background: var(--brand-soft); color: var(--link); font-weight: 600; }
+.tag.warn { background: var(--warn-bg); color: var(--warn); }
+.bar { height: 8px; border-radius: 6px; background: var(--line); overflow: hidden; margin-bottom: 10px; }
+.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--brand), var(--brand-2)); border-radius: 6px; }
+.card .row { display: flex; gap: 8px; align-items: center; }
+.mast-num { margin-left: auto; font-family: "Orbitron", sans-serif; font-size: 12px; color: var(--link); font-weight: 700; }
+
+/* 测验面板 */
+.quiz-q { font-size: 15.5px; font-weight: 600; margin: 0 0 12px; }
+.opt {
+  display: block; width: 100%; text-align: left; margin: 0 0 8px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel-2);
+  color: var(--ink); font-size: 14px; cursor: pointer; transition: all var(--dur-fast) var(--ease-out);
+}
+.opt:hover { border-color: var(--brand-hi); background: var(--brand-soft); }
+.opt.chosen { border-color: var(--brand-hi); background: var(--brand-soft); color: var(--link); font-weight: 600; }
+.opt.right { border-color: var(--ok); background: var(--ok-bg); }
+.opt.wrong { border-color: var(--bad); background: var(--bad-bg); }
+.explain { font-size: 13px; color: var(--muted); border-left: 3px solid var(--brand-hi); padding-left: 10px; margin: 10px 0 0; }
+.stat-row { display: flex; gap: 10px; margin-top: 12px; }
+.stat { flex: 1; padding: 10px 12px; text-align: center; }
+.stat b { display: block; font-family: "Orbitron", sans-serif; font-size: 20px; color: var(--link); font-weight: 700; }
+.stat span { font-size: 12px; color: var(--muted); }
+.hint { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+.field { display: block; margin-bottom: 10px; }
+.field span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+</style>
+</head>
+<body data-page-node-id="bbP5mQaDs4dx2kiJMmYZoV">
+
+<div class="page-head" data-page-node-id="u7k5mLN02cl7leFO9BbjLC">
+  <h1 data-page-node-id="h0nwcqEtqpqFJW8hGBGGrS">SecTutor 视觉样张 · 轻科幻玻璃风</h1>
+  <p data-page-node-id="hEmJOoKAGCL2j1EHnJUWlv">两个代表面板：<b data-page-node-id="3kaPpFMwRqjcpNsVrxmW7F">知识库</b>（阅读密集，用来验证长时间看字累不累）与 <b data-page-node-id="NiW59Sup07R5KAlcNYLD65">随机自测</b>（交互密集，用来验证选中／对错状态）。左右两套主题并行展示，所有对比度已实算达标。</p>
+</div>
+
+<div class="stage" data-page-node-id="2lJR53cT7PnveOV6GF5OEL">
+
+  <!-- ================= 浅色 ================= -->
+  <div class="pane-wrap" data-page-node-id="dCemXKs4IEVgVFlGh7UUsX">
+    <div class="pane-label" data-page-node-id="yh3ndQxGsAPNDrNESBHbBA">Light · 浅色（纸面 + 青绿）</div>
+    <div class="pane" data-theme="light" data-page-node-id="ghU7x7K3GT4L5K8WqBRO3l">
+      <div class="topbar glass" data-page-node-id="2ehFao2O2Bn9LB6aBRyoKG">
+        <div class="logo" data-page-node-id="3l8IBbowolCvtahtND5Fci">S</div>
+        <div data-page-node-id="gsPnhwTqXFMCmAqsp3g1EK">
+          <div class="brand-name" data-page-node-id="EW6ucfmjdXAlgvABxvl7DB">SECTUTOR</div>
+        </div>
+        <div class="top-meta" data-page-node-id="v1wpzj1AtjINLPhRMkQiRp">v1.3 · 后端就绪</div>
+      </div>
+
+      <!-- 知识库 -->
+      <div class="layout" data-page-node-id="tTtAjzBuI7tC2V5A7Digso">
+        <aside class="side glass" data-page-node-id="fE4L9cnwiBC3rZdBqUucEB">
+          <h3 data-page-node-id="lGVe5taLrhABfIryXQxkRW">Areas</h3>
+          <div class="dom-item active" data-page-node-id="Qi9MxtNNnhxRkwROMZtGAt">Web 安全 <span class="cnt" data-page-node-id="w1YQWez3MgTU8dhLY3ZUZm">66</span></div>
+          <div class="dom-item" data-page-node-id="erTGjA2XmpVO19UQAw8usx">二进制漏洞 <span class="cnt" data-page-node-id="MFqUIyUkaZH7TwI8QMEdqD">43</span></div>
+          <div class="dom-item" data-page-node-id="FDnoAQ9IUiXeAnDfvTMvKA">密码学 <span class="cnt" data-page-node-id="7gNGbgEzVE5Khfwt3lKvMN">43</span></div>
+          <div class="dom-item" data-page-node-id="AeYKywBwSELGVMKixV4bjD">渗透测试 <span class="cnt" data-page-node-id="zc0CqIWKFns2HlCFm8dMJv">46</span></div>
+          <h3 style="margin-top:14px" data-page-node-id="GRfGz6ldKZerFGTwp4lEhK">难度</h3>
+          <div class="chips" data-page-node-id="4AcRxpFcq7tnibqYBJL54p">
+            <button class="chip active" data-page-node-id="tVczycmXih1EtQaFWXQ9SV">全部</button>
+            <button class="chip" data-page-node-id="aFGNWh40sfFzcZm0xQMRDg">入门</button>
+            <button class="chip" data-page-node-id="lf2UGGfEox9HVSuDK8krk3">初级</button>
+          </div>
+          <button class="btn small ghost block" data-page-node-id="gmzOfxAunYbc9JuUD1ZbZY">生成学习路径</button>
+        </aside>
+
+        <main class="main" data-page-node-id="ECW10oeYllojP7TOwSI3tg">
+          <div class="toolbar" data-page-node-id="NfomvV58fH5kW8osEbeAoE">
+            <input class="input" placeholder="搜索知识点 / OWASP / CVE…" data-page-node-id="rqdPFcp9tHFq0lFIE8Ekld" />
+            <button class="chip" data-page-node-id="HLixZpJGcAWIRzIlCtWbfQ">掌握度 ↓</button>
+            <button class="btn small" data-page-node-id="rRiPHXr20fYoC4uIvKhd1E">搜索</button>
+          </div>
+
+          <div class="grid" data-page-node-id="zRfsPq8R4Jl6KgCgwhAxoa">
+            <article class="card solid" data-page-node-id="l7coGlrvGxDHHZcpHXwOPB">
+              <div class="en" data-page-node-id="ULTwDJRFCrxqH5UpCbD2qF">SQL INJECTION</div>
+              <h4 data-page-node-id="7uyyRpqH9d22pl6NYYUzki">SQL 注入</h4>
+              <p data-page-node-id="CkfAFb5gN9e1DokWVVASPo">把用户输入拼进 SQL 语句造成的注入，可导致拖库与越权。</p>
+              <div class="tags" data-page-node-id="FzWVvAXFJD0hEE8XoVERuf"><span class="tag" data-page-node-id="MW0hv3dxWErKpatjeom9lQ">Web</span><span class="tag warn" data-page-node-id="xgopuS6FXj5cgmjfVx5Qus">OWASP A03</span></div>
+              <div class="bar" data-page-node-id="Hp148sCCaGIF1uIkzul2E3"><i style="width:78%" data-page-node-id="SWDPg2j7yE0ogP6Z1LYIdu"></i></div>
+              <div class="row" data-page-node-id="QpETu4Eh9mWCW7AVNI4Ydi"><button class="btn small" data-page-node-id="R6YkOWHaU8XeM2Sr9H08XL">开始学习</button><span class="mast-num" data-page-node-id="lygFjh0N9Celvh9CYpFzEK">78%</span></div>
+            </article>
+
+            <article class="card solid" data-page-node-id="MCndBg8HhKqh1m1mQ70bDy">
+              <div class="en" data-page-node-id="BYDVfFs2ZFOGtb0ZVFpueg">XSS</div>
+              <h4 data-page-node-id="UrhFA1e2VMdBduOkQ4LtnB">跨站脚本攻击</h4>
+              <p data-page-node-id="2soPGPF5fe9sqUcsLDXeWB">恶意脚本被当作页面内容执行，可窃取会话与钓鱼。</p>
+              <div class="tags" data-page-node-id="B86iEbzJmTSZbyD57n5icG"><span class="tag" data-page-node-id="M2n9Y6jtHfTpCupcnRBvQF">Web</span><span class="tag" data-page-node-id="WrtMaEm7zXOZy0uw4JT0vF">前端</span></div>
+              <div class="bar" data-page-node-id="fyAiNrAdEpZ0jWg3L3A2LK"><i style="width:42%" data-page-node-id="2P0wiOjUk9aVZ1XCFqx2t1"></i></div>
+              <div class="row" data-page-node-id="eoobmNdzZsIYPTohq1jlAe"><button class="btn small ghost" data-page-node-id="m1HFQuwqWIUEMpTKjqW7DD">继续复习</button><span class="mast-num" data-page-node-id="l9Be5i7SymUiNt7qL8FNVV">42%</span></div>
+            </article>
+          </div>
+        </main>
+      </div>
+
+      <!-- 测验 -->
+      <div class="layout" style="margin-top:14px" data-page-node-id="vJMiaEcJmddRPtPj7WTkx3">
+        <aside class="side glass" data-page-node-id="MDQIEWpocNEFLhERAxrLdq">
+          <h3 data-page-node-id="2Nem7cWfkPvED4Ycn8DUcK">QUIZ</h3>
+          <label class="field" data-page-node-id="mPS7WnubfU5qxydRKpXbZK"><span data-page-node-id="FtEW1DP8uvQwZKkbtsC3x6">题目数量</span>
+            <select class="input" data-page-node-id="jLXyq5g8qUwBM2hLzegrQy"><option data-page-node-id="PfISFqDfWEMk3aowaWAStG">8 题</option></select>
+          </label>
+          <label class="field" data-page-node-id="PCMa0sSu03NmxdPWSqnGV5"><span data-page-node-id="PIGRjt4kvnqjmQHElvDTxy">限定领域</span>
+            <select class="input" data-page-node-id="PjGhNVyJqGddPfpYzDux4F"><option data-page-node-id="0XH1yA1NgCGycptiG4nQEY">全领域</option></select>
+          </label>
+          <button class="btn small block" data-page-node-id="sWLt4cL0Nd5vTFEnTmW1mB">开始自测</button>
+          <div class="stat-row" data-page-node-id="4XOsmE6uFheK3Dmtr5MNTS">
+            <div class="stat solid" data-page-node-id="II9OgVxNgwuKvc3mFm6PvI"><b data-page-node-id="iscqiEaQ3734pqZSuLuG4k">6</b><span data-page-node-id="gWRhbzgbwXglnIYWNRvJPH">答对</span></div>
+            <div class="stat solid" data-page-node-id="U6VrQTfDboPiRpoxyE0cma"><b data-page-node-id="ae6njHATveSk6Qbeutc3KI">8</b><span data-page-node-id="scH984WGQGZlmbFmoFeL5N">总计</span></div>
+          </div>
+        </aside>
+        <main class="main" data-page-node-id="CvS1JFAAXJxt0z1CvaxYPO">
+          <div class="card solid" data-page-node-id="R9PBCErIegw27l1DIsrc4i">
+            <p class="quiz-q" data-page-node-id="3HcIXxTFwx1SGma0CSOxEz">下列哪种方式最能防御 SQL 注入？</p>
+            <button class="opt chosen" data-page-node-id="pgh4yKXfj8nRQ4eQ8d3TlK">使用参数化查询（预编译语句）</button>
+            <button class="opt" data-page-node-id="8o0lkSzfWW9eued7UBElzh">对输入里的单引号做替换</button>
+            <button class="opt" data-page-node-id="vFSmgJwZjlSWsTrVqtZfeH">把数据库端口改成非标准端口</button>
+            <button class="opt" data-page-node-id="mUGJ6uFMUmupIDgfHR6hxA">在前端用正则限制输入长度</button>
+            <p class="explain" data-page-node-id="t0XXNpBts2A6eC2OsoFc8u">参数化查询让数据与指令分离，攻击者无法改变语义；黑名单替换会漏各种编码绕过。</p>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 深色 ================= -->
+  <div class="pane-wrap" data-page-node-id="kILIT4RR1pfAit0Qb5K6cv">
+    <div class="pane-label" data-page-node-id="ZNDpjxhs1CNAmOxbzPMSBS">Dark · 深色（墨绿 + 亮青）</div>
+    <div class="pane" data-theme="dark" data-page-node-id="7ZdhAkTq4VppIimnLkXgO7">
+      <div class="topbar glass" data-page-node-id="cAG8x8nkgkyAYNForjXvJ9">
+        <div class="logo" data-page-node-id="Rc9IRcQehYl4p2CihnORcj">S</div>
+        <div data-page-node-id="gfoV9rSZQJnUISgcAY8t7k">
+          <div class="brand-name" data-page-node-id="0HBQEasds4auOYXrZh1eA0">SECTUTOR</div>
+        </div>
+        <div class="top-meta" data-page-node-id="UJiAbZ4WJq5TbCg7U6UR24">v1.3 · 后端就绪</div>
+      </div>
+
+      <div class="layout" data-page-node-id="HMFmd6n1zEQdU6TGR1sGsR">
+        <aside class="side glass" data-page-node-id="BNiQjNMZ8X1ZfGPuAPbDHP">
+          <h3 data-page-node-id="umAQLuCdlxki6OcQ6JfVIx">Areas</h3>
+          <div class="dom-item active" data-page-node-id="Fx6jtGATtD0FCUH7EVXvck">Web 安全 <span class="cnt" data-page-node-id="ERyLzSWsvAEOF4TJ4c6EHH">66</span></div>
+          <div class="dom-item" data-page-node-id="DnW9hg4tG5Bqph9v32ocvl">二进制漏洞 <span class="cnt" data-page-node-id="HFxAIVBUo1UkCmMWhdKA11">43</span></div>
+          <div class="dom-item" data-page-node-id="FmjaZppwFTNzmdis6hLlln">密码学 <span class="cnt" data-page-node-id="rQsID7DDhj9gq8nYjv9VvH">43</span></div>
+          <div class="dom-item" data-page-node-id="X1iF7Qk6rRQuVBfuI0B7sD">渗透测试 <span class="cnt" data-page-node-id="TmoEj7tGvcNTZ5xNDQUSoo">46</span></div>
+          <h3 style="margin-top:14px" data-page-node-id="SKe592SRMHzdjM0JSsi47G">难度</h3>
+          <div class="chips" data-page-node-id="7I7lIHBCu3ssXHI0KGpioA">
+            <button class="chip active" data-page-node-id="dRqICWNAUjonl9fK3aq0eQ">全部</button>
+            <button class="chip" data-page-node-id="RFuDfVJEASbJmuZEtEJ8KU">入门</button>
+            <button class="chip" data-page-node-id="Rbd5fDlb2oC7c1vKsiKieP">初级</button>
+          </div>
+          <button class="btn small ghost block" data-page-node-id="x5Y8vEmqIDZ1titrhbhmEC">生成学习路径</button>
+        </aside>
+
+        <main class="main" data-page-node-id="A6bGBf1LSVkBm6QnPKstcS">
+          <div class="toolbar" data-page-node-id="ERMOlNHPGxz3FnYPBMCp56">
+            <input class="input" placeholder="搜索知识点 / OWASP / CVE…" data-page-node-id="TncyEVwewwkgSLQjWxk0sE" />
+            <button class="chip" data-page-node-id="qmVF91g0m7XlUdAFf4lThM">掌握度 ↓</button>
+            <button class="btn small" data-page-node-id="9J9BpNfuyodom267jgVWxA">搜索</button>
+          </div>
+
+          <div class="grid" data-page-node-id="6qMvlx3sRHFuthKZplmDpT">
+            <article class="card solid" data-page-node-id="bthFgMOAzWIBTTCRXz1jZN">
+              <div class="en" data-page-node-id="3vNyHXq2VoaPuyi6x5kTdj">SQL INJECTION</div>
+              <h4 data-page-node-id="YVIkgXk7r7ukbo3mCDZ4qA">SQL 注入</h4>
+              <p data-page-node-id="5KEPIHa7fLRUQApVeRDvHK">把用户输入拼进 SQL 语句造成的注入，可导致拖库与越权。</p>
+              <div class="tags" data-page-node-id="SGFg84bWtDTelS3OybeeIf"><span class="tag" data-page-node-id="9iK1pl0mJbJxLUZIBQWudc">Web</span><span class="tag warn" data-page-node-id="YdGZjujVR1MJPEtyc1klc0">OWASP A03</span></div>
+              <div class="bar" data-page-node-id="QmmCI0qaoxaMpbLRGWKtcE"><i style="width:78%" data-page-node-id="QdwNYGw4CZjFhgjTeRnpwG"></i></div>
+              <div class="row" data-page-node-id="ToLG3HjrkzYdEY3cp6vGVd"><button class="btn small" data-page-node-id="4jKFrMYo86lGmMmnB8oHK0">开始学习</button><span class="mast-num" data-page-node-id="ATe94IQqJGgHsQeD1PP6Jk">78%</span></div>
+            </article>
+
+            <article class="card solid" data-page-node-id="w66cqV4DDbFCY838iQmLhh">
+              <div class="en" data-page-node-id="GvU1qOQKx0xGW4lkxRV8ul">XSS</div>
+              <h4 data-page-node-id="DGckT19O0ngko7xtj4wslo">跨站脚本攻击</h4>
+              <p data-page-node-id="2mOCK6NWduBFcuHQOVLlNG">恶意脚本被当作页面内容执行，可窃取会话与钓鱼。</p>
+              <div class="tags" data-page-node-id="g8y9tDCSpiPyB7afyI5NV2"><span class="tag" data-page-node-id="9LE6Lot97zmH5vj56OjOJu">Web</span><span class="tag" data-page-node-id="qFBUQWPODtAzGzZVuFdsUa">前端</span></div>
+              <div class="bar" data-page-node-id="mOTRbEajLxwp2ddSM18MJ2"><i style="width:42%" data-page-node-id="0cNQIJghXXsusJ6b1bWGA3"></i></div>
+              <div class="row" data-page-node-id="UO80GgZh50KrWmGcawy12U"><button class="btn small ghost" data-page-node-id="F3jX2Wguj075EFWpQtIGIp">继续复习</button><span class="mast-num" data-page-node-id="C3s8bujHgAHKDQWdlq6P9j">42%</span></div>
+            </article>
+          </div>
+        </main>
+      </div>
+
+      <div class="layout" style="margin-top:14px" data-page-node-id="zxL6h6nAs6y2TbApvc8ZOD">
+        <aside class="side glass" data-page-node-id="Lw43STHOvoxnifAVnpKsIJ">
+          <h3 data-page-node-id="s2Xv2fIRND6DN79pp8HpOz">QUIZ</h3>
+          <label class="field" data-page-node-id="6xGMuzBn8YTlVGThxhjSZg"><span data-page-node-id="aUWCyTzay53IbJ9vb4AOef">题目数量</span>
+            <select class="input" data-page-node-id="oktqGA681pBKDrZUlxec1L"><option data-page-node-id="Tpd34tDLoo8VzdgKAsNMpw">8 题</option></select>
+          </label>
+          <label class="field" data-page-node-id="17dhrDEygtjHZXVA24h2NH"><span data-page-node-id="6qaYFvwIbEVMEZOxlovXBN">限定领域</span>
+            <select class="input" data-page-node-id="CaEyPuztH4pGzXUdrhz9nL"><option data-page-node-id="0P6Tlh5CIKCzDRE0xG6DOS">全领域</option></select>
+          </label>
+          <button class="btn small block" data-page-node-id="cRu4fJK5mdE3Gk3eT0Odvn">开始自测</button>
+          <div class="stat-row" data-page-node-id="dysT4gLnBZnCQbf0U6cOHX">
+            <div class="stat solid" data-page-node-id="NaPWQoXFAVB1lWa5FgdxBq"><b data-page-node-id="BYXBsJpdK2TlKQedLL0NH2">6</b><span data-page-node-id="V7XhzpWAbnsgHMbWVJeGNv">答对</span></div>
+            <div class="stat solid" data-page-node-id="ZemqXCl7BQ82mxwfJmlOkq"><b data-page-node-id="ToVdUhfhs9h7GQdJFUx8d5">8</b><span data-page-node-id="ihHjsZzIlyiRNYNvQ0h2Xe">总计</span></div>
+          </div>
+        </aside>
+        <main class="main" data-page-node-id="1fXTY6IDG3no8B4e3o1HTz">
+          <div class="card solid" data-page-node-id="k6DhogAnfZumCUJ6CruOhK">
+            <p class="quiz-q" data-page-node-id="jSIdGfZwKC8BmJXfwyXjXO">下列哪种方式最能防御 SQL 注入？</p>
+            <button class="opt wrong" data-page-node-id="Es1ox6HzGaPa9RTSymGLcf">对输入里的单引号做替换</button>
+            <button class="opt right" data-page-node-id="86iOTFC6A4vvdTAxOLm1S8">使用参数化查询（预编译语句）</button>
+            <button class="opt" data-page-node-id="ugiUyFCnA0ESoeudncmGkL">把数据库端口改成非标准端口</button>
+            <button class="opt" data-page-node-id="jHp1EqafjzYKmnV7mefBrX">在前端用正则限制输入长度</button>
+            <p class="explain" data-page-node-id="VjrDknXLKYv9AqaZveB6hB">参数化查询让数据与指令分离，攻击者无法改变语义；黑名单替换会漏各种编码绕过。</p>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

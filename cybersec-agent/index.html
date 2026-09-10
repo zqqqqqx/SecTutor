@@ -23,38 +23,38 @@
     <div class="rail-logo">S</div>
     <div class="rail-sep"></div>
     <div class="rail-scroll">
-    <div class="rail-item active" data-tab="knowledge" data-tip="知识体系" title="知识体系">
+    <button type="button" class="rail-item active" data-tab="knowledge" data-tip="知识体系" title="知识体系"">
       <svg viewBox="0 0 24 24"><path d="M4 5.5 12 3l8 2.5-8 2.5L4 5.5Z"/><path d="M4 12l8 2.5 8-2.5"/><path d="M4 18.5 12 21l8-2.5"/></svg>
       <span class="rl">知识</span>
-    </div>
-    <div class="rail-item" data-tab="chat" data-tip="智能问答" title="智能问答">
+    </button>
+    <button type="button" class="rail-item" data-tab="chat" data-tip="智能问答" title="智能问答"">
       <svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/><path d="M8 9.5h8M8 12.5h5"/></svg>
       <span class="rl">问答</span>
-    </div>
-    <div class="rail-item" data-tab="range" data-tip="实战靶场" title="实战靶场">
+    </button>
+    <button type="button" class="rail-item" data-tab="range" data-tip="实战靶场" title="实战靶场"">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
       <span class="rl">靶场</span>
-    </div>
-    <div class="rail-item" data-tab="plan" data-tip="学习计划" title="学习计划">
+    </button>
+    <button type="button" class="rail-item" data-tab="plan" data-tip="学习计划" title="学习计划"">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/><path d="M8 14l2.2 2.2L15 12"/></svg>
       <span class="rl">计划</span>
-    </div>
-    <div class="rail-item" data-tab="news" data-tip="安全资讯" title="安全资讯">
+    </button>
+    <button type="button" class="rail-item" data-tab="news" data-tip="安全资讯" title="安全资讯"">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M6.5 8h11M6.5 11.5h11M6.5 15h7"/></svg>
       <span class="rl">资讯</span>
-    </div>
-    <div class="rail-item" data-tab="tools" data-tip="工具与代码" title="工具与代码">
+    </button>
+    <button type="button" class="rail-item" data-tab="tools" data-tip="工具与代码" title="工具与代码"">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7 9.5l3 2.5-3 2.5M13 15h4"/></svg>
       <span class="rl">工具</span>
-    </div>
-    <div class="rail-item" data-tab="quiz" data-tip="随机自测" title="随机自测">
+    </button>
+    <button type="button" class="rail-item" data-tab="quiz" data-tip="随机自测" title="随机自测"">
       <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M9 12l2 2 4-4"/></svg>
       <span class="rl">自测</span>
-    </div>
-    <div class="rail-item" data-tab="compliance" data-tip="合规声明" title="合规声明">
+    </button>
+    <button type="button" class="rail-item" data-tab="compliance" data-tip="合规声明" title="合规声明"">
       <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M9.5 12.5l1.8 1.8 3.4-3.6"/></svg>
       <span class="rl">合规</span>
-    </div>
+    </button>
     </div><!-- /.rail-scroll -->
     <div class="rail-foot">
       <button id="themeToggle" class="theme-switch" title="切换浅色 / 深色">
@@ -97,7 +97,7 @@
               <button class="chip" data-level="高级" data-i18n="lvl.advanced">高级</button>
             </div>
           </div>
-          <button id="kbPathBtn" class="path-btn" data-i18n="kb.path"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>生成学习路径</button>
+          <button id="kbPathBtn" class="path-btn btn block" data-i18n="kb.path"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>生成学习路径</button>
         </aside>
         <div class="kb-main">
           <div class="kb-toolbar">
