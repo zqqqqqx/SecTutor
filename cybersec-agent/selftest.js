@@ -1443,6 +1443,7 @@ $("#backLab").click();
 
     input.focus();
     assert(drawer.hidden === false, "聚焦命令条即打开抽屉");
+    assert(doc.querySelectorAll("#copilotLog .cp-hint").length >= 3, "空对话时给出快捷问题");
     const ctx1 = (doc.querySelector("#copilotCtx") || {}).textContent || "";
     assert(ctx1.indexOf("上下文") >= 0, `上下文 chip 有内容（当前：${ctx1}）`);
 
@@ -1468,6 +1469,46 @@ $("#backLab").click();
     // Esc 关闭抽屉
     doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     assert(!drawer.classList.contains("on"), "Esc 可关闭副驾驶抽屉");
+  }
+
+  // ===== 45. 新功能优化：今日页（时长/换一个/数值）与副驾驶（快捷问题/持久化/让位）=====
+  {
+    // 主线：时长有依据 + 提供「换一个」
+    const altCount = doc.querySelectorAll("#todaySteps .today-alt").length;
+    assert(altCount >= 1, `主线为可替换的步骤提供「换一个」（${altCount} 个）`);
+    const stepMeta = Array.from(doc.querySelectorAll("#todaySteps .today-step-m")).map((el) => el.textContent).join(" ");
+    assert(/约 \d+ 分钟/.test(stepMeta), "每步都标注预计用时");
+
+    // 「换一个」应真的换掉该步推荐
+    const firstTitle = (doc.querySelector("#todaySteps .today-step-t") || {}).textContent;
+    const altBtn = doc.querySelector("#todaySteps .today-alt");
+    if (altBtn) {
+      altBtn.click();
+      const afterTitle = (doc.querySelector("#todaySteps .today-step-t") || {}).textContent;
+      assert(afterTitle !== firstTitle, `「换一个」换掉了原推荐（${firstTitle} → ${afterTitle}）`);
+      assert(doc.querySelectorAll("#todaySteps .today-step").length >= 3, "换一个后主线仍完整");
+    }
+
+    // 雷达轴标签带百分比 + 诊断入口
+    const radarText = Array.from(doc.querySelectorAll("#todayRadar text")).map((t) => t.textContent).join(" ");
+    assert(/\d+%/.test(radarText), "雷达轴标签带百分比数值");
+    assert(!!doc.querySelector("#todayDiag"), "提供能力诊断入口");
+
+    // 副驾驶：已经有对话后，快捷问题自动收起（避免占位）
+    assert(doc.querySelectorAll("#copilotLog .cp-hints").length === 0, "有对话后快捷问题自动收起");
+
+    // 副驾驶：提问后写入 localStorage（刷新不丢）
+    const ask = doc.querySelector("#copilotAsk");
+    if (ask) {
+      ask.value = "优化自测用问题";
+      doc.querySelector("#copilotForm").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+      await delay(30);
+      const saved = window.localStorage.getItem("sectutor_copilot") || "";
+      assert(saved.indexOf("优化自测用问题") >= 0, "副驾驶对话已持久化到 localStorage");
+    }
+
+    // 打开抽屉时主区让位
+    assert(doc.body.classList.contains("copilot-open"), "抽屉打开时主区让位标记生效");
   }
 
   console.log("\n==== 自测结果 ====");

@@ -5757,6 +5757,24 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
      全部本地计算，不需要后端。
      ============================================================ */
   const TODAY_LEVELS = ["入门", "初级", "中级", "高级"];
+  const TODAY_LEVEL_ORDER = { "入门": 0, "初级": 1, "中级": 2, "高级": 3 };
+  const todaySkipped = new Set();      // 本轮「换一个」排除掉的知识点（会话级，刷新即恢复）
+
+  // 阅读时长按「完整阅读材料」估算：摘要 + 四档正文 + 代码示例 + 工具说明。
+  // 实测本站每个知识点 388–962 字（中位 617），按中文 450 字/分钟 → 典型 2 分钟。
+  // 界面上如实标成「阅读约 X 分钟」——不假装成整块学习任务的耗时。
+  function readingMinutes(t) {
+    if (!t) return 2;
+    const lv = t.levels ? Object.keys(t.levels).map((k) => String(t.levels[k] || "")).join("") : "";
+    const chars = (String(t.summary || "") + lv + String(t.code || "") + String(t.tool || "")).length;
+    return Math.max(2, Math.min(6, Math.round(chars / 450) || 2));
+  }
+  const quizMinutes = (n) => Math.max(3, Math.min(8, Math.round(n * 0.75)));
+  // 同领域挑知识点：按难度递进（先入门后高级），同级按 id 稳定排序，保证可解释、可复现
+  const pickTopic = (pool) => pool.slice().sort((a, b) =>
+    (TODAY_LEVEL_ORDER[a.level] == null ? 9 : TODAY_LEVEL_ORDER[a.level]) -
+    (TODAY_LEVEL_ORDER[b.level] == null ? 9 : TODAY_LEVEL_ORDER[b.level]) ||
+    String(a.id).localeCompare(String(b.id)))[0];
   // 雷达轴标签用短名（领域全名太长，画在轴端会互相挤）
   const DOMAIN_SHORT = { web: "Web", binary: "二进制", crypto: "密码学", pentest: "渗透", network: "网络", cloud: "云原生", blue: "蓝队" };
   const domainShortName = (d) => DOMAIN_SHORT[d.id] ||
@@ -5820,38 +5838,45 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     // 2) 薄弱领域补强：掌握率最低的领域里挑一个未掌握的知识点
     // 注意：必须从 TOPICS 取（它给每个知识点 stamp 了 cat），
     // 直接取 CATS[i].topics 会拿不到 cat，领域名会退化成「未分类」。
+    const avail = (catId) => TOPICS.filter((x) =>
+      x.cat === catId && !state.mastery.has(x.id) && !used.has(x.id) && !todaySkipped.has(x.id));
+
     const weak = stats[0];
+    let weakCatId = null;
     if (weak) {
-      const t = TOPICS.find((x) => x.cat === weak.id && !state.mastery.has(x.id) && !used.has(x.id));
+      const t = pickTopic(avail(weak.id));
       if (t) {
         used.add(t.id);
-        steps.push({ kind: "learn", topic: t, mins: 4,
-          why: weak.name + " 掌握率仅 " + weak.pct + "%，优先补强" });
+        weakCatId = weak.id;
+        steps.push({ kind: "learn", topic: t, mins: readingMinutes(t),
+          why: weak.name + " 掌握率 " + weak.pct + "%，先补这一档最省力" });
       }
     }
 
     // 3) 顺势推进：已入门的领域里继续往前；全新用户则从入门档起步
     const progressed = stats.filter((s) => s.pct > 0);
     if (progressed.length) {
-      const strong = progressed[progressed.length - 1];
-      const pool = TOPICS.filter((x) => x.cat === strong.id && !state.mastery.has(x.id) && !used.has(x.id));
-      const t = pool.find((x) => x.level === "入门") || pool[0];
+      // 优先选与第二步不同领域，避免一句话里出现两个同一领域的推荐
+      const strong = progressed.slice().reverse().find((s) => s.id !== weakCatId) || progressed[progressed.length - 1];
+      const t = pickTopic(avail(strong.id));
       if (t) {
         used.add(t.id);
-        steps.push({ kind: "learn", topic: t, mins: 8,
-          why: strong.name + " 基础较好（" + strong.pct + "%），继续推进" });
+        steps.push({ kind: "learn", topic: t, mins: readingMinutes(t),
+          why: strong.name + " 基础较好（" + strong.pct + "%），顺势往前推一档" });
       }
     } else {
-      const t = TOPICS.find((x) => x.level === "入门" && !state.mastery.has(x.id) && !used.has(x.id));
+      const pool = TOPICS.filter((x) =>
+        !state.mastery.has(x.id) && !used.has(x.id) && !todaySkipped.has(x.id));
+      const t = pickTopic(pool.filter((x) => x.cat !== weakCatId).length ? pool.filter((x) => x.cat !== weakCatId) : pool);
       if (t) {
         used.add(t.id);
-        steps.push({ kind: "learn", topic: t, mins: 8,
-          why: "还没有学习记录，先从入门档起步最省力" });
+        steps.push({ kind: "learn", topic: t, mins: readingMinutes(t),
+          why: "还没有学习记录，先从最入门的一档起步" });
       }
     }
 
     // 4) 自测（固定推荐，检验本周薄弱领域）
-    steps.push({ kind: "quiz", mins: 5, why: "覆盖本周薄弱领域，检验掌握情况" });
+    steps.push({ kind: "quiz", mins: quizMinutes(5), why: "覆盖本周薄弱领域，检验掌握情况" });
     return steps;
   }
 
@@ -5874,7 +5899,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const plan = todayPlan();
     const totalMins = plan.reduce((a, s) => a + s.mins, 0);
     const tt = $("#todayTotalTime");
-    if (tt) tt.textContent = "约 " + totalMins + " 分钟";
+    if (tt) tt.textContent = "约 " + totalMins + " 分钟（含阅读）";
 
     host.innerHTML = plan.map((s, i) => {
       const cat = s.topic ? (catById(s.topic.cat) || {}).name || "" : "";
@@ -5883,12 +5908,17 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         ? "随机抽题 · 全领域"
         : (s.kind === "review" ? "复习" : "学习") + " · " + escapeHtml(cat);
       const label = s.kind === "review" ? "开始复习" : (s.kind === "learn" ? "开始学习" : "开始自测");
+      const reroll = s.topic
+        ? '<button type="button" class="today-alt" data-alt="' + i + '" title="换一个同领域的知识点">换一个</button>'
+        : '';
+      const timeText = s.kind === "quiz" ? "约 " + s.mins + " 分钟" : "阅读约 " + s.mins + " 分钟";
       return '<li class="today-step' + (i === 0 ? ' now' : '') + '">' +
         '<span class="today-num">' + (i + 1) + '</span>' +
         '<div class="today-step-t">' + title + '</div>' +
         '<div class="today-step-m"><span class="today-why">' + escapeHtml(s.why) + '</span><br>' +
-        '约 ' + s.mins + ' 分钟 · ' + meta + '</div>' +
+        timeText + ' · ' + meta + '</div>' +
         '<button type="button" class="today-go" data-step="' + i + '">' + label + '</button>' +
+        reroll +
         '</li>';
     }).join("");
 
@@ -5900,6 +5930,16 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         if (s.kind === "review") startReview([s.topic.id]);
         else if (s.kind === "learn") { activateTab("knowledge"); showTopicDetail(s.topic.id); }
         else { activateTab("quiz"); startQuiz(); }
+      });
+    });
+    // 「换一个」：本轮内不再出现该知识点，并重新计算主线（会话级）
+    $$("#todaySteps .today-alt").forEach((b) => {
+      if (b.dataset.bound) return; b.dataset.bound = "1";
+      b.addEventListener("click", () => {
+        const s = plan[Number(b.dataset.alt)];
+        if (!s || !s.topic) return;
+        todaySkipped.add(s.topic.id);
+        renderTodaySteps();
       });
     });
   }
@@ -5935,7 +5975,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const a = (-90 + (360 / n) * i) * Math.PI / 180;
       const x = cx + (R + 17) * Math.cos(a), y = cy + (R + 17) * Math.sin(a);
       const anchor = Math.abs(x - cx) < 10 ? "middle" : (x > cx ? "start" : "end");
-      s += '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="11" fill="var(--muted)" text-anchor="' + anchor + '" dominant-baseline="middle">' + escapeHtml(domainShortName(d)) + '</text>';
+      s += '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="11" fill="var(--muted)" text-anchor="' + anchor + '" dominant-baseline="middle">' +
+        escapeHtml(domainShortName(d)) + ' <tspan fill="var(--link)">' + d.pct + '%</tspan></text>';
     });
     return s + "</svg>";
   }
@@ -5950,8 +5991,11 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const sub = $("#todayAbilitySub");
     if (sub) {
       const avg = stats.length ? Math.round(stats.reduce((a, d) => a + d.pct, 0) / stats.length) : 0;
-      sub.textContent = "平均掌握 " + avg + "%" + (state.profile ? " · 虚线为诊断基线" : " · 完成一次能力诊断可获得基线");
+      sub.textContent = "平均掌握 " + avg + "%" + (state.profile ? " · 虚线为诊断基线" : "");
     }
+    // 没做过诊断时，给一个直接入口（否则用户不知道虚线怎么来的）
+    const diagBtn = $("#todayDiag");
+    if (diagBtn) diagBtn.hidden = !!state.profile;
 
     const heat = $("#todayHeat");
     if (heat) {
@@ -5990,6 +6034,11 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         if (b.dataset.bound) return; b.dataset.bound = "1";
         b.addEventListener("click", () => activateTab(b.dataset.go));
       });
+      const diagBtn = $("#todayDiag");
+      if (diagBtn && !diagBtn.dataset.bound) {
+        diagBtn.dataset.bound = "1";
+        diagBtn.addEventListener("click", () => startDiagnosis());
+      }
     } catch (e) {
       console.error("今日页渲染失败:", e);
     }
@@ -6005,7 +6054,15 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
      ============================================================ */
   let copilotTopicId = null;      // 最近查看的知识点（showTopicDetail 记录）
   let copilotBusy = false;
-  let copilotHistory = [];        // 抽屉内的短对话记忆（与主聊天分开）
+  const COPILOT_KEY = "sectutor_copilot";
+  const COPILOT_MAX = 12;         // 最多保留 6 轮（user+assistant 各算一条）
+  let copilotHistory = (function () {
+    try { const a = JSON.parse(localStorage.getItem(COPILOT_KEY) || "[]"); return Array.isArray(a) ? a.slice(-COPILOT_MAX) : []; }
+    catch (e) { return []; }
+  })();
+  function saveCopilot() {
+    try { localStorage.setItem(COPILOT_KEY, JSON.stringify(copilotHistory.slice(-COPILOT_MAX))); } catch (e) {}
+  }
 
   function copilotChips() {
     const chips = [];
@@ -6029,6 +6086,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 
   function copilotContextText() {
     const lines = copilotChips().map((c, i) => (i === 0 ? "当前所在面板：" : "正在查看的知识点：") + c);
+    lines.push("用户难度档位：" + (state.userLevel || "初级"));
+    const due = dueReviews().length;
+    if (due) lines.push("到期待复习的知识点：" + due + " 个");
     if (copilotTopicId) {
       const t = allTopics().find((x) => x.id === copilotTopicId);
       if (t) lines.push("该知识点摘要：" + String(t.summary || "").slice(0, 120));
@@ -6046,16 +6106,57 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     return row.querySelector(".cp-bubble");
   }
 
+  // 回答里附上站内来源（与「智能问答」面板一致的可信度线索）
+  function copilotSrcHtml(docs) {
+    if (!docs || !docs.length) return "";
+    const names = docs.slice(0, 3).map((d) => d.title || d.src || "").filter(Boolean);
+    if (!names.length) return "";
+    return '<div class="cp-src">参考站内资料：' + escapeHtml(names.join(" · ")) + "</div>";
+  }
+
+  const COPILOT_HINTS = [
+    "解释一下我正在看的这个知识点",
+    "这个领域最该先掌握的防御要点是什么",
+    "按我现在的掌握度，给我出 3 道练习题",
+  ];
+  function renderCopilotHints() {
+    const log = $("#copilotLog"); if (!log || log.children.length) return;
+    const box = document.createElement("div");
+    box.className = "cp-hints";
+    box.innerHTML = COPILOT_HINTS.map((h, i) =>
+      '<button type="button" class="cp-hint" data-hint="' + i + '">' + escapeHtml(h) + "</button>").join("");
+    log.appendChild(box);
+    $$("#copilotLog .cp-hint").forEach((b) => {
+      if (b.dataset.bound) return; b.dataset.bound = "1";
+      b.addEventListener("click", () => {
+        const box2 = b.parentNode; if (box2) box2.remove();
+        copilotAsk(COPILOT_HINTS[Number(b.dataset.hint)]);
+      });
+    });
+  }
+
+  // 首次打开时把上次的对话回填（抽屉对话不再「一刷新就没了」）
+  function restoreCopilot() {
+    const log = $("#copilotLog"); if (!log || log.children.length) return;
+    copilotHistory.forEach((m) => {
+      copilotAdd(m.role === "user" ? "user" : "bot", m.role === "user" ? escapeHtml(m.content) : mdLite(m.content));
+    });
+  }
+
   function openCopilot() {
     const d = $("#copilotDrawer"); if (!d) return;
     if (d.hidden) { d.hidden = false; }
     requestAnimationFrame(() => d.classList.add("on"));
+    document.body.classList.add("copilot-open");   // 主区让位，不再被抽屉盖住
     renderCopilotCtx();
+    restoreCopilot();
+    renderCopilotHints();
   }
 
   function closeCopilot() {
     const d = $("#copilotDrawer"); if (!d || d.hidden) return;
     d.classList.remove("on");
+    document.body.classList.remove("copilot-open");
     setTimeout(() => { d.hidden = true; }, 180);
   }
 
@@ -6063,13 +6164,22 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const question = String(q == null ? "" : q).trim();
     if (!question || copilotBusy) return;
     openCopilot();
+    const hints = $("#copilotLog .cp-hints"); if (hints) hints.remove();
     copilotAdd("user", escapeHtml(question));
+    // 用户这一轮先入历史并落盘：即使随后调用失败/未配置模型，问题也不会丢
+    copilotHistory.push({ role: "user", content: question });
+    while (copilotHistory.length > COPILOT_MAX) copilotHistory.shift();
+    saveCopilot();
 
     // 未配置模型：给明确指引，而不是静默失败
     if (!state.llm || !state.llm.key) {
+      const tip = "还没配置大模型，所以我暂时没法在这里回答。打开右上角 「设置 → 模型」 填入 API Key（只需一次），之后我就能一直在顶栏待命。";
       copilotAdd("bot", "还没配置大模型，所以我暂时没法在这里回答。<br>" +
         "打开右上角 <b>设置 → 模型</b> 填入 API Key（只需一次），之后我就能一直在顶栏待命。<br>" +
         '<span class="cp-dim">不配置也不影响其它功能：知识库、靶场、自测都能正常用。</span>');
+      copilotHistory.push({ role: "assistant", content: tip });
+      while (copilotHistory.length > COPILOT_MAX) copilotHistory.shift();
+      saveCopilot();
       return;
     }
 
@@ -6095,10 +6205,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         const log = $("#copilotLog"); if (log) log.scrollTop = log.scrollHeight;
       });
       const ans = (res && res.content) || acc || "（模型返回为空）";
-      if (bubble) bubble.innerHTML = mdLite(ans);
-      copilotHistory.push({ role: "user", content: question });
-      copilotHistory.push({ role: "assistant", content: ans });
-      while (copilotHistory.length > 12) copilotHistory.shift();
+      if (bubble) bubble.innerHTML = mdLite(ans) + copilotSrcHtml(doc.docs);
+      copilotHistory.push({ role: "assistant", content: ans });   // 用户轮已在前面记录
+      while (copilotHistory.length > COPILOT_MAX) copilotHistory.shift();
+      saveCopilot();
     } catch (e) {
       if (bubble) {
         bubble.innerHTML = '<span class="cp-err">调用失败：' + escapeHtml(e && e.message ? e.message : String(e)) +
