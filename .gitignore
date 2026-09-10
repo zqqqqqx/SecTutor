@@ -23,3 +23,8 @@ Thumbs.db
 desktop.ini
 *.tmp
 *.swp
+
+# ===== asar 临时组装产物（体积大且是构建中间态）=====
+sectutor-app/_asar_staging/
+sectutor-app/app.asar
+*.asar
