@@ -1013,8 +1013,8 @@
 
   /* ---------- 导航（左图标栏） ---------- */
   // 数字键 1-8 与左侧导航顺序保持一致（快捷键与导航共用同一份定义）
-  const TAB_KEYS = ["knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance"];
-  const TAB_NAMES = { knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" };
+  const TAB_KEYS = ["knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance", "today"];
+  const TAB_NAMES = { today: "今日", knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" };
 
   /* 面板滚动位置记忆（P2）：切走前记录各滚动容器位置，切回时恢复，
      否则从知识体系滚到第 40 个知识点后切走再回来会回到顶部。 */
@@ -1051,6 +1051,7 @@
       t.setAttribute("aria-selected", on ? "true" : "false");   // 读屏可感知当前面板
     });
     $$(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tabName));
+    if (tabName === "today") renderToday();   // 今日页按最新掌握度/复习状态重算
     // 顶栏 breadcrumb 同步
     const sub = TAB_NAMES[tabName] || "";
     const cs = $(".crumb-sub"); if (cs) cs.textContent = "· " + sub;
@@ -1462,6 +1463,7 @@
       } else {
         state.mastery.add(topic.id);
         state.masteryDates[topic.id] = { t: Date.now(), r: 0 };
+        renderToday();   // 掌握状态变了，今日主线与能力画像要跟着变
         logEvent("master", topic.id);
       }
       saveMastery();
@@ -4249,6 +4251,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     renderLabCats();
     renderLabList();
     renderProgress();
+    renderToday();         // 学习驾驶舱：今日主线 + 能力可视化
     renderAgentCenter();   // 方向① 学习中心（能力画像 / 复习 / 周报）
     renderToolbox();       // 方向⑩ 本地工具箱
     restoreDraft();        // P2：恢复上次未发送的输入草稿
@@ -5731,6 +5734,255 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       });
     });
   }
+
+
+  /* ============================================================
+     今日（学习驾驶舱）
+     ① 把「该学什么」变成一条明确主线：每一步都带「为什么推荐」与预计用时
+     ② 把已有数据变成看得见的能力画像：能力雷达 / 14 天热力条 / 难度分布
+     数据源：state.mastery（已掌握）、state.masteryDates（复习阶段）、
+             state.profile（能力诊断基线）、state.activity（活动日志）
+     全部本地计算，不需要后端。
+     ============================================================ */
+  const TODAY_LEVELS = ["入门", "初级", "中级", "高级"];
+  // 雷达轴标签用短名（领域全名太长，画在轴端会互相挤）
+  const DOMAIN_SHORT = { web: "Web", binary: "二进制", crypto: "密码学", pentest: "渗透", network: "网络", cloud: "云原生", blue: "蓝队" };
+  const domainShortName = (d) => DOMAIN_SHORT[d.id] ||
+    (String(d.name).split(/[\s·]+/)[0] || d.name).slice(0, 4);
+
+  // 与知识点卡片同一套掌握度口径（已掌握 100，否则按难度档给基准值）
+  function masteryPctOf(t) {
+    return state.mastery.has(t.id) ? 100
+      : t.level === "入门" ? 20 : t.level === "初级" ? 45 : t.level === "中级" ? 70 : 90;
+  }
+
+  function domainStats() {
+    return (CATS || []).map((c) => {
+      const topics = c.topics || [];
+      const done = topics.filter((t) => state.mastery.has(t.id)).length;
+      return {
+        id: c.id, name: c.name, icon: c.icon, total: topics.length, done,
+        pct: topics.length ? Math.round((done / topics.length) * 100) : 0,
+      };
+    }).filter((d) => d.total > 0);
+  }
+
+  // 最近 N 天每天的活动条数（最后一项 = 今天）
+  function activityByDay(days) {
+    const out = new Array(days).fill(0);
+    const base = new Date(); base.setHours(0, 0, 0, 0);
+    const baseTs = base.getTime();
+    (state.activity || []).forEach((ev) => {
+      const d = new Date(ev.t); d.setHours(0, 0, 0, 0);
+      const idx = days - 1 - Math.round((baseTs - d.getTime()) / 86400000);
+      if (idx >= 0 && idx < days) out[idx] += 1;
+    });
+    return out;
+  }
+
+  function activityStreak() {
+    const byDay = activityByDay(60);
+    let i = byDay.length - 1;
+    if (byDay[i] === 0) i -= 1;          // 今天还没记录时，从昨天开始算连续
+    let n = 0;
+    for (; i >= 0 && byDay[i] > 0; i -= 1) n += 1;
+    return n;
+  }
+
+  // —— 今日主线：规则简单可解释（逾期复习 > 薄弱领域 > 顺势推进 > 自测）——
+  function todayPlan() {
+    const steps = [];
+    const used = new Set();
+    const stats = domainStats().slice().sort((a, b) => a.pct - b.pct);
+
+    // 1) 到期复习（dueReviews 已按逾期天数降序），最多 2 项
+    dueReviews().slice(0, 2).forEach((d) => {
+      const t = allTopics().find((x) => x.id === d.id);
+      if (t && !used.has(t.id)) {
+        used.add(t.id);
+        steps.push({ kind: "review", topic: t, mins: 2,
+          why: "距上次复习 " + Math.max(1, Math.floor(d.days)) + " 天，掌握度 " + masteryPctOf(t) + "%" });
+      }
+    });
+
+    // 2) 薄弱领域补强：掌握率最低的领域里挑一个未掌握的知识点
+    // 注意：必须从 TOPICS 取（它给每个知识点 stamp 了 cat），
+    // 直接取 CATS[i].topics 会拿不到 cat，领域名会退化成「未分类」。
+    const weak = stats[0];
+    if (weak) {
+      const t = TOPICS.find((x) => x.cat === weak.id && !state.mastery.has(x.id) && !used.has(x.id));
+      if (t) {
+        used.add(t.id);
+        steps.push({ kind: "learn", topic: t, mins: 4,
+          why: weak.name + " 掌握率仅 " + weak.pct + "%，优先补强" });
+      }
+    }
+
+    // 3) 顺势推进：已入门的领域里继续往前；全新用户则从入门档起步
+    const progressed = stats.filter((s) => s.pct > 0);
+    if (progressed.length) {
+      const strong = progressed[progressed.length - 1];
+      const pool = TOPICS.filter((x) => x.cat === strong.id && !state.mastery.has(x.id) && !used.has(x.id));
+      const t = pool.find((x) => x.level === "入门") || pool[0];
+      if (t) {
+        used.add(t.id);
+        steps.push({ kind: "learn", topic: t, mins: 8,
+          why: strong.name + " 基础较好（" + strong.pct + "%），继续推进" });
+      }
+    } else {
+      const t = TOPICS.find((x) => x.level === "入门" && !state.mastery.has(x.id) && !used.has(x.id));
+      if (t) {
+        used.add(t.id);
+        steps.push({ kind: "learn", topic: t, mins: 8,
+          why: "还没有学习记录，先从入门档起步最省力" });
+      }
+    }
+
+    // 4) 自测（固定推荐，检验本周薄弱领域）
+    steps.push({ kind: "quiz", mins: 5, why: "覆盖本周薄弱领域，检验掌握情况" });
+    return steps;
+  }
+
+  function renderTodaySummary() {
+    const el = $("#todaySummary"); if (!el) return;
+    const all = allTopics();
+    const mastered = all.filter((t) => state.mastery.has(t.id)).length;
+    const todayCount = activityByDay(1)[0] || 0;
+    const streak = activityStreak();
+    const due = dueReviews().length;
+    const parts = ["已掌握 <b>" + mastered + "</b> / " + all.length + " 个知识点"];
+    parts.push(todayCount ? "今天有 <b>" + todayCount + "</b> 条学习记录" : "今天还没有学习记录");
+    if (streak > 1) parts.push("连续 <b>" + streak + "</b> 天");
+    parts.push(due ? "有 <b>" + due + "</b> 个知识点到了复习期" : "暂无到期复习");
+    el.innerHTML = parts.join(" · ");
+  }
+
+  function renderTodaySteps() {
+    const host = $("#todaySteps"); if (!host) return;
+    const plan = todayPlan();
+    const totalMins = plan.reduce((a, s) => a + s.mins, 0);
+    const tt = $("#todayTotalTime");
+    if (tt) tt.textContent = "约 " + totalMins + " 分钟";
+
+    host.innerHTML = plan.map((s, i) => {
+      const cat = s.topic ? (catById(s.topic.cat) || {}).name || "" : "";
+      const title = s.kind === "quiz" ? "自测 5 题" : escapeHtml(s.topic.name);
+      const meta = s.kind === "quiz"
+        ? "随机抽题 · 全领域"
+        : (s.kind === "review" ? "复习" : "学习") + " · " + escapeHtml(cat);
+      const label = s.kind === "review" ? "开始复习" : (s.kind === "learn" ? "开始学习" : "开始自测");
+      return '<li class="today-step' + (i === 0 ? ' now' : '') + '">' +
+        '<span class="today-num">' + (i + 1) + '</span>' +
+        '<div class="today-step-t">' + title + '</div>' +
+        '<div class="today-step-m"><span class="today-why">' + escapeHtml(s.why) + '</span><br>' +
+        '约 ' + s.mins + ' 分钟 · ' + meta + '</div>' +
+        '<button type="button" class="today-go" data-step="' + i + '">' + label + '</button>' +
+        '</li>';
+    }).join("");
+
+    $$("#todaySteps .today-go").forEach((b) => {
+      if (b.dataset.bound) return; b.dataset.bound = "1";
+      b.addEventListener("click", () => {
+        const s = plan[Number(b.dataset.step)];
+        if (!s) return;
+        if (s.kind === "review") startReview([s.topic.id]);
+        else if (s.kind === "learn") { activateTab("knowledge"); showTopicDetail(s.topic.id); }
+        else { activateTab("quiz"); startQuiz(); }
+      });
+    });
+  }
+
+  // 能力雷达（轴数随领域数自适应；基线来自能力诊断 state.profile）
+  function todayRadarSvg(stats, baseline) {
+    const n = stats.length;
+    if (n < 3) return "";
+    const cx = 130, cy = 124, R = 86;
+    const at = (i, v) => {
+      const a = (-90 + (360 / n) * i) * Math.PI / 180;
+      const r = R * Math.max(0, Math.min(1, v));
+      return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    };
+    const poly = (f) => stats.map((_, i) => at(i, f(i)).map((v) => v.toFixed(1)).join(",")).join(" ");
+    let s = '<svg viewBox="0 0 260 252" role="img" aria-label="能力雷达">';
+    [0.25, 0.5, 0.75, 1].forEach((f) => {
+      s += '<polygon points="' + poly(() => f) + '" fill="none" stroke="var(--line)" stroke-width="1"/>';
+    });
+    stats.forEach((_, i) => {
+      const p = at(i, 1);
+      s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + p[0].toFixed(1) + '" y2="' + p[1].toFixed(1) + '" stroke="var(--line)" stroke-width="1"/>';
+    });
+    if (baseline) {
+      s += '<polygon points="' + poly((i) => (baseline[stats[i].id] || 0) / 100) + '" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>';
+    }
+    s += '<polygon points="' + poly((i) => stats[i].pct / 100) + '" fill="color-mix(in srgb, var(--brand) 16%, transparent)" stroke="var(--brand)" stroke-width="2"/>';
+    stats.forEach((d, i) => {
+      const p = at(i, d.pct / 100);
+      s += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="var(--brand)"/>';
+    });
+    stats.forEach((d, i) => {
+      const a = (-90 + (360 / n) * i) * Math.PI / 180;
+      const x = cx + (R + 17) * Math.cos(a), y = cy + (R + 17) * Math.sin(a);
+      const anchor = Math.abs(x - cx) < 10 ? "middle" : (x > cx ? "start" : "end");
+      s += '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="11" fill="var(--muted)" text-anchor="' + anchor + '" dominant-baseline="middle">' + escapeHtml(domainShortName(d)) + '</text>';
+    });
+    return s + "</svg>";
+  }
+
+  function renderTodayAbility() {
+    const stats = domainStats();
+    const radar = $("#todayRadar");
+    if (radar) {
+      radar.innerHTML = todayRadarSvg(stats, state.profile) ||
+        '<p class="today-empty">领域数据不足，暂时画不出雷达图。</p>';
+    }
+    const sub = $("#todayAbilitySub");
+    if (sub) {
+      const avg = stats.length ? Math.round(stats.reduce((a, d) => a + d.pct, 0) / stats.length) : 0;
+      sub.textContent = "平均掌握 " + avg + "%" + (state.profile ? " · 虚线为诊断基线" : " · 完成一次能力诊断可获得基线");
+    }
+
+    const heat = $("#todayHeat");
+    if (heat) {
+      const days = activityByDay(14);
+      const max = Math.max.apply(null, days.concat([1]));
+      heat.innerHTML = days.map((c) => {
+        const h = c ? Math.max(12, Math.round((c / max) * 100)) : 6;
+        const op = c ? (0.35 + 0.65 * (c / max)).toFixed(2) : 0.12;
+        return '<i style="--h:' + h + "%;--o:" + op + '" title="' + c + ' 条记录"></i>';
+      }).join("");
+    }
+
+    const dist = $("#todayDist"), legend = $("#todayDistLegend");
+    if (dist && legend) {
+      const all = allTopics();
+      const mastered = all.filter((t) => state.mastery.has(t.id)).length;
+      const segs = [{ lv: "已掌握", n: mastered }].concat(
+        TODAY_LEVELS.map((lv) => ({
+          lv, n: all.filter((t) => t.level === lv && !state.mastery.has(t.id)).length,
+        }))
+      );
+      const total = all.length || 1;
+      dist.innerHTML = segs.filter((s) => s.n > 0)
+        .map((s, i) => '<i class="today-c' + i + '" style="--w:' + ((s.n / total) * 100).toFixed(1) + '%" title="' + s.lv + " " + s.n + '"></i>').join("");
+      legend.innerHTML = segs.map((s, i) => '<span><i class="today-dot today-c' + i + '"></i>' + s.lv + " " + s.n + "</span>").join("");
+      const ds = $("#todayDistSub"); if (ds) ds.textContent = "共 " + all.length + " 个知识点";
+    }
+  }
+
+  function renderToday() {
+    try {
+      renderTodaySummary();
+      renderTodaySteps();
+      renderTodayAbility();
+      $$("#panel-today .today-link").forEach((b) => {
+        if (b.dataset.bound) return; b.dataset.bound = "1";
+        b.addEventListener("click", () => activateTab(b.dataset.go));
+      });
+    } catch (e) {
+      console.error("今日页渲染失败:", e);
+    }
+  }
+
 
   document.addEventListener("DOMContentLoaded", () => {
     try {

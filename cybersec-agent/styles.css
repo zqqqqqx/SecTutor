@@ -470,9 +470,9 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .dom:hover { background: var(--cyan-soft); border-color: var(--line); }
 .dom.active { background: var(--mag-soft); border-color: color-mix(in srgb, var(--mag) 45%, transparent); box-shadow: var(--glow-mag); }
 .dom .ring { width: 42px; height: 42px; border-radius: 50%; flex: 0 0 42px; display: grid; place-items: center;
-  background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); position: relative; }
+  background: conic-gradient(var(--c, var(--brand)) calc(var(--p, 0) * 1%), var(--line) 0); position: relative; }
 .dom .ring::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--panel-2); }
-.dom .ring b { position: relative; z-index: 2; font-family: "Orbitron",sans-serif; font-weight: 700; font-size: 12px; color: var(--c); }
+.dom .ring b { position: relative; z-index: 2; font-family: "Orbitron",sans-serif; font-weight: 700; font-size: 12px; color: var(--c, var(--brand)); }
 .dom .meta { flex: 1; min-width: 0; }
 .dom .meta .nm { font-weight: 700; font-size: 14px; }
 .dom .meta .ct { font-size: 11.5px; color: var(--muted); font-family: "Consolas",monospace; }
@@ -668,7 +668,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 .stat-num b { color: var(--brand); }
 .stat-pct { font-size: 12.5px; color: var(--muted); }
 .stat-ring { --p: 0; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 12.5px; font-weight: 700; color: var(--ink); background: conic-gradient(var(--brand) calc(var(--p) * 1%), var(--line) 0); position: relative; }
+  font-size: 12.5px; font-weight: 700; color: var(--ink); background: conic-gradient(var(--brand) calc(var(--p, 0) * 1%), var(--line) 0); position: relative; }
 .stat-ring::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--panel); }
 .stat-ring span { position: relative; z-index: 1; }
 .stat-cats { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
@@ -1448,6 +1448,177 @@ kbd {
    这里补上按钮默认样式的重置（背景/字体/内边距），让外观与改造前一致。
    ================================================================== */
 button.rail-item { background: none; font: inherit; color: inherit; padding: 0; -webkit-appearance: none; appearance: none; }
+
+/* ==================================================================
+   【优化试点 P1–P4】范围：知识库（阅读型）+ 随机自测（交互型）
+   起因：v1.4.0 只换了颜色 —— 因为字号层级、留白节奏、表面层次三项都没动。
+   本段先在这两个面板验证方向，确认后再推广到其余 6 个面板。
+   ================================================================== */
+
+/* —— 四级表面：浅色亮度差 5.1 / 5.3 / 4.2%；深色用对比度链 1.13 / 1.13 / 1.15 ——
+   注意：首屏 <html> 没有 data-theme 属性（默认即深色），所以默认态必须一起定义，
+   否则 --surface-* 取不到值 → .panel{background:var(--surface-1)} 整条失效、面板变透明。
+   排查工具：theme-token-check.py */
+:root, [data-theme="dark"] { --surface-1: #101f1d; --surface-2: #162a26; --surface-3: #1d352f; }
+[data-theme="light"] { --surface-1: #f1f5f5; --surface-2: #f8fbfa; --surface-3: #ffffff; }
+/* 面板与卡片走分层实色，不再用渐变糊层次（渐变会把 4 级压成 2 级） */
+.panel { background: var(--surface-1); }
+.topic-card, .quiz-card, .news-card, .gl-card, .range-card, .pcard { background: var(--surface-2); }
+
+/* —— 背景：加浓极光斑，让玻璃“有东西可糊” —— */
+[data-theme="light"] { --bg-grad: radial-gradient(1200px 640px at 82% -12%, rgba(13,148,136,.17), transparent 58%),
+                                    radial-gradient(950px 560px at -6% 8%, rgba(14,116,144,.14), transparent 55%); }
+[data-theme="dark"], :root:not([data-theme]) { --bg-grad: radial-gradient(1100px 620px at 80% -10%, rgba(45,212,191,.20), transparent 60%),
+                                    radial-gradient(950px 580px at 2% 106%, rgba(125,211,252,.15), transparent 60%); }
+body::before { opacity: 1; }
+/* 玻璃收敛到少数静态承载者：图标栏 / 顶栏 / 弹层 / 通知。侧栏改实底（它们背后没东西可糊） */
+.kb-side, .chat-side, .quiz-side, .tools-side, .range-side {
+  background: var(--surface-1); -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+
+/* —— P1 排版层级：标题/正文比从 1.15 拉到 1.6+ —— */
+#panel-knowledge .kb-hero h2 { font-size: 24px; font-weight: 700; line-height: 1.25; letter-spacing: -.01em; }
+#panel-knowledge .kb-hero p { font-size: 14.5px; line-height: 1.7; }
+#panel-knowledge .topic-card h4 { font-size: 17px; font-weight: 650; letter-spacing: -.005em; }
+#panel-knowledge .topic-card p { font-size: 14px; line-height: 1.7; }
+#panel-knowledge .mast .ml b { font-size: 16px; font-family: "Orbitron", ui-monospace, monospace; }
+#panel-quiz .quiz-q { font-size: 21px; font-weight: 650; line-height: 1.4; margin-bottom: 18px; }
+#panel-quiz .quiz-opt { font-size: 15px; padding: 13px 16px; margin: 9px 0; }
+#panel-quiz .quiz-progress { font-size: 13.5px; margin-bottom: 16px; }
+/* 标题上方留白大于下方 —— 最便宜的“分组感”来源 */
+#panel-knowledge .kb-side h3:not(:first-child), #panel-quiz .quiz-side h3:not(:first-child) { margin-top: 22px; }
+
+/* —— P2 留白：阅读型放大，交互型紧凑 —— */
+#panel-knowledge .topic-card { padding: 20px; }
+#panel-knowledge .topic-grid { gap: 18px; }
+#panel-knowledge .kb-side { padding: 16px; }
+#panel-knowledge .dom { padding: 10px 10px 10px 12px; }
+#panel-quiz .quiz-card { padding: 22px; }
+#panel-quiz .quiz-layout { gap: 18px; }
+
+/* —— P3 卡片抬升 + 签名细节（顶部 2px 领域色渐变细线） —— */
+#panel-knowledge .topic-card {
+  border-color: transparent; box-shadow: var(--shadow-sm);
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--c, var(--brand)) 60%, transparent), transparent 42%);
+  background-repeat: no-repeat; background-size: 100% 2px;
+}
+#panel-knowledge .topic-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+#panel-quiz .quiz-opt { background: var(--surface-3); }
+
+/* —— P4 入场错峰 + 图标线宽统一 —— */
+#panel-knowledge .topic-grid .topic-card { animation: fadeUp var(--dur-base) var(--ease-out) both; }
+#panel-knowledge .topic-grid .topic-card:nth-child(2) { animation-delay: 40ms; }
+#panel-knowledge .topic-grid .topic-card:nth-child(3) { animation-delay: 80ms; }
+#panel-knowledge .topic-grid .topic-card:nth-child(4) { animation-delay: 120ms; }
+#panel-knowledge .topic-grid .topic-card:nth-child(5) { animation-delay: 160ms; }
+#panel-knowledge .topic-grid .topic-card:nth-child(6) { animation-delay: 200ms; }
+#panel-knowledge .topic-grid .topic-card:nth-child(n+7) { animation-delay: 240ms; }
+#panel-knowledge svg, #panel-quiz svg, .rail-item svg { stroke-width: 1.75; }
+
+/* 减弱动效时整体关闭错峰 */
+@media (prefers-reduced-motion: reduce) {
+  #panel-knowledge .topic-grid .topic-card { animation: none; }
+}
+
+/* ==================================================================
+   【今日页 · 学习驾驶舱（A 主线 + B 能力可视化）】
+   结构：左「今天的主线」（编号节点 + 连线）｜中「我的能力」（雷达 + 14 天热力 + 难度分布）
+         ｜右快捷入口。全部用现有令牌，窄屏降为两栏/单栏。
+   ================================================================== */
+.today-wrap { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; overflow-y: auto; }
+.today-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.today-title { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
+.today-sub { margin: 0; font-size: 13px; color: var(--muted); }
+.today-sub b { color: var(--link); font-family: "Orbitron", ui-monospace, monospace; font-size: 14px; }
+
+.today-grid { display: grid; grid-template-columns: 340px minmax(0, 1fr) 220px; gap: 16px; align-items: start; }
+.today-card {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 18px; box-shadow: var(--shadow-sm);
+}
+.today-h {
+  margin: 0 0 14px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700;
+}
+.today-h-sub { float: right; text-transform: none; letter-spacing: 0; color: var(--brand); font-weight: 600; }
+.today-h-mt { margin-top: 18px; }
+
+/* —— 今天的主线：编号节点 + 竖向连线 —— */
+.today-steps { list-style: none; margin: 0; padding: 0; position: relative; }
+.today-steps::before {
+  content: ""; position: absolute; left: 13px; top: 14px; bottom: 24px; width: 1px; background: var(--line);
+}
+.today-step { position: relative; padding: 0 0 20px 40px; }
+.today-step:last-child { padding-bottom: 0; }
+.today-num {
+  position: absolute; left: 0; top: 0; width: 27px; height: 27px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface-3); border: 1px solid var(--line);
+  color: var(--muted); font-size: 12.5px; font-weight: 800;
+  font-family: "Orbitron", ui-monospace, monospace;
+}
+.today-step.now .today-num {
+  background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); border-color: transparent;
+}
+.today-step-t { font-size: 14.5px; font-weight: 650; margin-bottom: 3px; }
+.today-step-m { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.today-why { color: var(--link); }
+.today-go {
+  margin-top: 9px; font-size: 12.5px; font-weight: 700; padding: 7px 14px;
+  border-radius: var(--r-sm); border: 1px solid var(--line); background: transparent; color: var(--ink);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.today-step.now .today-go {
+  background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); border-color: transparent;
+}
+.today-go:hover { transform: translateY(-1px); }
+.today-empty { color: var(--muted); font-size: 13px; margin: 0; }
+
+/* —— 能力雷达 —— */
+.today-radar { display: flex; justify-content: center; }
+.today-radar svg { width: 100%; max-width: 330px; height: auto; }
+.today-legend { display: flex; gap: 16px; justify-content: center; margin-top: 4px; font-size: 11.5px; color: var(--muted); }
+.today-key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.today-key-a { background: var(--brand); }
+.today-key-b { background: var(--muted); }
+
+/* —— 最近 14 天 —— */
+.today-heat { display: flex; gap: 4px; align-items: flex-end; height: 42px; }
+.today-heat i { flex: 1; border-radius: 3px; background: var(--brand); min-height: 3px; height: var(--h, 6%); opacity: var(--o, .12); }
+.today-heat-x { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 6px; }
+
+/* —— 难度分布 —— */
+.today-dist { display: flex; height: 12px; border-radius: 999px; overflow: hidden; margin-bottom: 9px; }
+.today-dist i { display: block; height: 100%; width: var(--w, 0); }
+/* 难度分布的 5 段配色（与 JS 的 today-c0..c4 对应） */
+.today-c0 { background: var(--brand); }
+.today-c1 { background: color-mix(in srgb, var(--brand) 55%, transparent); }
+.today-c2 { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.today-c3 { background: color-mix(in srgb, var(--warn) 60%, transparent); }
+.today-c4 { background: color-mix(in srgb, var(--muted) 45%, transparent); }
+.today-dist-l { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11.5px; color: var(--muted); }
+.today-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+
+/* —— 快捷入口 —— */
+.today-qa { display: flex; flex-direction: column; gap: 8px; }
+.today-link {
+  text-align: left; font-size: 13px; padding: 10px 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--surface-3); color: var(--ink); cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+.today-link:hover { border-color: var(--brand-hi); color: var(--link); transform: translateX(2px); }
+
+/* 窄屏：三栏 → 两栏 → 单栏 */
+@media (max-width: 1100px) {
+  .today-grid { grid-template-columns: 1fr 1fr; }
+  .today-grid > .today-card:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .today-grid { grid-template-columns: 1fr; }
+  .today-grid > .today-card:last-child { grid-column: auto; }
+}
 
 /* ==================================================================
    【第 7 段 · 工具类（U1 收编内联样式用）】

@@ -1373,6 +1373,65 @@ $("#backLab").click();
     assert(missingU.length === 0, `u-* 工具类在 styles.css 中均有定义（缺失：${missingU.join(",") || "无"}）`);
   }
 
+  // ===== 42. 主题令牌覆盖（防「某分支下令牌未定义 → 整条样式静默失效」）=====
+  // 本项目三套分支：默认（<html> 无 data-theme，按深色渲染）/ light / dark。
+  // 只要某个 var(--x) 没写 fallback、又在某分支取不到值，那条声明就会整条失效
+  // （v1.4.0 试点时踩过：--surface-* 只写在 data-theme 分支，首屏面板直接变透明）。
+  {
+    const cssText = fs.readFileSync(path.join(dir, "styles.css"), "utf8");
+    const nc = cssText.replace(/\/\*[\s\S]*?\*\//g, "");
+    const rules = Array.from(nc.matchAll(/([^{}]+)\{([^{}]*)\}/g)).map((m) => [m[1].trim(), m[2]]);
+    const applies = (sel, sc) => sel.split(",").map((s) => s.trim()).some((p) => {
+      if (p === ":root") return true;
+      if (sc === "default" && p === ":root:not([data-theme])") return true;
+      if (sc === "light" && p.indexOf('[data-theme="light"]') >= 0) return true;
+      if (sc === "dark" && (p.indexOf('[data-theme="dark"]') >= 0 || p === ":root:not([data-theme])")) return true;
+      return false;
+    });
+    const definedIn = (sc) => {
+      const set = new Set();
+      rules.forEach(([sel, body]) => {
+        if (!applies(sel, sc)) return;
+        (body.match(/--[\w-]+\s*:/g) || []).forEach((d) => set.add(d.replace(/\s*:$/, "").trim()));
+      });
+      return set;
+    };
+    const usedNoFallback = new Set(Array.from(nc.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)).map((m) => m[1]));
+    ["default", "light", "dark"].forEach((sc) => {
+      const have = definedIn(sc);
+      const missing = Array.from(usedNoFallback).filter((t) => !have.has(t));
+      assert(missing.length === 0, `主题分支 ${sc} 令牌覆盖完整（缺失：${missing.join(",") || "无"}）`);
+    });
+  }
+
+  // ===== 43. 今日页（学习驾驶舱）：主线推荐 + 能力可视化 =====
+  {
+    const panel = doc.querySelector("#panel-today");
+    assert(!!panel, "今日面板存在");
+    // 注意：此处不能用 classList.contains("active") 判断默认首页 —— 跑到这里时
+    // 前面的用例已经点过多个 tab，active 早已切走。改为校验「源标记」与「侧栏顺序」。
+    assert(/<section class="panel active" id="panel-today">/.test(html), "今日在源标记里即默认激活面板");
+    const railTabs = Array.from(doc.querySelectorAll(".rail-item")).map((el) => el.dataset.tab);
+    assert(railTabs[0] === "today", `「今日」排在侧栏第一位（当前首位 ${railTabs[0]}）`);
+
+    const steps = doc.querySelectorAll("#todaySteps .today-step");
+    assert(steps.length >= 3, `今日主线生成了建议步骤（当前 ${steps.length} 步）`);
+    assert(doc.querySelectorAll("#todaySteps .today-num").length === steps.length, "每个步骤都带编号节点");
+    assert(doc.querySelectorAll("#todaySteps .today-go").length === steps.length, "每个步骤都有可点击的入口按钮");
+    const why = doc.querySelector("#todaySteps .today-why");
+    assert(!!why && why.textContent.length > 4, "步骤写明了推荐理由");
+
+    const radar = doc.querySelector("#todayRadar svg");
+    assert(!!radar, "能力雷达已渲染");
+    assert(!!radar && radar.querySelectorAll("polygon").length >= 5, "雷达含网格环与数据多边形");
+    assert(doc.querySelectorAll("#todayHeat i").length === 14, "14 天热力条为 14 格");
+    assert(doc.querySelectorAll("#todayDist i").length >= 2, "难度分布已渲染");
+    assert(doc.querySelectorAll("#panel-today .today-link").length >= 4, "快捷入口已渲染");
+
+    const summary = doc.querySelector("#todaySummary");
+    assert(!!summary && summary.textContent.indexOf("已掌握") >= 0, "今日摘要显示掌握情况");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
