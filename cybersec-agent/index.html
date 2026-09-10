@@ -73,6 +73,14 @@
   <div class="app">
     <header class="topbar">
       <div class="crumb"><span class="dot"></span><b>SEC TUTOR</b><span class="crumb-sub">· 网络安全学习智能 Agent</span></div>
+      <div class="copilot-bar" id="copilotBar">
+        <svg class="copilot-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>
+        <input id="copilotInput" class="copilot-input" type="text"
+               placeholder="直接问，或按 Ctrl / 唤起（自动带上当前上下文）"
+               aria-label="副驾驶提问" autocomplete="off" />
+        <span class="copilot-ctx" id="copilotCtx">无上下文</span>
+        <span class="copilot-kbd">Ctrl /</span>
+      </div>
       <div class="sp"></div>
       <div class="eng-status">
         <span class="eng on"><i></i>后端在线</span>
@@ -414,6 +422,20 @@
   <footer class="footer">
     <span data-i18n="footer">SecTutor · 本地优先 · 数据仅存于你的浏览器</span>
   </footer>
+  <!-- 全局副驾驶抽屉：回答在这里展开，不把你从当前面板踢走 -->
+  <aside class="copilot-drawer" id="copilotDrawer" hidden aria-label="副驾驶">
+    <header class="copilot-head">
+      <b>副驾驶</b>
+      <span class="copilot-ctx2" id="copilotCtx2">无上下文</span>
+      <button type="button" class="copilot-x" id="copilotClose" aria-label="关闭副驾驶">✕</button>
+    </header>
+    <div class="copilot-log" id="copilotLog" aria-live="polite"></div>
+    <form class="copilot-foot" id="copilotForm">
+      <input id="copilotAsk" class="copilot-in" type="text" placeholder="继续追问…" aria-label="继续追问" autocomplete="off" />
+      <button class="copilot-send" type="submit">发送</button>
+    </form>
+  </aside>
+
   </div><!-- /.app -->
 
   <script>

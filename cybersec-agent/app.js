@@ -1052,6 +1052,7 @@
     });
     $$(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tabName));
     if (tabName === "today") renderToday();   // 今日页按最新掌握度/复习状态重算
+    renderCopilotCtx();                        // 副驾驶上下文随面板变化
     // 顶栏 breadcrumb 同步
     const sub = TAB_NAMES[tabName] || "";
     const cs = $(".crumb-sub"); if (cs) cs.textContent = "· " + sub;
@@ -1116,6 +1117,12 @@
     document.addEventListener("keydown", (e) => {
       const key = e.key;
       // Ctrl/⌘ + K 全局搜索：任何情况都响应（含输入框内）
+      if ((e.ctrlKey || e.metaKey) && key === "/") {          // 唤起全局副驾驶
+        e.preventDefault();
+        const ci = $("#copilotInput");
+        if (ci) { ci.focus(); openCopilot(); }
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && (key === "k" || key === "K")) {
         e.preventDefault();
         openGlobalSearch();
@@ -1123,6 +1130,8 @@
       }
       // Esc：弹窗优先（全局搜索本身也是弹窗）
       if (key === "Escape") {
+        const cd = $("#copilotDrawer");
+        if (cd && !cd.hidden) { closeCopilot(); return; }
         const ov = $("#modalOverlay");
         if (ov && !ov.classList.contains("hidden")) { e.preventDefault(); closeModal(); return; }
         if (isTypingTarget(document.activeElement) && document.activeElement.value) {
@@ -1415,6 +1424,8 @@
   function showTopicDetail(topicId) {
     const topic = allTopics().find((x) => x.id === topicId);
     if (!topic) return;
+    copilotTopicId = topic.id;      // 副驾驶上下文：最近查看的知识点
+    renderCopilotCtx();
     const grid = $("#topicGrid");
     const detail = $("#topicDetail");
     grid.classList.add("hidden");
@@ -4252,6 +4263,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     renderLabList();
     renderProgress();
     renderToday();         // 学习驾驶舱：今日主线 + 能力可视化
+    bindCopilot();         // 全局副驾驶（方向 C）
     renderAgentCenter();   // 方向① 学习中心（能力画像 / 复习 / 周报）
     renderToolbox();       // 方向⑩ 本地工具箱
     restoreDraft();        // P2：恢复上次未发送的输入草稿
@@ -5981,6 +5993,148 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } catch (e) {
       console.error("今日页渲染失败:", e);
     }
+  }
+
+
+
+  /* ============================================================
+     全局副驾驶（方向 C）
+     与「智能问答」面板的区别：常驻顶栏、不切面板、自动带上当前上下文
+     （所在面板 + 最近查看的知识点），回答在右侧抽屉里流式展开。
+     复用 chatCompletions（低层模型调用）与 buildContext（本地知识检索）。
+     ============================================================ */
+  let copilotTopicId = null;      // 最近查看的知识点（showTopicDetail 记录）
+  let copilotBusy = false;
+  let copilotHistory = [];        // 抽屉内的短对话记忆（与主聊天分开）
+
+  function copilotChips() {
+    const chips = [];
+    const active = $(".panel.active");
+    const tab = active && active.id ? active.id.replace(/^panel-/, "") : "";
+    if (tab && TAB_NAMES[tab]) chips.push(TAB_NAMES[tab]);
+    if (copilotTopicId) {
+      const t = allTopics().find((x) => x.id === copilotTopicId);
+      if (t) chips.push(t.name);
+    }
+    return chips;
+  }
+
+  function renderCopilotCtx() {
+    const chips = copilotChips();
+    const txt = chips.length ? "上下文：" + chips.join(" · ") : "无上下文";
+    const a = $("#copilotCtx"), b = $("#copilotCtx2");
+    if (a) a.textContent = txt;
+    if (b) b.textContent = txt;
+  }
+
+  function copilotContextText() {
+    const lines = copilotChips().map((c, i) => (i === 0 ? "当前所在面板：" : "正在查看的知识点：") + c);
+    if (copilotTopicId) {
+      const t = allTopics().find((x) => x.id === copilotTopicId);
+      if (t) lines.push("该知识点摘要：" + String(t.summary || "").slice(0, 120));
+    }
+    return lines.join("\n");
+  }
+
+  function copilotAdd(role, html) {
+    const log = $("#copilotLog"); if (!log) return null;
+    const row = document.createElement("div");
+    row.className = "cp-row " + role;
+    row.innerHTML = '<div class="cp-bubble">' + html + "</div>";
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+    return row.querySelector(".cp-bubble");
+  }
+
+  function openCopilot() {
+    const d = $("#copilotDrawer"); if (!d) return;
+    if (d.hidden) { d.hidden = false; }
+    requestAnimationFrame(() => d.classList.add("on"));
+    renderCopilotCtx();
+  }
+
+  function closeCopilot() {
+    const d = $("#copilotDrawer"); if (!d || d.hidden) return;
+    d.classList.remove("on");
+    setTimeout(() => { d.hidden = true; }, 180);
+  }
+
+  async function copilotAsk(q) {
+    const question = String(q == null ? "" : q).trim();
+    if (!question || copilotBusy) return;
+    openCopilot();
+    copilotAdd("user", escapeHtml(question));
+
+    // 未配置模型：给明确指引，而不是静默失败
+    if (!state.llm || !state.llm.key) {
+      copilotAdd("bot", "还没配置大模型，所以我暂时没法在这里回答。<br>" +
+        "打开右上角 <b>设置 → 模型</b> 填入 API Key（只需一次），之后我就能一直在顶栏待命。<br>" +
+        '<span class="cp-dim">不配置也不影响其它功能：知识库、靶场、自测都能正常用。</span>');
+      return;
+    }
+
+    copilotBusy = true;
+    const bubble = copilotAdd("bot", '<span class="cp-dim">思考中…</span>');
+    let acc = "";
+    try {
+      const doc = buildContext(question);
+      const sys = [
+        "你是 SecTutor 的学习助手，服务正在学习网络安全的用户。",
+        "回答要求：中文；先结论后步骤；必要时用简短 Markdown 列表；不确定就明说不确定；",
+        "涉及攻击技术时只讲原理与防御思路，不提供针对未授权目标的实操步骤。",
+        copilotContextText() ? "\n\n当前上下文：\n" + copilotContextText() : "",
+        doc.text ? "\n\n可参考的站内资料：\n" + doc.text : "",
+      ].join("");
+      const messages = [{ role: "system", content: sys }]
+        .concat(copilotHistory)
+        .concat([{ role: "user", content: question }]);
+
+      const res = await chatCompletions(messages, null, (delta) => {
+        acc += delta;
+        if (bubble) bubble.innerHTML = mdLite(acc);
+        const log = $("#copilotLog"); if (log) log.scrollTop = log.scrollHeight;
+      });
+      const ans = (res && res.content) || acc || "（模型返回为空）";
+      if (bubble) bubble.innerHTML = mdLite(ans);
+      copilotHistory.push({ role: "user", content: question });
+      copilotHistory.push({ role: "assistant", content: ans });
+      while (copilotHistory.length > 12) copilotHistory.shift();
+    } catch (e) {
+      if (bubble) {
+        bubble.innerHTML = '<span class="cp-err">调用失败：' + escapeHtml(e && e.message ? e.message : String(e)) +
+          '</span><br><span class="cp-dim">可先到「智能问答」面板用本地知识引擎，或检查设置里的接口地址与 Key。</span>';
+      }
+    } finally {
+      copilotBusy = false;
+    }
+  }
+
+  function bindCopilot() {
+    const input = $("#copilotInput");
+    if (input && !input.dataset.bound) {
+      input.dataset.bound = "1";
+      input.addEventListener("focus", () => { renderCopilotCtx(); openCopilot(); });
+      input.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const v = input.value; input.value = "";
+        copilotAsk(v);
+      });
+    }
+    const form = $("#copilotForm");
+    if (form && !form.dataset.bound) {
+      form.dataset.bound = "1";
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const i = $("#copilotAsk");
+        const v = i ? i.value : "";
+        if (i) i.value = "";
+        copilotAsk(v);
+      });
+    }
+    const close = $("#copilotClose");
+    if (close && !close.dataset.bound) { close.dataset.bound = "1"; close.addEventListener("click", closeCopilot); }
+    renderCopilotCtx();
   }
 
 

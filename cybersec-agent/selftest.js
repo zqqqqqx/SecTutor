@@ -1432,6 +1432,44 @@ $("#backLab").click();
     assert(!!summary && summary.textContent.indexOf("已掌握") >= 0, "今日摘要显示掌握情况");
   }
 
+  // ===== 44. 全局副驾驶（方向 C）：命令条 + 抽屉 + 上下文 =====
+  {
+    const bar = doc.querySelector("#copilotBar");
+    const input = doc.querySelector("#copilotInput");
+    const drawer = doc.querySelector("#copilotDrawer");
+    const log = doc.querySelector("#copilotLog");
+    assert(!!bar && !!input, "顶栏副驾驶命令条存在");
+    assert(!!drawer && drawer.hidden === true, "副驾驶抽屉默认关闭");
+
+    input.focus();
+    assert(drawer.hidden === false, "聚焦命令条即打开抽屉");
+    const ctx1 = (doc.querySelector("#copilotCtx") || {}).textContent || "";
+    assert(ctx1.indexOf("上下文") >= 0, `上下文 chip 有内容（当前：${ctx1}）`);
+
+    // 打开一个知识点 → 上下文应自动带上它（这是副驾驶「不切面板也知道你在看什么」的关键）
+    const card = doc.querySelector("#topicGrid .topic-card");
+    if (card) {
+      card.click();
+      const ctx2 = (doc.querySelector("#copilotCtx") || {}).textContent || "";
+      assert(ctx2.length > ctx1.length || ctx2.indexOf("·") >= 0, `看过知识点后上下文更具体（${ctx2}）`);
+    }
+
+    // 未配置模型时提问：必须给出明确指引，且不抛异常
+    const ask = doc.querySelector("#copilotAsk");
+    if (ask) {
+      ask.value = "什么是 SQL 注入";
+      doc.querySelector("#copilotForm").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+      await delay(30);
+      const text = log ? log.textContent : "";
+      assert(text.indexOf("什么是 SQL 注入") >= 0, "提问已进入抽屉对话流");
+      assert(text.indexOf("配置大模型") >= 0 || text.indexOf("调用失败") >= 0, "未配置模型时给出明确指引而非静默失败");
+    }
+
+    // Esc 关闭抽屉
+    doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert(!drawer.classList.contains("on"), "Esc 可关闭副驾驶抽屉");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
