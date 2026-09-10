@@ -1476,25 +1476,54 @@ body::before { opacity: 1; }
   background: var(--surface-1); -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 
-/* —— P1 排版层级：标题/正文比从 1.15 拉到 1.6+ —— */
-#panel-knowledge .kb-hero h2 { font-size: 24px; font-weight: 700; line-height: 1.25; letter-spacing: -.01em; }
-#panel-knowledge .kb-hero p { font-size: 14.5px; line-height: 1.7; }
-#panel-knowledge .topic-card h4 { font-size: 17px; font-weight: 650; letter-spacing: -.005em; }
-#panel-knowledge .topic-card p { font-size: 14px; line-height: 1.7; }
-#panel-knowledge .mast .ml b { font-size: 16px; font-family: "Orbitron", ui-monospace, monospace; }
-#panel-quiz .quiz-q { font-size: 21px; font-weight: 650; line-height: 1.4; margin-bottom: 18px; }
-#panel-quiz .quiz-opt { font-size: 15px; padding: 13px 16px; margin: 9px 0; }
-#panel-quiz .quiz-progress { font-size: 13.5px; margin-bottom: 16px; }
-/* 标题上方留白大于下方 —— 最便宜的“分组感”来源 */
-#panel-knowledge .kb-side h3:not(:first-child), #panel-quiz .quiz-side h3:not(:first-child) { margin-top: 22px; }
+/* ==================================================================
+   P1 排版层级（全局面板统一）—— 目标：把「标题 / 正文」的字号比拉开，
+   正文抬到 14–15px、标题抬到 16.5–24px。之前全站字号挤在 12–13.5px，
+   界面因此显得平（这也是「只感觉到颜色变化」的主因之一）。
+   ================================================================== */
+/* 面板级大标题 */
+.kb-hero h2, .compliance-box h2 { font-size: 24px; font-weight: 700; line-height: 1.25; letter-spacing: -.01em; }
+/* 卡片标题 */
+.topic-card h4, .range-card h4, .news-card h3 { font-size: 16.5px; font-weight: 650; letter-spacing: -.005em; }
+.kb-hero p { font-size: 14.5px; line-height: 1.7; }
+/* 正文：卡片 / 详情 / 资讯 */
+.topic-card p, .news-card p, .week-block li { font-size: 14px; line-height: 1.7; }
+.topic-detail p, .range-detail p, .news-detail p, .compliance-box p { font-size: 14.5px; line-height: 1.75; }
+/* 数字用等宽字体，读数值时更整齐 */
+.mast .ml b { font-size: 16px; font-family: "Orbitron", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+/* 测验：题目显著大于选项 */
+.quiz-q { font-size: 21px; font-weight: 650; line-height: 1.4; margin-bottom: 18px; }
+.quiz-opt { font-size: 15px; padding: 13px 16px; margin: 9px 0; }
+.quiz-progress { font-size: 13.5px; margin-bottom: 16px; }
+/* 侧栏里第二个及以后的小标题上方留白更大 —— 最便宜的「分组感」来源 */
+.kb-side h3:not(:first-child), .chat-side h3:not(:first-child), .range-side h3:not(:first-child),
+.tools-side h3:not(:first-child), .quiz-side h3:not(:first-child), .plan-controls h3:not(:first-child) { margin-top: 22px; }
 
-/* —— P2 留白：阅读型放大，交互型紧凑 —— */
-#panel-knowledge .topic-card { padding: 20px; }
-#panel-knowledge .topic-grid { gap: 18px; }
-#panel-knowledge .kb-side { padding: 16px; }
-#panel-knowledge .dom { padding: 10px 10px 10px 12px; }
-#panel-quiz .quiz-card { padding: 22px; }
-#panel-quiz .quiz-layout { gap: 18px; }
+/* ==================================================================
+   P2 留白（分两档）
+   · 阅读型：知识库 / 测验 / 靶场 / 资讯 / 学习计划 / 合规 —— 放大留白，长时间读更舒服
+   · 交互型：聊天 / 工具 —— 保持紧凑，单屏信息量不能掉（只统一行高与节奏）
+   ================================================================== */
+/* —— 阅读型 —— */
+.topic-card, .quiz-card, .range-card, .news-card { padding: 20px; }
+.topic-grid, .range-list, .news-list, .quiz-layout { gap: 18px; }
+.quiz-card { padding: 22px; }
+.plan-output { padding: 22px; }
+.week-block { padding: 12px 0 12px 16px; }
+.week-block li { margin: 6px 0; }
+.range-detail .writeup { padding: 18px; }
+.range-detail .lab-setup { padding: 16px; }
+.compliance-box { padding: 30px 32px; }
+.compliance-box li { margin: 6px 0; }
+/* 侧栏：内边距与列表项一起放大（仅阅读型三处：知识库/测验/靶场）
+   注意：chat-side / tools-side / plan-controls 属交互型，保持原本的紧凑排布，不在此列 */
+.kb-side, .quiz-side, .range-side { padding: 16px; }
+.dom { padding: 10px 10px 10px 12px; }
+.cat-list li { padding: 11px 13px; }
+
+/* —— 交互型（聊天 / 工具）：只统一行高与圆角节奏，不放大留白 —— */
+.msg { line-height: 1.65; }
+.tool-row { border-radius: var(--r-sm); }
 
 /* —— P3 卡片抬升 + 签名细节（顶部 2px 领域色渐变细线） —— */
 #panel-knowledge .topic-card {
