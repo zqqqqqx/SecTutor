@@ -1639,6 +1639,15 @@ body::before { opacity: 1; }
 }
 .today-link:hover { border-color: var(--brand-hi); color: var(--link); transform: translateX(2px); }
 
+/* 今天已完成：弱化并打勾（数据来自活动日志，只有可验证的步骤才标记） */
+.today-step.done .today-num { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.today-step.done .today-step-t { color: var(--muted); }
+.today-done { color: var(--ok); font-weight: 700; }
+
+/* 难度分布：每一段都是入口（可点、可键盘触发） */
+.today-seg { cursor: pointer; transition: filter var(--dur-fast) var(--ease-out); }
+.today-seg:hover, .today-seg:focus-visible { filter: brightness(1.25); }
+
 /* 「换一个」与诊断入口 */
 .today-alt {
   margin: 9px 0 0 8px; font-size: 12px; padding: 7px 12px; border-radius: var(--r-sm);
@@ -1735,6 +1744,25 @@ body::before { opacity: 1; }
   height: 38px; padding: 0 16px; border: none; border-radius: var(--r-sm); cursor: pointer;
   font-weight: 700; font-size: 13px;
   background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand);
+}
+
+/* 回答下方的操作条（复制） */
+.cp-tools { margin-top: 8px; display: flex; gap: 8px; }
+.cp-act {
+  font-size: 11.5px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+}
+.cp-act:hover { color: var(--link); border-color: var(--brand-hi); }
+
+/* 头部的「清空」与输入区的「停止」 */
+.copilot-act-btn {
+  font-size: 11.5px; padding: 4px 10px; border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+}
+.copilot-act-btn:hover { color: var(--ink); border-color: var(--brand-hi); }
+.copilot-stop {
+  height: 38px; padding: 0 14px; border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid var(--bad); background: var(--bad-bg); color: var(--bad); font-weight: 700; font-size: 13px;
 }
 
 /* 回答里的站内来源 */

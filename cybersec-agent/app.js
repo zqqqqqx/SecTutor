@@ -1751,7 +1751,7 @@
     ).join("\n\n---\n\n");
     return { text, docs };
   }
-  async function chatCompletions(messages, tools, onChunk) {
+  async function chatCompletions(messages, tools, onChunk, signal) {
     const ft0 = Date.now(); let ftDone = false;          // 质量度量：首字延迟计时起点
     const base = (state.llm.base || "https://api.openai.com/v1").replace(/\/$/, "");
     const body = {
@@ -1765,6 +1765,7 @@
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + state.llm.key },
       body: JSON.stringify(body),
+      signal: signal || undefined,      // 副驾驶的「停止生成」用得上
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     if (!onChunk) {
@@ -3953,6 +3954,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const qcat = qc ? qc.value : "all";
     const qDomain = (qcat && qcat !== "all" && DOMAINS.some((d) => d.id === qcat)) ? qcat : null;
     recordQuizResult(qDomain, total ? st.score / total : null, total);
+    logEvent("quiz", total ? Math.round((st.score / total) * 100) : 0);   // 供今日页标记「自测已完成」
     main.innerHTML = `
       <div class="quiz-result">
         <h3>🎉 自测完成</h3>
@@ -5760,6 +5762,41 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   const TODAY_LEVEL_ORDER = { "入门": 0, "初级": 1, "中级": 2, "高级": 3 };
   const todaySkipped = new Set();      // 本轮「换一个」排除掉的知识点（会话级，刷新即恢复）
 
+  // 今日主线当天固定：一旦生成就落盘，避免「做完一步它就消失」导致看不到完成标记
+  const TODAY_PLAN_KEY = "sectutor_today_plan";
+  function todayStamp() {
+    const d = new Date();
+    return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+  }
+  function loadTodayPlan() {
+    try {
+      const p = JSON.parse(localStorage.getItem(TODAY_PLAN_KEY) || "null");
+      if (!p || p.d !== todayStamp() || !Array.isArray(p.items) || !p.items.length) return null;
+      if (!p.items.every((it) => allTopics().some((t) => t.id === it.id))) return null;   // 数据变了就重算
+      return p;
+    } catch (e) { return null; }
+  }
+  function saveTodayPlan(items) {
+    try {
+      localStorage.setItem(TODAY_PLAN_KEY, JSON.stringify({ d: todayStamp(), items: items }));
+    } catch (e) {}
+  }
+  const MINUTES_BY_KIND = (t, kind) => (kind === "quiz" ? quizMinutes(5) : readingMinutes(t));
+
+  // 今天发生过的事件（用于标记「今天已完成」）——数据来自 state.activity，无需额外存储
+  function todayEvents() {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    const ts = d.getTime();
+    return (state.activity || []).filter((e) => e && e.t >= ts);
+  }
+  // 只有能真正验证的步骤才标记完成：学/复习看「已掌握」事件、复习看 review、自测看 quiz
+  function stepDone(s) {
+    const ev = todayEvents();
+    if (s.kind === "quiz") return ev.some((e) => e.type === "quiz");
+    if (s.kind === "review") return ev.some((e) => e.type === "review");
+    return !!(s.topic && ev.some((e) => e.type === "master" && e.meta === s.topic.id));
+  }
+
   // 阅读时长按「完整阅读材料」估算：摘要 + 四档正文 + 代码示例 + 工具说明。
   // 实测本站每个知识点 388–962 字（中位 617），按中文 450 字/分钟 → 典型 2 分钟。
   // 界面上如实标成「阅读约 X 分钟」——不假装成整块学习任务的耗时。
@@ -5823,6 +5860,19 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   function todayPlan() {
     const steps = [];
     const used = new Set();
+
+    // —— 当天已有计划：直接复用（这样完成的步骤仍留在列表里，能显示 ✓）——
+    const saved = loadTodayPlan();
+    if (saved) {
+      saved.items.forEach((it) => {
+        const t = allTopics().find((x) => x.id === it.id);
+        if (t) steps.push({ kind: it.kind, topic: t, mins: MINUTES_BY_KIND(t, it.kind), why: it.why });
+      });
+      if (steps.length) {
+        steps.push({ kind: "quiz", mins: quizMinutes(5), why: "覆盖本周薄弱领域，检验掌握情况" });
+        return steps;
+      }
+    }
     const stats = domainStats().slice().sort((a, b) => a.pct - b.pct);
 
     // 1) 到期复习（dueReviews 已按逾期天数降序），最多 2 项
@@ -5875,6 +5925,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       }
     }
 
+    // 落盘：今天剩下的时间都用这份计划（换一个会更新它）
+    saveTodayPlan(steps.filter((s) => s.topic).map((s) => ({ id: s.topic.id, kind: s.kind, why: s.why })));
+
     // 4) 自测（固定推荐，检验本周薄弱领域）
     steps.push({ kind: "quiz", mins: quizMinutes(5), why: "覆盖本周薄弱领域，检验掌握情况" });
     return steps;
@@ -5902,21 +5955,24 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     if (tt) tt.textContent = "约 " + totalMins + " 分钟（含阅读）";
 
     host.innerHTML = plan.map((s, i) => {
+      const done = stepDone(s);
       const cat = s.topic ? (catById(s.topic.cat) || {}).name || "" : "";
       const title = s.kind === "quiz" ? "自测 5 题" : escapeHtml(s.topic.name);
       const meta = s.kind === "quiz"
         ? "随机抽题 · 全领域"
         : (s.kind === "review" ? "复习" : "学习") + " · " + escapeHtml(cat);
-      const label = s.kind === "review" ? "开始复习" : (s.kind === "learn" ? "开始学习" : "开始自测");
+      const label = done
+        ? (s.kind === "quiz" ? "再测一组" : (s.kind === "review" ? "再复习" : "再看一遍"))
+        : (s.kind === "review" ? "开始复习" : (s.kind === "learn" ? "开始学习" : "开始自测"));
       const reroll = s.topic
         ? '<button type="button" class="today-alt" data-alt="' + i + '" title="换一个同领域的知识点">换一个</button>'
         : '';
       const timeText = s.kind === "quiz" ? "约 " + s.mins + " 分钟" : "阅读约 " + s.mins + " 分钟";
-      return '<li class="today-step' + (i === 0 ? ' now' : '') + '">' +
+      return '<li class="today-step' + (i === 0 && !done ? ' now' : '') + (done ? ' done' : '') + '">' +
         '<span class="today-num">' + (i + 1) + '</span>' +
         '<div class="today-step-t">' + title + '</div>' +
         '<div class="today-step-m"><span class="today-why">' + escapeHtml(s.why) + '</span><br>' +
-        timeText + ' · ' + meta + '</div>' +
+        timeText + ' · ' + meta + (done ? ' · <span class="today-done">✓ 今天已完成</span>' : '') + '</div>' +
         '<button type="button" class="today-go" data-step="' + i + '">' + label + '</button>' +
         reroll +
         '</li>';
@@ -5932,14 +5988,15 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         else { activateTab("quiz"); startQuiz(); }
       });
     });
-    // 「换一个」：本轮内不再出现该知识点，并重新计算主线（会话级）
+    // 「换一个」：把该步换成同领域的另一个知识点，并更新当日计划
     $$("#todaySteps .today-alt").forEach((b) => {
       if (b.dataset.bound) return; b.dataset.bound = "1";
       b.addEventListener("click", () => {
         const s = plan[Number(b.dataset.alt)];
         if (!s || !s.topic) return;
         todaySkipped.add(s.topic.id);
-        renderTodaySteps();
+        if (rerollTodayStep(s.topic.id)) renderTodaySteps();
+        else renderTodaySteps();     // 没有可换的（该领域只剩这一个）——保持原样也不报错
       });
     });
   }
@@ -5997,6 +6054,15 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const diagBtn = $("#todayDiag");
     if (diagBtn) diagBtn.hidden = !!state.profile;
 
+    const weekSub = $("#todayWeekSub");
+    if (weekSub) {
+      const d14 = activityByDay(14);
+      const thisWeek = d14.slice(7).reduce((a, b) => a + b, 0);
+      const lastWeek = d14.slice(0, 7).reduce((a, b) => a + b, 0);
+      const diff = thisWeek - lastWeek;
+      weekSub.textContent = "本周 " + thisWeek + " · 上周 " + lastWeek +
+        (diff === 0 ? "" : (diff > 0 ? "（+" + diff + "）" : "（" + diff + "）"));
+    }
     const heat = $("#todayHeat");
     if (heat) {
       const days = activityByDay(14);
@@ -6008,6 +6074,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       }).join("");
     }
 
+    bindTodayDist();
     const dist = $("#todayDist"), legend = $("#todayDistLegend");
     if (dist && legend) {
       const all = allTopics();
@@ -6019,10 +6086,58 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       );
       const total = all.length || 1;
       dist.innerHTML = segs.filter((s) => s.n > 0)
-        .map((s, i) => '<i class="today-c' + i + '" style="--w:' + ((s.n / total) * 100).toFixed(1) + '%" title="' + s.lv + " " + s.n + '"></i>').join("");
+        .map((s, i) => {
+          const lv = (s.lv === "已掌握") ? "" : s.lv;   // 已掌握没有对应筛选档，只跳转到知识库
+          return '<i class="today-c' + i + ' today-seg" role="button" tabindex="0" data-lv="' + lv +
+            '" style="--w:' + ((s.n / total) * 100).toFixed(1) + '%" title="' + s.lv + " " + s.n + '，点击查看"></i>';
+        }).join("");
       legend.innerHTML = segs.map((s, i) => '<span><i class="today-dot today-c' + i + '"></i>' + s.lv + " " + s.n + "</span>").join("");
       const ds = $("#todayDistSub"); if (ds) ds.textContent = "共 " + all.length + " 个知识点";
     }
+  }
+
+  // 把当日计划里的某个知识点换成同领域的另一个（「换一个」按钮）
+  function rerollTodayStep(oldId) {
+    const saved = loadTodayPlan();
+    if (!saved) return false;
+    const idx = saved.items.findIndex((it) => it.id === oldId);
+    if (idx < 0) return false;
+    const t = allTopics().find((x) => x.id === oldId);
+    if (!t) return false;
+    const taken = new Set(saved.items.map((it) => it.id));
+    const pool = TOPICS.filter((x) => x.cat === t.cat && !state.mastery.has(x.id) &&
+      !taken.has(x.id) && !todaySkipped.has(x.id));
+    const next = pickTopic(pool);
+    if (!next) return false;
+    const catName = (catById(t.cat) || {}).name || "同领域";
+    saved.items[idx] = {
+      id: next.id,
+      kind: saved.items[idx].kind,
+      why: (saved.items[idx].kind === "review" ? "同领域复习：" : "同领域换一个：") + catName,
+    };
+    saveTodayPlan(saved.items);
+    return true;
+  }
+
+  // 点「难度分布」的某一段 → 跳到知识库并套用对应难度筛选（让图表变成入口）
+  function bindTodayDist() {
+    const host = $("#todayDist"); if (!host || host.dataset.bound) return;
+    host.dataset.bound = "1";
+    const go = (seg) => {
+      if (!seg) return;
+      const lv = seg.dataset.lv;
+      activateTab("knowledge");
+      if (lv) {
+        const chip = $('#levelChips .chip[data-level="' + lv + '"]');
+        if (chip) chip.click();
+      }
+    };
+    host.addEventListener("click", (e) => { if (e.target && e.target.classList.contains("today-seg")) go(e.target); });
+    host.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && e.target && e.target.classList.contains("today-seg")) {
+        e.preventDefault(); go(e.target);
+      }
+    });
   }
 
   function renderToday() {
@@ -6034,10 +6149,22 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         if (b.dataset.bound) return; b.dataset.bound = "1";
         b.addEventListener("click", () => activateTab(b.dataset.go));
       });
+      // 自测钩子：让回归能确定性地验证今日主线（沿用项目既有的 window.__SELFTEST__ 模式）
+      if (window.__SELFTEST__) {
+        window.__todayPlan = todayPlan;
+        window.__renderToday = renderToday;
+        window.__showTopic = showTopicDetail;
+      }
       const diagBtn = $("#todayDiag");
       if (diagBtn && !diagBtn.dataset.bound) {
         diagBtn.dataset.bound = "1";
-        diagBtn.addEventListener("click", () => startDiagnosis());
+        diagBtn.addEventListener("click", () => {
+          // #diagArea 在「学习计划」面板里：必须先切过去，否则诊断题渲染在看不见的地方
+          activateTab("plan");
+          startDiagnosis();
+          const area = $("#diagArea");
+          if (area && area.scrollIntoView) area.scrollIntoView({ block: "center" });
+        });
       }
     } catch (e) {
       console.error("今日页渲染失败:", e);
@@ -6054,6 +6181,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
      ============================================================ */
   let copilotTopicId = null;      // 最近查看的知识点（showTopicDetail 记录）
   let copilotBusy = false;
+  let copilotAbort = null;        // 当前请求的中止句柄（「停止生成」）
   const COPILOT_KEY = "sectutor_copilot";
   const COPILOT_MAX = 12;         // 最多保留 6 轮（user+assistant 各算一条）
   let copilotHistory = (function () {
@@ -6112,6 +6240,21 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const names = docs.slice(0, 3).map((d) => d.title || d.src || "").filter(Boolean);
     if (!names.length) return "";
     return '<div class="cp-src">参考站内资料：' + escapeHtml(names.join(" · ")) + "</div>";
+  }
+
+  // 每条回答下方的操作条（复制）
+  function cpToolsHtml() {
+    return '<div class="cp-tools"><button type="button" class="cp-act" data-copy="1">复制</button></div>';
+  }
+  function renderCopilotBusy(on) {
+    const stop = $("#copilotStop"); if (stop) stop.hidden = !on;
+    const send = $("#copilotSend"); if (send) send.disabled = !!on;
+  }
+  function clearCopilot() {
+    copilotHistory = [];
+    saveCopilot();
+    const log = $("#copilotLog"); if (log) log.innerHTML = "";
+    renderCopilotHints();
   }
 
   const COPILOT_HINTS = [
@@ -6174,9 +6317,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     // 未配置模型：给明确指引，而不是静默失败
     if (!state.llm || !state.llm.key) {
       const tip = "还没配置大模型，所以我暂时没法在这里回答。打开右上角 「设置 → 模型」 填入 API Key（只需一次），之后我就能一直在顶栏待命。";
-      copilotAdd("bot", "还没配置大模型，所以我暂时没法在这里回答。<br>" +
+      const tipBubble = copilotAdd("bot", "还没配置大模型，所以我暂时没法在这里回答。<br>" +
         "打开右上角 <b>设置 → 模型</b> 填入 API Key（只需一次），之后我就能一直在顶栏待命。<br>" +
         '<span class="cp-dim">不配置也不影响其它功能：知识库、靶场、自测都能正常用。</span>');
+      if (tipBubble) tipBubble.innerHTML += cpToolsHtml();
       copilotHistory.push({ role: "assistant", content: tip });
       while (copilotHistory.length > COPILOT_MAX) copilotHistory.shift();
       saveCopilot();
@@ -6199,23 +6343,35 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         .concat(copilotHistory)
         .concat([{ role: "user", content: question }]);
 
+      copilotAbort = new AbortController();
+      renderCopilotBusy(true);
       const res = await chatCompletions(messages, null, (delta) => {
         acc += delta;
         if (bubble) bubble.innerHTML = mdLite(acc);
         const log = $("#copilotLog"); if (log) log.scrollTop = log.scrollHeight;
-      });
+      }, copilotAbort.signal);
       const ans = (res && res.content) || acc || "（模型返回为空）";
-      if (bubble) bubble.innerHTML = mdLite(ans) + copilotSrcHtml(doc.docs);
+      if (bubble) bubble.innerHTML = mdLite(ans) + copilotSrcHtml(doc.docs) + cpToolsHtml();
       copilotHistory.push({ role: "assistant", content: ans });   // 用户轮已在前面记录
       while (copilotHistory.length > COPILOT_MAX) copilotHistory.shift();
       saveCopilot();
     } catch (e) {
+      const aborted = !!(e && (e.name === "AbortError" || /abort/i.test(String(e.message || ""))));
       if (bubble) {
-        bubble.innerHTML = '<span class="cp-err">调用失败：' + escapeHtml(e && e.message ? e.message : String(e)) +
-          '</span><br><span class="cp-dim">可先到「智能问答」面板用本地知识引擎，或检查设置里的接口地址与 Key。</span>';
+        if (aborted) {
+          bubble.innerHTML = acc
+            ? mdLite(acc) + '<div class="cp-src">（已停止，以上为已生成部分）</div>' + cpToolsHtml()
+            : '<span class="cp-dim">已停止生成。</span>';
+        } else {
+          bubble.innerHTML = '<span class="cp-err">调用失败：' + escapeHtml(e && e.message ? e.message : String(e)) +
+            '</span><br><span class="cp-dim">可先到「智能问答」面板用本地知识引擎，或检查设置里的接口地址与 Key。</span>' +
+            cpToolsHtml();   // 报错内容也允许复制，便于反馈问题
+        }
       }
     } finally {
       copilotBusy = false;
+      copilotAbort = null;
+      renderCopilotBusy(false);
     }
   }
 
@@ -6244,6 +6400,32 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     }
     const close = $("#copilotClose");
     if (close && !close.dataset.bound) { close.dataset.bound = "1"; close.addEventListener("click", closeCopilot); }
+    const clearBtn = $("#copilotClear");
+    if (clearBtn && !clearBtn.dataset.bound) { clearBtn.dataset.bound = "1"; clearBtn.addEventListener("click", clearCopilot); }
+    const stopBtn = $("#copilotStop");
+    if (stopBtn && !stopBtn.dataset.bound) {
+      stopBtn.dataset.bound = "1";
+      stopBtn.addEventListener("click", () => { if (copilotAbort) copilotAbort.abort(); });
+    }
+    const logEl = $("#copilotLog");
+    if (logEl && !logEl.dataset.boundCopy) {
+      logEl.dataset.boundCopy = "1";
+      logEl.addEventListener("click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest("[data-copy]") : null;
+        if (!btn) return;
+        const bubble = btn.closest(".cp-bubble");
+        const text = bubble ? bubble.textContent.replace(/复制|已复制/g, "").trim() : "";
+        if (!text) return;
+        const done = () => { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制"; }, 1200); };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done);
+          else done();
+        } catch (err) { done(); }
+      });
+    }
+    // Mac 上显示 ⌘ 而不是 Ctrl
+    const kbd = $("#copilotKbd");
+    if (kbd) kbd.textContent = (/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘ /" : "Ctrl /");
     renderCopilotCtx();
   }
 

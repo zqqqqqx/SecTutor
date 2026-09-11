@@ -79,7 +79,7 @@
                placeholder="直接问，或按 Ctrl / 唤起（自动带上当前上下文）"
                aria-label="副驾驶提问" autocomplete="off" />
         <span class="copilot-ctx" id="copilotCtx">无上下文</span>
-        <span class="copilot-kbd">Ctrl /</span>
+        <span class="copilot-kbd" id="copilotKbd">Ctrl /</span>
       </div>
       <div class="sp"></div>
       <div class="eng-status">
@@ -119,7 +119,7 @@
               <span><i class="today-key today-key-b"></i>诊断基线</span>
             </div>
 
-            <h3 class="today-h today-h-mt">最近 14 天</h3>
+            <h3 class="today-h today-h-mt">最近 14 天 <span class="today-h-sub" id="todayWeekSub"></span></h3>
             <div class="today-heat" id="todayHeat"></div>
             <div class="today-heat-x"><span>14 天前</span><span>今天</span></div>
 
@@ -428,12 +428,14 @@
     <header class="copilot-head">
       <b>副驾驶</b>
       <span class="copilot-ctx2" id="copilotCtx2">无上下文</span>
+      <button type="button" class="copilot-act-btn" id="copilotClear" title="清空副驾驶对话">清空</button>
       <button type="button" class="copilot-x" id="copilotClose" aria-label="关闭副驾驶">✕</button>
     </header>
     <div class="copilot-log" id="copilotLog" aria-live="polite"></div>
     <form class="copilot-foot" id="copilotForm">
       <input id="copilotAsk" class="copilot-in" type="text" placeholder="继续追问…" aria-label="继续追问" autocomplete="off" />
-      <button class="copilot-send" type="submit">发送</button>
+      <button type="button" class="copilot-stop" id="copilotStop" hidden>停止</button>
+      <button class="copilot-send" type="submit" id="copilotSend">发送</button>
     </form>
   </aside>
 

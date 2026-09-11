@@ -1511,6 +1511,67 @@ $("#backLab").click();
     assert(doc.body.classList.contains("copilot-open"), "抽屉打开时主区让位标记生效");
   }
 
+  // ===== 46. 继续优化：完成态 / 分布可点 / 周对比 / 副驾驶操作条 =====
+  {
+    // 周对比文案
+    const week = (doc.querySelector("#todayWeekSub") || {}).textContent || "";
+    assert(/本周 \d+ · 上周 \d+/.test(week), `热力区显示本周/上周对比（${week}）`);
+
+    // 难度分布每段都是入口，点击后跳到知识库并套用对应筛选
+    const segs = doc.querySelectorAll("#todayDist .today-seg");
+    assert(segs.length >= 2, `难度分布每段可点击（${segs.length} 段）`);
+    const seg = doc.querySelector('#todayDist .today-seg[data-lv="入门"]');
+    if (seg) {
+      seg.click();
+      await delay(20);
+      const kb = doc.querySelector("#panel-knowledge");
+      assert(!!kb && kb.classList.contains("active"), "点分布段会切到知识库");
+      const chip = doc.querySelector('#levelChips .chip[data-level="入门"]');
+      assert(!!chip && chip.classList.contains("active"), "并套用对应难度筛选");
+      clickTab("today");
+      await delay(20);
+    }
+
+    // 完成态（端到端）：把主线里推荐的知识点标记为「已掌握」→ 该步骤应变成「今天已完成」
+    assert(typeof window.__todayPlan === "function", "今日主线暴露自测钩子");
+    const plan = window.__todayPlan ? window.__todayPlan() : [];
+    const learnStep = plan.find((s) => s.topic);
+    assert(!!learnStep, "主线里存在可学习的知识点步骤");
+    if (learnStep) {
+      const wasMastered = doc.querySelectorAll("#todaySteps .today-step.done").length;
+      window.__showTopic(learnStep.topic.id);      // 打开知识点详情（真实路径）
+      await delay(20);
+      const learnBtn = doc.querySelector("#learnBtn");
+      assert(!!learnBtn, "知识点详情里有「我已掌握」按钮");
+      if (learnBtn && !learnBtn.classList.contains("mastered")) learnBtn.click();
+      await delay(30);
+      window.__renderToday();                      // 重算主线（与真实交互一致）
+      const doneSteps = doc.querySelectorAll("#todaySteps .today-step.done");
+      assert(doneSteps.length > wasMastered || doneSteps.length >= 1,
+        `标记已掌握后主线出现「今天已完成」（${doneSteps.length} 步）`);
+      const doneTag = doc.querySelector("#todaySteps .today-done");
+      assert(!!doneTag && doneTag.textContent.indexOf("已完成") >= 0, "已完成步骤带勾选标记");
+      const doneLabel = Array.from(doc.querySelectorAll("#todaySteps .today-step.done .today-go")).map((b) => b.textContent).join("/");
+      assert(/再看一遍|再复习|再测一组/.test(doneLabel), `已完成步骤按钮改为回看文案（${doneLabel}）`);
+    }
+
+    // 副驾驶：清空 / 停止 / 复制 / Mac 键位
+    assert(!!doc.querySelector("#copilotClear"), "副驾驶提供「清空」");
+    assert(!!doc.querySelector("#copilotStop"), "副驾驶提供「停止」");
+    const botRows = doc.querySelectorAll("#copilotLog .cp-row.bot").length;
+    const copyBtns = doc.querySelectorAll("#copilotLog .cp-tools").length;
+    assert(botRows >= 1 && copyBtns >= 1, `每个回答都带「复制」操作（回答 ${botRows} 条 / 复制按钮 ${copyBtns} 个）`);
+    const kbd = (doc.querySelector("#copilotKbd") || {}).textContent || "";
+    assert(/Ctrl|⌘/.test(kbd), `快捷键提示随平台显示（${kbd}）`);
+
+    // 清空后对话与存储都归零，并重新出现快捷问题
+    doc.querySelector("#copilotClear").click();
+    await delay(20);
+    assert(doc.querySelectorAll("#copilotLog .cp-row").length === 0, "清空后对话流为空");
+    assert((window.localStorage.getItem("sectutor_copilot") || "[]") === "[]", "清空后持久化也清空");
+    assert(doc.querySelectorAll("#copilotLog .cp-hint").length >= 3, "清空后重新给出快捷问题");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
