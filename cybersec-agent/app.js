@@ -287,9 +287,12 @@
     const docs = [];
     CATS.forEach((c) => (c.topics || []).forEach((t) => {
       const text = [t.name, t.summary, Object.values(t.levels || {}).join(" "), (t.keywords || []).join(" ")].join(" ");
+      // 字段加权：名称与关键词在索引 tokens 里再重复一次（BM25 的 tf 即权重），
+      // 让「标题命中」明显强于「正文顺带提及」。展示用的 text 保持原样，避免摘要里出现重复名称。
+      const weighted = text + " " + t.name + " " + (t.keywords || []).join(" ");
       docs.push({
         id: "topic:" + t.id, src: "知识点", cat: c.id, title: t.name, level: t.level, text,
-        keywords: (t.keywords || []), tokens: tokenize(text),
+        keywords: (t.keywords || []), tokens: tokenize(weighted),
         render: () => ({ name: t.name, body: (t.levels && (t.levels[state.userLevel] || t.levels["入门"])) || t.summary, code: t.code, codeLang: t.codeLang, tool: t.tool, refs: t.refs }),
       });
     }));
