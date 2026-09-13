@@ -3710,6 +3710,19 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     while (opts[k].length <= secondMax) { opts[k] += NEUTRAL_SUFFIX[gi % NEUTRAL_SUFFIX.length]; gi++; }
     return Object.assign({}, q, { options: opts, answer: ans });
   }
+  // 自测的领域下拉：直接由数据生成，新增领域会自动出现
+  // （v1.5.1 踩过：这里原先硬编码 4 个领域，补了 network/cloud/blue 的题却选不到）
+  function refreshQuizCatOptions() {
+    const sel = $("#quizCat");
+    if (!sel || !CATS || !CATS.length) return;
+    const cur = sel.value;
+    const opts = ['<option value="all">' + (cur === "all" ? "" : "") + '全领域</option>']
+      .concat(CATS.map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + "</option>"));
+    sel.innerHTML = opts.join("");
+    if (CATS.some((c) => c.id === cur)) sel.value = cur;
+    else sel.value = "all";
+  }
+
   // 先均衡长度、再打乱位置：所有自测入口统一走这里
   function prepareQuestion(q) { return shuffleOptions(balanceOptions(q)); }
   function startQuiz() {
@@ -4263,6 +4276,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     renderTools();
     renderLabCats();
     renderLabList();
+    refreshQuizCatOptions();   // 领域下拉按数据动态生成，避免硬编码漂移
     renderProgress();
     renderToday();         // 学习驾驶舱：今日主线 + 能力可视化
     bindCopilot();         // 全局副驾驶（方向 C）

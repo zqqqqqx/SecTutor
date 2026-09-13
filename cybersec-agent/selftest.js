@@ -1572,6 +1572,23 @@ $("#backLab").click();
     assert(doc.querySelectorAll("#copilotLog .cp-hint").length >= 3, "清空后重新给出快捷问题");
   }
 
+  // ===== 47. 题库覆盖：领域下拉不漂移、每个领域都有题 =====
+  {
+    const SD = window.eval("SEC_DATA");
+    const cats = SD.categories;
+    const sel = doc.querySelector("#quizCat");
+    assert(!!sel, "自测有领域筛选下拉");
+    const ids = Array.from(sel.querySelectorAll("option")).map((o) => o.value);
+    assert(ids.length === cats.length + 1, `下拉项数 = 领域数 + 全领域（${ids.length} vs ${cats.length + 1}）`);
+    const missing = cats.filter((c) => !ids.includes(c.id)).map((c) => c.id);
+    assert(missing.length === 0, `每个领域都能被选中（缺失：${missing.join(",") || "无"}）`);
+
+    const qs = SD.quizzes || [];
+    const zero = cats.filter((c) => !qs.some((q) => q.cat === c.id)).map((c) => c.name);
+    assert(zero.length === 0, `每个领域都有题目（零题领域：${zero.join("、") || "无"}）`);
+    assert(qs.length >= 250, `题库规模已达 ${qs.length} 题`);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

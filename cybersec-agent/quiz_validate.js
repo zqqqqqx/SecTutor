@@ -30,5 +30,21 @@ for (const q of quizzes) {
 console.log("总题数:", quizzes.length);
 console.log("按领域:", JSON.stringify(byCat));
 console.log("按档位:", JSON.stringify(byLevel));
-console.log(bad === 0 ? "校验通过：全部题目结构合法" : ("发现 " + bad + " 处问题"));
+
+// —— 覆盖守门：每个领域都必须有题（v1.5.1 之前 network/cloud/blue 三个领域一道题都没有，
+//    导致「自测」根本覆盖不到这些领域，却没有任何检查发现）——
+const topicCount = {};
+SD.categories.forEach((c) => { topicCount[c.id] = (c.topics || []).length; });
+console.log("\n领域覆盖（题数 / 知识点数）:");
+let thin = [];
+SD.categories.forEach((c) => {
+  const qn = byCat[c.id] || 0;
+  const tn = topicCount[c.id] || 0;
+  const flag = qn === 0 ? "  ← 零题目（不合格）" : (qn < tn ? "  ← 题量少于知识点" : "");
+  if (qn === 0) { bad++; }
+  else if (qn < tn) { thin.push(c.name); }
+  console.log("  " + c.name.padEnd(20) + String(qn).padStart(4) + " / " + String(tn).padStart(3) + flag);
+});
+if (thin.length) console.log("提示（不判失败）：题量少于知识点数的领域 → " + thin.join("、"));
+console.log(bad === 0 ? "校验通过：全部题目结构合法，且每个领域都有题" : ("发现 " + bad + " 处问题"));
 process.exit(bad === 0 ? 0 : 1);
