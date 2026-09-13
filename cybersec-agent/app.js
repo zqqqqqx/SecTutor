@@ -4416,6 +4416,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     { id: "network", name: "网络与内网安全", icon: "🛰️" },
     { id: "cloud", name: "云原生与容器安全", icon: "☁️" },
     { id: "blue", name: "蓝队·安全运营", icon: "🛡️" },
+    { id: "mobile", name: "移动安全", icon: "📱" },
   ];
   const escapeAttr = (s) => String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;");
   function pct(a, b) { return b ? Math.round((a / b) * 100) : 0; }
@@ -5827,7 +5828,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     (TODAY_LEVEL_ORDER[b.level] == null ? 9 : TODAY_LEVEL_ORDER[b.level]) ||
     String(a.id).localeCompare(String(b.id)))[0];
   // 雷达轴标签用短名（领域全名太长，画在轴端会互相挤）
-  const DOMAIN_SHORT = { web: "Web", binary: "二进制", crypto: "密码学", pentest: "渗透", network: "网络", cloud: "云原生", blue: "蓝队" };
+  const DOMAIN_SHORT = { web: "Web", binary: "二进制", crypto: "密码学", pentest: "渗透", network: "网络", cloud: "云原生", blue: "蓝队", mobile: "移动" };
   const domainShortName = (d) => DOMAIN_SHORT[d.id] ||
     (String(d.name).split(/[\s·]+/)[0] || d.name).slice(0, 4);
 

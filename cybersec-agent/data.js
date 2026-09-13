@@ -1617,6 +1617,275 @@ zeek -C -r capture.pcap
           refs: "EDR 能力框架；MITRE ATT&CK 端点技术"
         }
       ]
+    },
+    /* ---------------- 移动安全 ---------------- */
+    {
+      id: "mobile", name: "移动安全", icon: "📱",
+      desc: "覆盖 Android 与 iOS 的客户端逆向、组件与 WebView 风险、本地数据保护、接口越权与恶意样本分析。",
+      topics: [
+        {
+          id: "mobile-attack-surface", name: "移动应用攻击面", level: "入门",
+          summary: "移动端与 Web 的风险面完全不同：客户端可被逆向、数据落在用户设备上、接口暴露在公网。",
+          keywords: ["移动安全","android","ios","攻击面","逆向","客户端"],
+          levels: {
+            "入门": "手机应用的安全和网站不一样：网站代码在服务器上你摸不到，而 App 装在用户手机里，别人可以拆开来看。所以客户端里不能放秘密（密钥、算法逻辑），只当它是不可信的。",
+            "初级": "三条主线：① 客户端（反编译、调试、改包）；② 数据（本地文件、日志、剪贴板、备份）；③ 通信与接口（抓包、证书校验、接口越权）。安全评估通常三条线一起走。",
+            "中级": "实战思路：先看清单与权限（声明了哪些敏感能力）、再拆包看组件导出与硬编码、然后抓包分析接口、最后动态挂钩（Frida）验证逻辑绕过。输出以「可复现的利用路径 + 修复建议」为准。",
+            "高级": "深入要考虑业务逻辑漏洞（如订单/积分/风控绕过）、设备指纹与风控对抗、多端一致性问题（同一接口 Web 校验严格而 App 宽松），以及合规要求（个人信息最小化收集）。",
+          },
+          codeLang: "bash",
+          code:
+`# 先看清应用基本信息（只在你拥有授权的应用上做）
+aapt dump badging app.apk | head -20     # 包名、版本、权限
+apktool d app.apk -o app_src             # 反编译资源与清单
+# 关键点：清单里的 exported=true 组件就是对外入口`,
+          tool: "jadx、apktool、MobSF、Frida、Burp Suite",
+          refs: "OWASP MASVS / MASTG"
+        },
+        {
+          id: "apk-sign", name: "应用签名与重打包", level: "初级",
+          summary: "签名保证「这个包确实由该开发者发布」；改成自己的签名就是一次新的发包，用户会看到签名不一致。",
+          keywords: ["签名","重打包","改包","v1签名","v2签名","校验"],
+          levels: {
+            "入门": "每个 App 都带一个「数字签名」，像封条。别人把内容改了再封一次，封条就不一样了，系统一对比就知道被动过。",
+            "初级": "重打包流程：反编译 → 改代码/资源 → 重新打包 → 用**自己的**密钥签名。因为签名变了，原应用无法升级覆盖，但可以诱导用户单独安装。加固与完整性校验就是为了提高这一步的成本。",
+            "中级": "实战：签名校验常写在 Java 层（getPackageInfo 的 signatures）或 native 层；Java 层用 Frida hook 返回值即可绕过。v2/v3 签名覆盖整个 APK，篡改后签名直接失效，所以改包后必须重签名。",
+            "高级": "进阶对抗：签名校验分散在多处 + 与 native 交叉验证、运行时自校验（校验自身 dex 哈希）。破解思路是定位校验点批量 nop 或统一 hook，同时在测试报告里指出「客户端校验只能提高成本，不能作为唯一防线」。",
+          },
+          codeLang: "bash",
+          code:
+`# 重打包需要重新签名（示例密钥仅用于测试）
+keytool -genkey -v -keystore my.keystore -alias t -keyalg RSA -keysize 2048 -validity 365
+apksigner sign --ks my.keystore --out app-signed.apk app-unsigned.apk
+apksigner verify -v app-signed.apk    # 验证签名`,
+          tool: "apksigner、jarsigner、keytool、apktool",
+          refs: "Android 官方签名文档；OWASP MASTG"
+        },
+        {
+          id: "component-export", name: "组件导出与 Intent 劫持", level: "初级",
+          summary: "Android 四大组件若 exported=true 就会被其它应用调用；权限校验缺失时可越权启动、读数据、发广播。",
+          keywords: ["组件导出","intent","activity","service","broadcast","provider","越权"],
+          levels: {
+            "入门": "App 内部有很多「门」，有些门是给外部开的（比如分享、扫码）。如果开着的门后面是敏感功能且不查身份，别的应用就能直接进去。",
+            "初级": "常见问题：Activity 被导出且无校验（可被拉起敏感页面）、Service 导出可被任意调用、BroadcastReceiver 可被伪造广播触发、ContentProvider 导出导致任意读文件（如目录穿越）。",
+            "中级": "实战：读 AndroidManifest 找 exported=true 与 intent-filter，用 adb 直接拉起验证：am start -n 包名/组件、am broadcast 发广播、content query 读 Provider。确认是否需要权限或校验。",
+            "高级": "深入：Provider 的路径穿越（../ 拼接）、PendingIntent 误用导致的权限提升、以及隐式 Intent 被恶意应用抢占（加白名单校验）。修复原则：默认不导出 + 导出必校验权限与调用方。",
+          },
+          codeLang: "bash",
+          code:
+`# 用 adb 验证导出组件是否可被外部调用（授权测试）
+adb shell am start -n com.example/.SecretActivity
+adb shell am broadcast -a com.example.ACTION_X --ez flag true
+adb shell content query --uri content://com.example.provider/users`,
+          tool: "adb、jadx、drozer",
+          refs: "Android 组件安全文档；OWASP MASTG"
+        },
+        {
+          id: "webview", name: "WebView 与 JS 桥安全", level: "中级",
+          summary: "WebView 同时有网页和原生能力，配置不当会让恶意页面调用原生接口（JS 桥）或读取本地文件。",
+          keywords: ["webview","jsbridge","addJavascriptInterface","xss","file协议","加载url"],
+          levels: {
+            "入门": "App 里内嵌的网页（WebView）像个小浏览器。如果它既能上外网、又装着「调用 App 功能」的桥，那恶意网页就可能顺着桥去动 App 的数据。",
+            "初级": "三个高危配置：JavaScript 已开启 + addJavascriptInterface 暴露对象（低版本可反射调用任意类）、允许 file:// 加载本地文件、对 URL 白名单不严（可加载攻击者页面）。",
+            "中级": "实战路径：先确认 WebView 加载的 URL 是否可控（deeplink 参数、扫码、推送）；若可控，构造页面调用 JS 桥方法做越权；再配合 file 协议读取本地敏感文件。",
+            "高级": "深入：桥方法的参数校验缺失可导致任意文件读写/命令执行；WebView 与原生双向信任要按「不可信输入」处理。修复：严格 URL 白名单、关闭不必要接口、@JavascriptInterface 白名单暴露、禁 file 协议。",
+          },
+          codeLang: "java",
+          code:
+`// 危险：暴露原生对象给网页（恶意页面可调用其中所有方法）
+webView.getSettings().setJavaScriptEnabled(true);
+webView.addJavascriptInterface(new Bridge(), "app");
+
+// 修复方向：只暴露必要方法 + 校验调用来源 URL + 严格白名单
+webView.loadUrl("https://trusted.example.com");`,
+          tool: "jadx、Frida、Burp Suite（改包注入页面）",
+          refs: "OWASP MASTG；Android WebView 安全指南"
+        },
+        {
+          id: "local-storage", name: "本地存储与数据泄露", level: "入门",
+          summary: "App 写在本地的文件、数据库、日志、剪贴板都可能留敏感信息，设备被 Root 或备份导出即可读。",
+          keywords: ["本地存储","sharedpreferences","sqlite","日志","剪贴板","备份","数据泄露"],
+          levels: {
+            "入门": "App 会把配置、缓存、登录信息写在手机存储里。手机如果被别人拿到（或对方有 Root 权限），这些文件就是公开的。",
+            "初级": "常见落点：SharedPreferences（明文键值对）、SQLite 数据库、缓存目录、日志（logcat 打印口令/令牌）、剪贴板、外部存储（任何应用可读）。",
+            "中级": "实战：adb 备份或直接读 /data/data/包名（需 Root）；检索关键字 token/password/key；检查是否写入外部存储与是否可被备份（allowBackup=true 时可在非 Root 设备上导出）。",
+            "高级": "深入：加固要点是「敏感数据不落地」——用 Keystore/Keychain 保管密钥、加密存储、禁止敏感日志、关闭 allowBackup、对外部存储零信任。合规上还涉及个人信息最小化与脱敏。",
+          },
+          codeLang: "bash",
+          code:
+`# 在有授权的测试设备上查看应用私有数据（通常需 root 或 debuggable 包）
+adb shell run-as com.example cat /data/data/com.example/shared_prefs/auth.xml
+adb logcat | grep -i -E "token|password|secret"    # 检查是否打印敏感信息`,
+          tool: "adb、Frida、MobSF",
+          refs: "OWASP MASVS-STORAGE"
+        },
+        {
+          id: "ssl-pinning", name: "证书校验与中间人", level: "初级",
+          summary: "只靠系统信任链，用户装上自签根证书就能抓包；证书固定（pinning）把信任范围收窄到指定证书。",
+          keywords: ["https","证书固定","pinning","中间人","抓包","burp","信任链"],
+          levels: {
+            "入门": "https 靠「证书」确认对面是真正的服务器。如果手机被安装了假的根证书，代理就能解密流量——证书固定就是进一步指定「我只信这张证书」。",
+            "初级": "默认校验证书链 + 域名；若 App 未做额外固定，在测试设备上安装代理根证书即可抓包。做了 pinning 后代理会握手失败。",
+            "中级": "实战：遇到 pinning 失败，常见绕过点是 Java 层 X509TrustManager / HostnameVerifier 的 hook，或 okhttp 的 CertificatePinner。用 Frida 脚本统一 hook 掉校验。",
+            "高级": "深入：native 层校验（BoringSSL/自定义 libcurl）需要 hook 更底层函数；双向 TLS（mTLS）与证书透明度是更强的方案。注意：抓包绕过是测试手段，报告里要说明「服务端仍需鉴权与风控」。",
+          },
+          codeLang: "javascript",
+          code:
+`// Frida：绕过 Java 层证书校验（仅用于你拥有授权的测试）
+Java.perform(function () {
+  var TM = Java.use("javax.net.ssl.X509TrustManager");
+  var Impl = Java.registerClass({
+    name: "bypass.TM", implements: [TM],
+    methods: {
+      checkClientTrusted: function () {},
+      checkServerTrusted: function () {},
+      getAcceptedIssuers: function () { return []; }
+    }
+  });
+  // 结合 SSLContext 注入 Impl 使用
+});`,
+          tool: "Frida、objection、Burp Suite、mitmproxy",
+          refs: "OWASP MASTG-NETWORK"
+        },
+        {
+          id: "dynamic-debug", name: "动态调试与反调试", level: "中级",
+          summary: "动态分析在运行时看真实行为；反调试（检测调试器/ptrace/时间差）用来提高分析成本。",
+          keywords: ["动态调试","frida","xposed","ptrace","反调试","hook","jdb"],
+          levels: {
+            "入门": "静态看代码像看说明书，动态调试是把 App 跑起来看它实际做了什么——输入什么、返回什么、关键判断在哪一步。",
+            "初级": "手段：adb + jdb 附加调试（需 debuggable）、Frida 注入 hook 函数、Xposed/LSPosed 改行为。反调试则是 App 主动检测：检测调试端口、ptrace 自附加、检测 Frida 端口与库名。",
+            "中级": "实战：先判断是否可调试（debuggable 标志、ro.debuggable）；被反调试拦下时，定位检测函数并 hook 返回假值（如 ptrace 返回 0、检测到 frida 的字符串改掉）。",
+            "高级": "深入：native 反调试（自 ptrace、检测 TracerPid、时间差、信号）、多线程检测与延迟触发；对抗思路是 patch + hook 组合，并在报告中强调「反调试只增加成本」。",
+          },
+          codeLang: "bash",
+          code:
+`# Frida 快速附着与常用脚本（授权测试）
+frida-ps -U | grep -i 包名
+frida -U -f com.example -l bypass.js --no-pause
+
+# objection 一行绕过常见检测
+objection -g com.example explore --startup-command "android root disable" `,
+          tool: "Frida、objection、jdb、IDA/Ghidra",
+          refs: "Frida 文档；OWASP MASTG-RESILIENCE"
+        },
+        {
+          id: "root-detect", name: "Root 检测与绕过", level: "中级",
+          summary: "Root 让攻击者能读私有数据、挂载 hook；检测手段多样但都可被绕过，属于「提高成本」类防护。",
+          keywords: ["root","magisk","检测","绕过","su","busybox","完整性"],
+          levels: {
+            "入门": "Root 相当于手机的最高管理员权限。App 里敏感功能会先问一句「这台手机是不是被 Root 了」，是的话就拒绝运行。",
+            "初级": "常见检测点：su 二进制路径、BusyBox、系统分区可写、Magisk 痕迹、SafetyNet/Play Integrity 校验、以及执行 su 命令的成功与否。",
+            "中级": "实战：在 Magisk 里开启隐藏（DenyList/Zygisk + Shamiko）、重命名 su、用 Frida hook 检测函数返回假值。通常先跑一遍看哪一项触发，再定点处理。",
+            "高级": "深入：完整性校验已上移到云端（Play Integrity API），本地隐藏会失效；这类对抗是军备竞赛。评估结论应写清「检测可被绕过，真正的防线是服务端风控与最小数据落地」。",
+          },
+          codeLang: "bash",
+          code:
+`# 查看当前 root 痕迹（授权测试设备）
+adb shell which su; adb shell ls /system/xbin/su
+adb shell getprop ro.debuggable; adb shell getprop ro.secure
+
+# Magisk 隐藏：DenyList / Zygisk + 重命名包名后再验证`,
+          tool: "Magisk、Shamiko、Frida、Play Integrity",
+          refs: "OWASP MASTG-RESILIENCE"
+        },
+        {
+          id: "app-hardening", name: "加固与脱壳", level: "高级",
+          summary: "加固通过加密 dex、壳、混淆、反调试提高逆向成本；脱壳就是在内存里把真实代码还原出来。",
+          keywords: ["加固","壳","脱壳","ollvm","混淆","dex","dump","frida-dexdump"],
+          levels: {
+            "入门": "「加固」是把代码锁进一个盒子，运行时才打开。逆向的人要先把盒子打开（脱壳）才能看到真正的代码。",
+            "初级": "常见加固手段：dex 加密（运行时解密加载）、整体壳/抽取壳、VMP、OLLVM 控制流平坦化、字符串加密、资源混淆。",
+            "中级": "实战脱壳：在解密完成、代码已加载到内存时 dump（Frida-dexdump、fart、基于 ART 的 dump），再修复 dex 头与提取代码，然后交给 jadx 反编译。",
+            "高级": "深入：指令抽取型壳需要运行时重建；VMP 需动态 trace 还原语义；OLLVM 靠去平坦化与符号执行。工程化做法是自动化 dump + 批量修复，同时评估加固带来的真实收益。",
+          },
+          codeLang: "bash",
+          code:
+`# 运行时脱壳思路（授权测试）
+# 1) 用 frida-dexdump 在应用启动后 dump 内存中的 dex
+frida-dexdump -U -f com.example
+# 2) 修复后的 dex 用 jadx 反编译查看真实逻辑
+jadx-gui dumped/`,
+          tool: "frida-dexdump、FART、Ghidra、jadx",
+          refs: "OWASP MASTG-RESILIENCE；脱壳技术综述"
+        },
+        {
+          id: "ios-basics", name: "iOS 应用安全基础", level: "初级",
+          summary: "iOS 沙盒更严格，但 IPA 同样可被重签名安装、Keychain 与 plist 是重点关注对象。",
+          keywords: ["ios","ipa","重签名","keychain","plist","沙盒","越狱"],
+          levels: {
+            "入门": "iPhone 上的应用被关在自己的「沙盒」里，互相看不到数据。但拿到安装包（IPA）后同样可以拆开分析结构、资源和配置。",
+            "初级": "关注点：IPA 解包后的 Info.plist 与配置（URL Scheme、ATS 例外）、Keychain 存储、NSUserDefaults、日志、以及是否可被重签名后安装到非越狱设备。",
+            "中级": "实战：class-dump 看类与方法、Hopper/Ghidra 反编译、未加密的二进制可直接静态分析；越狱设备上可用 Frida 做运行时 hook。",
+            "高级": "深入：ATS 配置放宽带来的明文风险、URL Scheme 被劫持、Keychain 访问组误配、以及企业证书/描述文件滥用带来的分发风险。",
+          },
+          codeLang: "bash",
+          code:
+`# IPA 结构与静态检查（授权测试）
+unzip -o app.ipa -d ipa_out
+plutil -p ipa_out/Payload/*.app/Info.plist | head -30   # 看 ATS / URL Scheme
+# 检查二进制是否加密（cryptid=1 表示已加密，需在设备上解密后分析）
+otool -l ipa_out/Payload/*.app/AppBinary | grep -A2 crypt`,
+          tool: "class-dump、Hopper、Ghidra、Frida、plutil",
+          refs: "OWASP MASTG（iOS 部分）"
+        },
+        {
+          id: "jailbreak-detect", name: "越狱检测与绕过", level: "中级",
+          summary: "越狱后沙盒与签名校验被削弱，检测手段（文件/URL Scheme/沙盒完整性）同样可被绕过。",
+          keywords: ["越狱","jailbreak","cydia","检测","绕过","沙盒"],
+          levels: {
+            "入门": "越狱就是解除 iPhone 的系统限制。App 会用各种办法判断「这台设备是不是被越狱了」，是就限制功能。",
+            "初级": "检测点：Cydia/越狱应用路径、可写的系统目录、可疑 URL Scheme（cydia://）、fork 是否可用、沙盒完整性检查。",
+            "中级": "实战：越狱设备上用 Frida hook 检测函数或直接改文件系统指纹；也可用「越狱隐藏」类插件通过检测。重点是确认绕过能否带来真实越权。",
+            "高级": "深入：检测与绕过长期对抗，无法彻底防；评估应聚焦「越狱后攻击者能得到什么」（Keychain、内存、hook），并把防线放在服务端与数据最小化上。",
+          },
+          codeLang: "bash",
+          code:
+`# 越狱迹象检查（授权测试）
+ls /Applications/Cydia.app /usr/sbin/sshd 2>/dev/null
+# 用 Frida hook 常见检测函数
+frida -U -f com.example -l jb_bypass.js`,
+          tool: "Frida、objection、Liberty Lite",
+          refs: "OWASP MASTG-RESILIENCE（iOS）"
+        },
+        {
+          id: "mobile-api", name: "移动端 API 接口风险", level: "中级",
+          summary: "接口是移动端最有价值的目标：越权、批量枚举、参数篡改、签名算法泄露都出在这一层。",
+          keywords: ["api","越权","idor","参数篡改","签名","批量枚举","风控"],
+          levels: {
+            "入门": "App 显示的数据都来自服务器接口。客户端能被改，所以接口必须自己判断「你有没有权限」，不能靠 App 界面藏起来。",
+            "初级": "典型问题：水平越权（改 id 看别人数据）、垂直越权（普通用户调管理接口）、参数篡改（金额/数量/角色）、无限流可批量枚举手机号或订单号。",
+            "中级": "实战：抓包拿接口清单 → 用不同账号交叉验证越权 → 检查签名/加密参数如何生成（常在客户端硬编码或可逆）→ 验证是否可重放、是否有频率限制。",
+            "高级": "深入：客户端签名只能防「改包」，不能防「重放与脚本化」；风控需服务端行为建模。评估结论要给出「服务端鉴权 + 参数不可信 + 限流幂等」的修复优先级。",
+          },
+          codeLang: "bash",
+          code:
+`# 抓包与重放（授权测试）
+# 1) 代理抓取接口；2) 用不同账号替换 id/token 验证越权
+curl -X GET "https://api.example.com/v1/orders/1002" -H "Authorization: Bearer <另一账号 token>"
+# 3) 检查是否可批量：同一接口连打 100 次看是否限流`,
+          tool: "Burp Suite、mitmproxy、Postman",
+          refs: "OWASP API Security Top 10"
+        },
+        {
+          id: "mobile-malware", name: "移动恶意样本分析", level: "高级",
+          summary: "移动恶意软件以窃取凭据、短信/验证码、静默订阅为主要目的；分析要兼顾静态特征与运行时行为。",
+          keywords: ["恶意样本","短信拦截","无障碍服务","静默订阅","家族","ioc"],
+          levels: {
+            "入门": "有些 App 装上去就想偷东西：偷短信验证码、偷通讯录、偷偷扣费。分析样本就是搞清它到底干了什么。",
+            "初级": "常见手法：申请无障碍服务（Accessibility）做自动点击与读屏窃取、短信/通话权限、动态加载 dex 躲避检测、伪装成正常工具类应用。",
+            "中级": "分析流程：静态看权限与网络域名（IOC 提取）→ 沙箱或真机运行观察行为 → 抓包看 C2 与上报格式 → 输出家族特征与检测规则。",
+            "高级": "深入：多阶段载荷（下载器 + 二次加载）、加固与反分析、C2 域名生成算法（DGA）、以及在企业侧的检测落地（EDR 规则、网络 IOC、MTD 移动威胁防御）。",
+          },
+          codeLang: "bash",
+          code:
+`# 静态快速提取 IOC（授权分析，样本隔离环境）
+strings sample.apk | grep -Eo "https?://[a-zA-Z0-9./_-]+" | sort -u | head
+# 清单里的敏感权限
+aapt dump permissions sample.apk`,
+          tool: "MobSF、jadx、Frida、Cuckoo/沙箱",
+          refs: "OWASP MASTG；移动恶意软件分析实践"
+        },
+      ]
     }
   ],
 
@@ -2230,6 +2499,34 @@ zeek -C -r capture.pcap
   { id:"bp16", cat:"blue", level:"初级", q:"EDR 与传统杀毒软件的核心区别是？", options:["基于行为与遥测持续检测与响应，而非仅靠特征匹配","只查本地病毒库","只做磁盘加密","只做补丁管理"], answer:0, explain:"EDR 关注进程行为链与响应动作（隔离、取证），对未知威胁更有效。" },
   { id:"bp17", cat:"blue", level:"初级", q:"终端遥测中对溯源最有价值的数据是？", options:["进程树与命令行、父子进程关系","桌面壁纸","屏幕分辨率","输入法设置"], answer:0, explain:"命令行与进程父子关系能还原完整攻击链，是 EDR 溯源的核心数据。" },
   { id:"bp18", cat:"blue", level:"中级", q:"EDR 的「隔离主机」动作的价值是？", options:["切断攻击者横向移动与 C2 通道，同时保留取证数据","删除主机全部文件","自动重装操作系统","关闭全部日志"], answer:0, explain:"网络隔离是遏制与取证的平衡做法；直接删除或重装会毁掉证据。" },
+
+  // ---- 移动安全（v1.5.1 第二批：新增领域）----
+  { id:"mob1", cat:"mobile", level:"入门", q:"为什么说「客户端不可信」？", options:["因为手机性能不足","因为 App 装在做题者/攻击者可控的设备上，可被逆向与改包","因为移动网络不安全","因为安卓开源"], answer:1, explain:"客户端代码与数据都在用户设备上，可被反编译、调试与篡改；安全校验必须放在服务端。" },
+  { id:"mob2", cat:"mobile", level:"入门", q:"移动应用安全评估的三条主线通常指？", options:["客户端、数据存储、通信与接口","界面、性能、兼容性","安装、卸载、升级","广告、推送、统计"], answer:0, explain:"客户端（逆向/调试）、本地数据、通信与接口是移动安全的三个主要风险面。" },
+  { id:"mob3", cat:"mobile", level:"初级", q:"重打包（改包）后必须做的一件事是？", options:["重新签名","重新申请包名","重新上架应用商店","重装系统"], answer:0, explain:"改动内容会让原签名失效，必须用自己的密钥重新签名，否则无法安装。" },
+  { id:"mob4", cat:"mobile", level:"初级", q:"应用签名校验的作用是？", options:["保证安装包未被篡改、且来自该开发者","加密应用数据","提升运行速度","限制安装设备数量"], answer:0, explain:"签名是完整性与来源的凭证；改包后签名必然不一致。" },
+  { id:"mob5", cat:"mobile", level:"初级", q:"AndroidManifest 中 exported=true 的组件意味着？", options:["可被其它应用调用，需要额外权限校验","只在应用内可用","必须系统签名","仅调试模式可见"], answer:0, explain:"导出组件是对外入口，若缺少权限/调用方校验就可能被越权调用。" },
+  { id:"mob6", cat:"mobile", level:"初级", q:"用 adb 验证组件是否可被外部拉起，常用命令是？", options:["adb shell am start -n 包名/组件","adb install","adb logcat","adb reboot"], answer:0, explain:"am start 可直接拉起指定 Activity；同理 am broadcast、content query 验证广播与 Provider。" },
+  { id:"mob7", cat:"mobile", level:"中级", q:"WebView 中 addJavascriptInterface 的风险是？", options:["网页中的 JS 可调用原生对象的方法，页面可控时可能越权读写本地数据","会拖慢页面加载","会禁用 JavaScript","只影响渲染样式"], answer:0, explain:"桥接暴露了原生能力，若加载的 URL 可控即可被恶意页面利用；应严格白名单并最小化暴露。" },
+  { id:"mob8", cat:"mobile", level:"中级", q:"WebView 加固的正确做法是？", options:["严格控制加载域名白名单、关闭 file 协议、只暴露必要接口并校验参数","开启全部 JS 能力方便开发","允许加载任意 URL","把敏感方法都挂到桥对象上"], answer:0, explain:"WebView 要按不可信输入处理：白名单 + 最小暴露 + 参数校验。" },
+  { id:"mob9", cat:"mobile", level:"入门", q:"下列哪项最容易导致本地敏感数据泄露？", options:["把令牌写入日志、SharedPreferences 明文存储并开启 allowBackup","使用 Keystore 保存密钥","关闭敏感日志","数据不落地"], answer:0, explain:"明文落盘 + 日志输出 + 可备份，三者叠加会让凭据暴露；应尽量不落地并用系统密钥库。" },
+  { id:"mob10", cat:"mobile", level:"入门", q:"检测 App 是否把敏感信息写进日志，常用命令是？", options:["adb logcat | grep -i token","adb install","adb shell am start","adb shell dumpsys cpuinfo"], answer:0, explain:"logcat 过滤关键字（token/password/secret）能快速发现敏感日志。" },
+  { id:"mob11", cat:"mobile", level:"初级", q:"证书固定（Certificate Pinning）的作用是？", options:["把信任范围收窄到指定证书/公钥，降低自签根证书代理抓包的成功率","加密本地文件","提升下载速度","防止应用被重打包"], answer:0, explain:"Pinning 让仅凭系统信任链的中间人失效；但可被运行时 hook 绕过，服务端仍需鉴权。" },
+  { id:"mob12", cat:"mobile", level:"初级", q:"在授权测试中遇到证书固定导致抓包失败，常见处理方式是？", options:["用 Frida hook 掉 X509TrustManager/CertificatePinner 等校验点","直接放弃测试","关闭手机 Wi-Fi","改用 HTTP 明文接口"], answer:0, explain:"动态 hook 校验函数是标准绕过手段；注意这是测试手段，不代表线上可被轻易利用。" },
+  { id:"mob13", cat:"mobile", level:"中级", q:"Frida 在移动测试中的主要用途是？", options:["运行时 hook 函数、修改返回值、观察真实行为","静态反编译 dex","打包签名","抓取网络包"], answer:0, explain:"Frida 是动态分析核心工具；静态反编译用 jadx/Ghidra，抓包用代理。" },
+  { id:"mob14", cat:"mobile", level:"中级", q:"App 检测到调试器就退出，这类防护的定位是？", options:["提高分析成本，但可被绕过，不能作为唯一防线","彻底阻断逆向","等同服务端鉴权","属于加密手段"], answer:0, explain:"反调试/反 Root 属军备竞赛，只能提高门槛；真正的防线是服务端校验与数据最小化。" },
+  { id:"mob15", cat:"mobile", level:"中级", q:"绕过 Root 检测最常用的工程化做法是？", options:["用 Magisk 的隐藏能力（DenyList/Zygisk）并配合 hook 返回假值","卸载所有安全软件","改用 iPhone","关闭开发者选项"], answer:0, explain:"隐藏 Root 痕迹 + hook 检测点为假值，是标准组合拳；但仍可能被云端完整性校验发现。" },
+  { id:"mob16", cat:"mobile", level:"中级", q:"对抗「越狱/Root 检测」时最关键的评估产出是？", options:["绕过之后攻击者究竟能获得什么权限与数据","检测代码有多少行","使用了哪种编程语言","厂商名称"], answer:0, explain:"绕过本身不是目的，要评估由此带来的真实越权后果与影响面。" },
+  { id:"mob17", cat:"mobile", level:"高级", q:"脱壳（dump dex）通常发生在什么时候？", options:["应用启动、壳完成解密、真实代码已加载到内存之后","安装过程中","下载 APK 之前","卸载之后"], answer:0, explain:"抽取式壳在运行时才解密出真实代码，必须在内存中 dump 再修复 dex。" },
+  { id:"mob18", cat:"mobile", level:"高级", q:"OLLVM 控制流平坦化给逆向带来的主要困难是？", options:["打乱控制流，使逻辑难以还原，需要去平坦化分析","加密网络流量","隐藏应用图标","禁用调试端口"], answer:0, explain:"控制流平坦化会显著增加静态分析成本，常需配合动态 trace 与脚本化还原。" },
+  { id:"mob19", cat:"mobile", level:"初级", q:"iOS 应用包（IPA）解包后应优先关注什么？", options:["Info.plist 中的 ATS 例外、URL Scheme 与权限配置","图片资源数量","字体大小","应用图标样式"], answer:0, explain:"ATS 放宽与 URL Scheme 暴露是 iOS 侧常见风险点，先看配置再看二进制。" },
+  { id:"mob20", cat:"mobile", level:"初级", q:"iOS 侧存储敏感数据更推荐的方式是？", options:["Keychain（并正确设置访问控制）","明文写入 plist","写进 NSUserDefaults","写进日志"], answer:0, explain:"Keychain 由系统加密保管；plist/UserDefaults 明文易被读取，日志更会直接泄露。" },
+  { id:"mob21", cat:"mobile", level:"中级", q:"移动端接口最常见的越权类型是？", options:["水平越权：改 id 就能看/改他人数据","接口不支持 HTTPS","接口返回 JSON","接口使用 REST 风格"], answer:0, explain:"服务端只校验登录、不校验数据归属，是移动接口最典型的漏洞。" },
+  { id:"mob22", cat:"mobile", level:"中级", q:"为什么「客户端加密/签名」不能替代服务端校验？", options:["因为客户端逻辑可被逆向与重放，攻击者能绕过或复现签名流程","因为加密速度慢","因为会增大包体","因为不受开发者控制"], answer:0, explain:"客户端签名只能抬高改包成本，无法阻止脚本化调用与重放；鉴权与风控必须在服务端。" },
+  { id:"mob23", cat:"mobile", level:"中级", q:"评估移动接口是否可被批量滥用，最直接的验证是？", options:["对同一接口高频重复调用，观察是否有频率限制与风控拦截","查看接口返回码个数","统计接口文档页数","检查是否用了 CDN"], answer:0, explain:"缺少限流与风控会导致枚举/撞库/羊毛；需实测确认。" },
+  { id:"mob24", cat:"mobile", level:"高级", q:"移动恶意样本最常申请的敏感权限/能力是？", options:["无障碍服务、短信与通话权限","蓝牙配对","屏幕亮度调节","振动"], answer:0, explain:"无障碍服务可读屏与自动点击、短信权限可窃取验证码，二者是移动恶意的常见组合。" },
+  { id:"mob25", cat:"mobile", level:"高级", q:"分析移动恶意样本时提取 IOC 的主要来源是？", options:["静态字符串中的域名/URL 与运行时抓包得到的 C2","应用图标的配色","安装包体积","开发者签名算法"], answer:0, explain:"域名、URL、C2 地址是 IOC 核心，静态提取与动态抓包互相补充。" },
+  { id:"mob26", cat:"mobile", level:"高级", q:"多阶段载荷（下载器 + 二次加载）对分析的影响是？", options:["核心恶意逻辑不在初始包中，需要动态跟踪后续加载","样本无法运行","不需要分析网络行为","只能在静态阶段发现"], answer:0, explain:"二次加载要求动态分析跟踪落地文件与解密过程，否则无法看清真实行为。" },
   ]
 };
 
@@ -2300,5 +2597,13 @@ SEC_DATA.knowledge_graph = {
     recon: ["port-scan", "osint"], osint: ["social"], social: ["osint"],
     "threat-intel": ["osint"], metadata: ["ssrf"], ssrf: ["metadata"],
     ids: ["edr", "fw-bypass"], edr: ["ids"],
+    // 移动安全：客户端逆向 / 组件 / 通信 / 数据 四条线互相印证
+    "mobile-attack-surface": ["apk-sign", "local-storage"], "apk-sign": ["mobile-attack-surface", "app-hardening"],
+    "component-export": ["webview", "mobile-api"], webview: ["component-export", "ssl-pinning"],
+    "local-storage": ["mobile-attack-surface", "root-detect"], "ssl-pinning": ["mobile-api", "dynamic-debug"],
+    "dynamic-debug": ["root-detect", "ssl-pinning"], "root-detect": ["dynamic-debug", "jailbreak-detect"],
+    "app-hardening": ["apk-sign", "mobile-malware"], "ios-basics": ["jailbreak-detect", "ssl-pinning"],
+    "jailbreak-detect": ["ios-basics", "root-detect"], "mobile-api": ["component-export", "ssl-pinning"],
+    "mobile-malware": ["app-hardening", "local-storage"],
   }
 };
