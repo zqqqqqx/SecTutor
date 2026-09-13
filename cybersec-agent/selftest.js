@@ -652,19 +652,19 @@ $("#backLab").click();
     const HARD = [
       ["攻击者让受害者的浏览器执行恶意脚本从而窃取 cookie", ["xss"]],
       ["在登录框里拼接数据库查询语句绕过身份验证", ["sqli"]],
-      ["让服务器代为请求内网地址来探测内部服务", ["ssrf"]],
-      ["上传木马文件到服务器进而获取权限", ["upload"]],
+      ["让服务器代为请求内网地址来探测内部服务", ["ssrf", "web-ssrf"]],
+      ["上传木马文件到服务器进而获取权限", ["upload", "web-upload"]],
       ["内存块被释放之后指针仍然被继续使用", ["uaf"]],
-      ["用私钥签名、公钥验签的非对称体系", ["asym", "pki"]],
+      ["用私钥签名、公钥验签的非对称体系", ["asym", "pki", "crypto-sign"]],
       ["已经拿到普通用户权限，如何进一步提权到系统管理员", ["privesc", "priv-esc"]],
       ["拿下内网一台机器后继续扩散控制其他主机", ["lateral", "net-lateral"]],
       ["容器里的进程突破隔离拿到了宿主机权限", ["container-escape"]],
       ["文件被加密勒索了应该怎么处理", ["ir"]],
-      ["想摸清目标公司暴露在外的域名和子域名", ["recon", "osint"]],
+      ["想摸清目标公司暴露在外的域名和子域名", ["recon", "osint", "pt-recon"]],
       ["篡改域名解析结果把用户引到假冒网站", ["arp-dns"]],
       ["令牌可以被随意伪造，服务端没有校验签名", ["jwt", "auth"]],
       ["随机数序列可以被预测导致密钥被推算出来", ["rand"]],
-      ["在没有授权的情况下读取到别人的订单数据", ["idor", "api-sec"]],
+      ["在没有授权的情况下读取到别人的订单数据", ["idor", "api-sec", "web-api-sec"]],
     ];
     let q1 = 0, q4 = 0;
     for (const [q, want] of HARD) {
@@ -1587,6 +1587,15 @@ $("#backLab").click();
     const zero = cats.filter((c) => !qs.some((q) => q.cat === c.id)).map((c) => c.name);
     assert(zero.length === 0, `每个领域都有题目（零题领域：${zero.join("、") || "无"}）`);
     assert(qs.length >= 250, `题库规模已达 ${qs.length} 题`);
+
+    // 题量厚度：每个领域平均每知识点 ≥3 题（v1.5.1 第九批达成，防止后续稀释）
+    const thin = cats.filter((c) => {
+      const tn = (c.topics || []).length;
+      if (!tn) return false;
+      const qn = qs.filter((q) => q.cat === c.id).length;
+      return qn / tn < 3;
+    }).map((c) => c.name + "(" + qs.filter((q) => q.cat === c.id).length + "/" + (c.topics || []).length + ")");
+    assert(thin.length === 0, `每个领域平均每知识点 ≥3 题（不足：${thin.join("、") || "无"}）`);
   }
 
   console.log("\n==== 自测结果 ====");
