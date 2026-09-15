@@ -24,6 +24,10 @@ eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: false }).re
 eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: false }).updatable, false, '组件未加载不可更新');
 eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: true }).reason, 'ok', '安装版 → ok');
 eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: true }).updatable, true, '安装版可更新');
+eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: true, configPresent: true }).reason, 'ok', '安装版且配置齐全 → ok');
+eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: true, configPresent: false }).reason, 'noconfig', '缺 app-update.yml → noconfig');
+eq(core.classifyEdition({ isPackaged: true, portable: false, loaded: true, configPresent: false }).updatable, false, '缺配置不可更新（避免 ENOENT）');
+eq(core.classifyEdition({ isPackaged: true, portable: true, loaded: true, configPresent: false }).reason, 'portable', 'Portable 优先判定为 portable');
 // 判定顺序：未打包优先于免安装（开发态跑 Portable 也只应报 dev）
 eq(core.classifyEdition({ isPackaged: false, portable: true, loaded: false }).reason, 'dev', 'dev 优先于 portable/loader');
 

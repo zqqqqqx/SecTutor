@@ -178,11 +178,17 @@ if (app.isPackaged) {
 //    electron-updater 的 NSIS 更新只对「安装版」有效，Portable 强开会在 quitAndInstall
 //    时失败，还会误导用户以为能自动升级。
 //  - electron-updater 加载失败 → loader：不启用
-//  - 安装版 → ok：启用
+//  - 缺少 resources/app-update.yml → noconfig：不启用（避免 checkForUpdates 抛 ENOENT）
+//  - 安装版且配置齐全 → ok：启用
+//  - resources/app-update.yml 缺失 → noconfig：不启用（否则 electron-updater 会抛 ENOENT）
+const UPDATE_CONFIG_PATH = path.join(process.resourcesPath || '', 'app-update.yml');
 const EDITION = updaterCore.classifyEdition({
   isPackaged: app.isPackaged,
   portable: !!process.env.PORTABLE_EXECUTABLE_DIR,
   loaded: !!autoUpdater,
+  configPresent: (() => {
+    try { return fs.existsSync(UPDATE_CONFIG_PATH); } catch (e) { return false; }
+  })(),
 });
 
 // 更新状态机：单一数据源，主进程 → 渲染进程单向推送，UI 只消费不回写。

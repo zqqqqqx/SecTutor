@@ -4069,6 +4069,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   // 不可用形态（reason）的中英文说明。网页版整块隐藏不走到这；这里覆盖
   // Electron 里的开发态 / Portable / 组件加载失败三种「壳在但更新不可用」的情况。
   const UPDATE_DISABLED_TEXT = {
+    noconfig: {
+      zh: "自动更新配置缺失（resources/app-update.yml 不存在），本次运行不启用更新。请重新安装完整安装版。",
+      en: "Update config is missing (resources/app-update.yml). Reinstall the full setup edition to enable updates.",
+    },
     portable: {
       zh: "当前为免安装版（Portable），不支持自动更新。如需自动更新，请下载安装版 SecTutor-Setup-x.y.z.exe。",
       en: "Portable edition does not support auto-update. Install the setup edition (SecTutor-Setup-x.y.z.exe) to enable it.",

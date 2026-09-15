@@ -8,7 +8,7 @@
  * 便于用普通 node 直接做单元测试，也避免把判定散落在 IPC / 事件回调里。
  *
  * 产出三类能力：
- *  1. classifyEdition —— 当前运行形态是否支持自动更新（普适性：Portable 不误启用）
+ *  1. classifyEdition —— 当前运行形态是否支持自动更新（普适性：Portable / 缺配置 不误启用）
  *  2. classifyError  —— 把 electron-updater 的原始错误归类成用户可理解的类型（稳定性）
  *  3. createThrottle / canInstall —— 检查节流与安装守卫（稳定性：防重复检查/越权安装）
  */
@@ -18,10 +18,14 @@
 // portable:   是否存在 PORTABLE_EXECUTABLE_DIR（electron-builder Portable 启动器会设置）
 // loaded:     require('electron-updater') 是否成功
 // 返回 { updatable:boolean, reason:'ok'|'dev'|'portable'|'loader' }
-function classifyEdition({ isPackaged, portable, loaded }) {
+// configPresent: resources/app-update.yml 是否存在（electron-updater 运行时必需）。
+// 缺失时若仍启用，点「检查更新」会直接抛 ENOENT（v1.5.1 实测：手工组装的 win-unpacked /
+// Portable 副本都缺这个文件）——因此这里提前判定为不可更新，让 UI 给出人话提示。
+function classifyEdition({ isPackaged, portable, loaded, configPresent = true }) {
   if (!isPackaged) return { updatable: false, reason: 'dev' };
   if (portable) return { updatable: false, reason: 'portable' };
   if (!loaded) return { updatable: false, reason: 'loader' };
+  if (!configPresent) return { updatable: false, reason: 'noconfig' };
   return { updatable: true, reason: 'ok' };
 }
 
