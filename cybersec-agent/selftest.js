@@ -1598,6 +1598,58 @@ $("#backLab").click();
     assert(thin.length === 0, `每个领域平均每知识点 ≥3 题（不足：${thin.join("、") || "无"}）`);
   }
 
+  // ===== 48. 可达性（v1.5.3 批次 3）：可读名称 / 焦点可见 / 跳过链接 / 弹窗 / 双语 aria =====
+  {
+    const SEL = 'button, input, select, textarea, a[href], [role="button"], [role="tab"], [tabindex]:not([tabindex="-1"])';
+    const vis = (el) => !el.disabled && el.type !== "hidden" && el.style.display !== "none" && !el.classList.contains("hidden");
+    const els = Array.from(doc.querySelectorAll(SEL)).filter(vis);
+    const nameless = els.filter((el) => {
+      const text = (el.textContent || "").trim();
+      return !text && !el.getAttribute("aria-label") && !el.getAttribute("title") && !el.getAttribute("placeholder");
+    });
+    assert(nameless.length === 0, `可交互元素均有可读名称（实测 ${els.length} 个，缺名称 ${nameless.length} 个）`);
+
+    const inputs = Array.from(doc.querySelectorAll("input:not([type=hidden]), textarea, select")).filter(vis);
+    const noName = inputs.filter((el) => !el.getAttribute("aria-label") && !el.getAttribute("placeholder") && !el.closest("label"));
+    assert(noName.length === 0, `输入控件均有无障碍名称（实测 ${inputs.length} 个，缺名称 ${noName.length} 个）`);
+
+    // outline:none 必须有 :focus/:focus-visible 补充（防「焦点不可见」回潮）
+    const cssText = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
+    const noOutlineBlocks = cssText.match(/[^{}]*\{[^{}]*outline:\s*none[^{}]*\}/g) || [];
+    const missing = [];
+    noOutlineBlocks.forEach((blk) => {
+      const sel = blk.split("{")[0];
+      sel.split(",").map((s) => s.trim()).forEach((one) => {
+        if (!one || /mainContent/.test(one)) return;                 // 跳转落点不需要焦点环
+        if (/:focus/.test(one)) return;                              // 自身就带 :focus
+        const root = one.replace(/\s*>.*$/, "").replace(/::?[a-z-]+$/i, "").trim();
+        if (!root) return;
+        const esc = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (!new RegExp(esc + "[^{}]*:focus").test(cssText)) missing.push(one);
+      });
+    });
+    assert(missing.length === 0, `outline:none 均有焦点补充（缺：${missing.join(" | ") || "无"}）`);
+
+    // 跳到主内容：存在、指向可聚焦的主容器
+    const skip = doc.querySelector(".skip-link");
+    assert(!!skip && skip.getAttribute("href") === "#mainContent", "存在「跳到主要内容」链接");
+    const mainEl = doc.getElementById("mainContent");
+    assert(!!mainEl && mainEl.getAttribute("tabindex") === "-1", "主内容容器可作跳转落点");
+    assert(skip && (skip.textContent || "").trim().length > 0, "跳过链接有可读文本");
+
+    // 语言切换：aria-label 跟随（读屏不该听到另一种语言）
+    const before = doc.querySelector("#kbSearch").getAttribute("aria-label") || "";
+    const lt = doc.querySelector("#langToggle");
+    if (lt) {
+      lt.click();                                   // 切到英文
+      const en = doc.querySelector("#kbSearch").getAttribute("aria-label") || "";
+      assert(en && en !== before, `切英文后 aria-label 跟随（${before} → ${en}）`);
+      lt.click();                                   // 切回中文
+      const zh = doc.querySelector("#kbSearch").getAttribute("aria-label") || "";
+      assert(zh === before, `切回中文后 aria-label 复原（${zh}）`);
+    }
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

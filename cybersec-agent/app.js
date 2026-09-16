@@ -914,6 +914,9 @@
       "f.planCat": "目标领域", "f.planHours": "每周可投入", "f.planWeeks": "目标周期",
       "ph.kbSearch": "🔍 搜索知识点（标题/简介/关键词，跨全部领域）",
       "ph.chatInput": "问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？",
+      "aria.kbSearch": "搜索知识点",
+      "aria.chatInput": "向智能问答提问",
+      "a11y.skip": "跳到主要内容",
       "llm.title": "可选：接入大模型 API",
       "llm.hint": "本应用内置知识引擎可离线运行。填下方面板可升级为真实大模型对话（OpenAI 兼容）。密钥仅保存在你本机浏览器，不会上传。",
       "backend.title": "可选：临时靶场后端（真实靶机）",
@@ -961,6 +964,9 @@
       "f.planCat": "Target domain", "f.planHours": "Weekly hours", "f.planWeeks": "Duration",
       "ph.kbSearch": "🔍 Search topics (title / summary / keywords, across all domains)",
       "ph.chatInput": "Ask any security question, e.g. what is SQL injection? How to defend XSS?",
+      "aria.kbSearch": "Search knowledge base",
+      "aria.chatInput": "Ask the security assistant",
+      "a11y.skip": "Skip to main content",
       "llm.title": "Optional: connect an LLM API",
       "llm.hint": "This app has a built-in offline knowledge engine. Fill the panel below to upgrade to a real LLM chat (OpenAI-compatible). Keys are stored only in your browser, never uploaded.",
       "backend.title": "Optional: temporary range backend (real targets)",
@@ -1005,6 +1011,11 @@
     document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
       const k = el.getAttribute("data-i18n-ph");
       if (dict[k] != null) el.placeholder = dict[k];
+    });
+    // v1.5.3：无障碍名称也随语言切换（读屏用户不该听到另一种语言）
+    document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+      const k = el.getAttribute("data-i18n-aria");
+      if (dict[k] != null) el.setAttribute("aria-label", dict[k]);
     });
     const lb = $("#langToggle");
     if (lb) lb.innerHTML = lang === "en" ? "🌐 English" : "🌐 中文";
@@ -5491,9 +5502,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     box.innerHTML = `
       <div class="toolbox">
         <p class="hint">🧰 工具箱：以下工具在<strong>本地运行</strong>，不上传任何数据；当你接入大模型 API 后，Agent 也可在回答时直接调用它们。</p>
-        <div class="tb-row"><label>输入</label><textarea id="tbInput" rows="3" placeholder="粘贴待处理文本…"></textarea></div>
+        <div class="tb-row"><label>输入</label><textarea id="tbInput" rows="3" aria-label="待处理文本输入" placeholder="粘贴待处理文本…"></textarea></div>
         <div class="tb-row"><label>操作</label>
-          <select id="tbOp">
+          <select id="tbOp" aria-label="选择工具操作">
             <option value="b64d">Base64 解码</option>
             <option value="b64e">Base64 编码</option>
             <option value="urld">URL 解码</option>

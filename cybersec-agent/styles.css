@@ -1127,6 +1127,15 @@ kbd {
    ============================================================ */
 
 /* ---------- ① 全局统一：焦点可达性 / 按压反馈 / 滚动条 ---------- */
+/* 跳到主内容：默认移出视口，聚焦时滑入（键盘用户可见，鼠标用户无感） */
+.skip-link {
+  position: fixed; top: 8px; left: 8px; z-index: 9999;
+  padding: 8px 14px; border-radius: var(--r-sm); font-size: 13px; text-decoration: none;
+  background: var(--panel-2); color: var(--ink); border: 1px solid var(--brand-hi);
+  transform: translateY(-250%); transition: transform .15s var(--ease-out);
+}
+.skip-link:focus { transform: translateY(0); outline: 2px solid var(--focus); outline-offset: 2px; }
+#mainContent:focus { outline: none; }   /* 主容器只作为跳转落点，不需焦点环 */
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
 .btn { transition: transform .12s ease, box-shadow .18s ease, background .15s ease, border-color .15s ease, color .15s ease; }
 .btn:active { transform: translateY(1px) scale(.985); }
@@ -1317,9 +1326,10 @@ kbd {
 }
 .update-notes > summary {
   cursor: pointer;
-  outline: none;
   user-select: none;
 }
+/* v1.5.3：原来这里只写 outline:none（且权重高于全局 :focus-visible）→ 键盘用户看不到焦点 */
+.update-notes > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
 .update-notes .notes-body {
   margin-top: 6px;
   max-height: 190px;
@@ -1686,6 +1696,8 @@ body::before { opacity: 1; }
 .copilot-bar:focus-within { border-color: var(--brand-hi); background: var(--surface-2); }
 .copilot-ic { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--brand); stroke-width: 1.75; stroke-linejoin: round; }
 .copilot-input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--ink); font-size: 13px; }
+/* v1.5.3：命令条输入框原来只写了 outline:none → 补可见焦点环 */
+.copilot-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
 .copilot-input::placeholder { color: var(--muted); }
 .copilot-ctx {
   flex: none; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

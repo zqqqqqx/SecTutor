@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- 键盘可达：Tab 第一站，跳过导航直达主内容（聚焦时才可见） -->
+  <a class="skip-link" href="#mainContent" data-i18n="a11y.skip">跳到主要内容</a>
   <!-- ===== 开启界面（Splash）：展示产品 logo 与风格，后台预加载功能 ===== -->
   <div id="splash" class="splash">
     <div class="sp-card">
@@ -92,7 +94,7 @@
       <button id="btnSettings" class="icon-btn" title="设置（主题 / 数据 / 关于）" aria-label="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6M18.7 18.7l-1.6-1.6M6.9 6.9 5.3 5.3"/></svg></button>
     </header>
 
-  <main>
+  <main id="mainContent" tabindex="-1">
     <!-- 知识体系 -->
     <!-- ============ 今日（学习驾驶舱）============
          默认首页：把「该学什么」变成一条明确主线，并把已有数据做成看得见的能力画像。
@@ -164,7 +166,7 @@
           <div class="kb-toolbar">
             <div class="kb-search">
               <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.6-3.6"/></svg>
-              <input id="kbSearch" data-i18n-ph="ph.kbSearch" placeholder="搜索知识点 / OWASP / CVE / 关键词…" />
+              <input id="kbSearch" data-i18n-ph="ph.kbSearch" data-i18n-aria="aria.kbSearch" placeholder="搜索知识点 / OWASP / CVE / 关键词…" />
             </div>
             <div class="kb-sort"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h6"/></svg>掌握度 ↓</div>
             <button id="kbSearchClear" class="btn small ghost hidden" data-i18n="btn.clear">清除</button>
@@ -279,7 +281,7 @@
           <div class="chat-input">
             <button id="btnVoice" class="btn icon" title="语音输入（需在设置开启）" disabled>🎤</button>
             <button id="btnVision" class="btn icon" title="发送图片/截图识图（需在设置开启）" disabled>📷</button>
-            <input id="chatInput" data-i18n-ph="ph.chatInput" placeholder="问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？（支持粘贴图片）" />
+            <input id="chatInput" data-i18n-ph="ph.chatInput" data-i18n-aria="aria.chatInput" placeholder="问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？（支持粘贴图片）" />
             <button id="sendBtn" class="btn" data-i18n="btn.send">发送</button>
             <input id="fileImage" type="file" accept="image/*" style="display:none" />
           </div>
