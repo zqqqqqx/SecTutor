@@ -727,10 +727,10 @@ $("#backLab").click();
     doc.dispatchEvent(ev);
     return ev;
   }
-  pressKey("3");
-  assert($("#panel-range").classList.contains("active"), "数字键 3 切换到「实战靶场」面板");
-  pressKey("1");
-  assert($("#panel-knowledge").classList.contains("active"), "数字键 1 切换到「知识体系」面板");
+  pressKey("4");
+  assert($("#panel-range").classList.contains("active"), "数字键 4 切换到「实战靶场」面板（顺序=侧栏视觉顺序）");
+  pressKey("2");
+  assert($("#panel-knowledge").classList.contains("active"), "数字键 2 切换到「知识体系」面板");
   const kbInput = $("#kbSearch");
   if (kbInput) kbInput.focus();
   pressKey("5");
@@ -804,7 +804,7 @@ $("#backLab").click();
   const activeRail = $$(".rail-item").find((r) => r.classList.contains("active"));
   assert(!!activeRail && activeRail.getAttribute("aria-selected") === "true", "当前面板的导航项 aria-selected=true");
   assert($$(".rail-item").filter((r) => r.getAttribute("aria-selected") === "true").length === 1, "同一时刻只有一个导航项为选中态");
-  pressKey("3");
+  pressKey("4");
   const rail3 = $$(".rail-item").find((r) => r.dataset.tab === "range");
   assert(!!rail3 && rail3.getAttribute("aria-selected") === "true", "切换面板后 aria-selected 同步更新");
   pressKey("1");
@@ -1648,6 +1648,54 @@ $("#backLab").click();
       const zh = doc.querySelector("#kbSearch").getAttribute("aria-label") || "";
       assert(zh === before, `切回中文后 aria-label 复原（${zh}）`);
     }
+  }
+
+  // ===== 49. 交互可达性（v1.5.4 批次 1）：可点击元素可键盘操作 / 快捷键顺序 / 无原生 confirm =====
+  {
+    // ① 可点击元素必须语义化、可聚焦、有名称
+    const clickables = Array.from(doc.querySelectorAll("[data-clickable]"));
+    assert(clickables.length >= 5, `可点击卡片已语义化（${clickables.length} 个）`);
+    const bad = clickables.filter((el) =>
+      el.getAttribute("role") !== "button" ||
+      Number(el.getAttribute("tabindex")) < 0 ||
+      !(el.getAttribute("aria-label") || "").trim());
+    assert(bad.length === 0, `可点击元素均有 role/tabindex/名称（不合格 ${bad.length} 个）`);
+
+    // 关键家族必须全覆盖（防止以后新增渲染分支时漏掉）
+    ["#topicGrid .topic-card", "#kbNav .dom", ".range-card", ".news-card"].forEach((sel) => {
+      const els = Array.from(doc.querySelectorAll(sel));
+      if (!els.length) return;
+      const un = els.filter((el) => el.dataset.clickable !== "1");
+      assert(un.length === 0, `${sel} 全部可键盘操作（未覆盖 ${un.length}/${els.length}）`);
+    });
+
+    // ② 键盘真的能打开知识点：Enter 触发详情
+    clickTab("knowledge");
+    await delay(20);
+    const card = doc.querySelector("#topicGrid .topic-card");
+    if (card) {
+      card.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await delay(40);
+      assert(!!doc.querySelector("#learnBtn"), "Enter 键可打开知识点详情（键盘用户可用）");
+      clickTab("today");
+      await delay(20);
+    }
+
+    // ③ 快捷键顺序 = 侧栏视觉顺序
+    const railTabs = Array.from(doc.querySelectorAll(".rail-item[data-tab]")).map((el) => el.dataset.tab);
+    assert(railTabs.length > 0, "侧栏导航项存在");
+    doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "1", bubbles: true }));
+    await delay(30);
+    const act = doc.querySelector(".rail-item.active");
+    const actTab = act && act.dataset ? act.dataset.tab : "";
+    assert(actTab === railTabs[0], `按 1 进入最左侧面板（期望 ${railTabs[0]}，实际 ${actTab || "无"}）`);
+    clickTab("today");
+    await delay(20);
+
+    // ④ 源码中不再有原生 confirm（可撤销操作用「限时撤销」替代）
+    const src = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(src.indexOf("window.confirm") < 0, "源码中无 window.confirm");
+    assert(src.indexOf('typeof confirm === "function"') < 0, "源码中无原生 confirm 调用");
   }
 
   console.log("\n==== 自测结果 ====");

@@ -636,8 +636,8 @@
     saveMasteryDates();
   }
   // 重置掌握进度（带二次确认 + 限时撤销）
-  function resetMasteryUndoable(confirmMsg) {
-    if (typeof confirm === "function" && !confirm(confirmMsg)) return false;
+  function resetMasteryUndoable() {
+    // v1.5.4：可撤销的动作不该再拦一次原生确认框 —— 直接执行，用「限时撤销」兜底
     const snap = snapshotMastery();
     const n = snap.mastery.length;
     clearMastery();
@@ -803,7 +803,7 @@
     const pdf = $("#setPdf"); if (pdf) pdf.addEventListener("click", () => { closeModal(); exportPlanPdf(); });
     const chat = $("#setChat"); if (chat) chat.addEventListener("click", () => { closeModal(); exportChat(); });
     const reset = $("#setReset"); if (reset) reset.addEventListener("click", () => {
-      if (typeof confirm === "function" && !confirm("确定重置全部掌握进度并清空对话记录？重置后可在右下角提示条点击「撤销」恢复。")) return;
+      // v1.5.4：可撤销的动作直接执行 + 「限时撤销」，不再拦原生确认框
       const snap = snapshotMastery();
       let chatSnap = "";
       try { chatSnap = localStorage.getItem(CHAT_KEY) || ""; } catch (e) {}
@@ -1026,8 +1026,15 @@
   }
 
   /* ---------- 导航（左图标栏） ---------- */
-  // 数字键 1-8 与左侧导航顺序保持一致（快捷键与导航共用同一份定义）
-  const TAB_KEYS = ["knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance", "today"];
+  // 数字键顺序 = 侧栏视觉顺序。v1.5.4 修复：此前常量顺序与 DOM 不一致 ——
+  // 最左的「今日」被编成 9，第二位「知识体系」才是 1，用户按 1 到不了第一个面板。
+  // 现在直接读 DOM 作为单一数据源（常量仅作无 DOM 时的兜底）。
+  const TAB_KEYS = (function () {
+    const dom = Array.prototype.map.call(
+      document.querySelectorAll(".rail-item[data-tab]"), (el) => el.dataset.tab
+    );
+    return dom.length ? dom : ["today", "knowledge", "chat", "range", "plan", "news", "tools", "quiz", "compliance"];
+  })();
   const TAB_NAMES = { today: "今日", knowledge: "知识体系", chat: "智能问答", range: "实战靶场", plan: "学习计划", news: "安全资讯", tools: "工具与代码", quiz: "随机自测", compliance: "合规声明" };
 
   /* 面板滚动位置记忆（P2）：切走前记录各滚动容器位置，切回时恢复，
@@ -1216,11 +1223,11 @@
       div.innerHTML = `
         <div class="ring" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(c.name)}掌握度 ${pct}%"><b>${pct}</b></div>
         <div class="meta"><div class="nm">${c.icon} ${c.name}</div><div class="ct">${done} / ${total} 已掌握</div></div>`;
-      div.addEventListener("click", () => {
+      makeClickable(div, () => {
         kbActiveCat = c.id;
         renderCatList();
         renderTopicGrid();
-      });
+      }, c.icon + " " + c.name + "（切换领域）");
       nav.appendChild(div);
     });
   }
@@ -1308,10 +1315,10 @@
         <button class="tc-btn btn small ghost" data-ai="${t.id}"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>AI 辅助</button>
         <button class="tc-btn btn small" data-go="${t.id}"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>开始学习</button>
       </div>`;
-    card.addEventListener("click", (e) => {
-      if (e.target.closest(".tc-btn")) return;
+    makeClickable(card, (e) => {
+      if (e.target.closest && e.target.closest(".tc-btn")) return;
       showTopicDetail(t.id);
-    });
+    }, t.name + "（" + t.level + "·查看详情）");
     const aiBtn = card.querySelector("[data-ai]");
     if (aiBtn) aiBtn.addEventListener("click", (e) => { e.stopPropagation(); aiAssistForTopic(t); });
     const goBtn = card.querySelector("[data-go]");
@@ -1398,7 +1405,7 @@
         c.className = "topic-card" + (state.mastery.has(x.id) ? " mastered" : "");
         c.innerHTML = `<h4>${escapeHtml(x.name)}</h4><p>${escapeHtml(x.summary)}</p>` +
           (state.mastery.has(x.id) ? `<span class="done-flag">✓</span>` : "");
-        c.addEventListener("click", () => showTopicDetail(x.id));
+        makeClickable(c, () => showTopicDetail(x.id), x.name + "（查看详情）");
         wrap.appendChild(c);
       });
       group.appendChild(wrap);
@@ -2810,7 +2817,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       card.innerHTML = `<h4>${escapeHtml(r.title)}</h4>
         <div class="meta"><span class="lvl-tag lvl-${r.level}">${r.level}</span><span>${catById(r.cat).name}</span></div>
         <p class="u-f13 u-muted u-mt8-mb0">${escapeHtml(r.summary)}</p>`;
-      card.addEventListener("click", () => showRange(r.id));
+      makeClickable(card, () => showRange(r.id), r.title + "（靶场题解）");
       list.appendChild(card);
     });
   }
@@ -3007,7 +3014,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       card.innerHTML = `<h4>${escapeHtml(l.title)}</h4>
         <div class="meta"><span class="lvl-tag lvl-${l.level}">${l.level}</span><span>${catById(l.cat).name}</span>${solved ? '<span class="lvl-tag lvl-入门">✓</span>' : ""}</div>
         <p class="u-f13 u-muted u-mt8-mb0">${escapeHtml(l.brief.split("\n")[0])}</p>`;
-      card.addEventListener("click", () => renderLab(l));
+      makeClickable(card, () => renderLab(l), l.title + "（交互靶场）");
       list.appendChild(card);
     });
   }
@@ -3031,7 +3038,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       <button class="btn small ghost" id="labReset">重置战绩</button>`;
     const rb = $("#labReset");
     if (rb) rb.addEventListener("click", () => {
-      if (typeof confirm === "function" && !confirm("确定清空所有靶场战绩？清空后可在右下角提示条点击「撤销」恢复。")) return;
+      // v1.5.4：同上 —— 可撤销则直接执行 + 撤销入口
       const snap = Array.from(state.labsSolved || []);
       const n = snap.length;
       state.labsSolved.clear();
@@ -3534,7 +3541,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     });
     list.querySelectorAll(".news-card").forEach((c) => {
       if (c.dataset.boundCard) return; c.dataset.boundCard = "1";
-      c.addEventListener("click", () => showNews(c.dataset.id));
+      const h = c.querySelector("h4");
+      makeClickable(c, () => showNews(c.dataset.id), ((h && h.textContent) || "安全资讯").trim() + "（查看详情）");
     });
   }
 
@@ -4442,6 +4450,21 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   ];
   const escapeAttr = (s) => String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;");
   function pct(a, b) { return b ? Math.round((a / b) * 100) : 0; }
+  // 让「可点击的 div」具备键盘可达性：role=button + Tab 焦点 + Enter/Space 触发 + 无障碍名称。
+  // v1.5.4：此前知识点卡片/靶场卡片/领域项/资讯卡都是 div + click，纯键盘用户根本打不开。
+  function makeClickable(el, onActivate, label) {
+    if (!el) return el;
+    el.setAttribute("role", "button");
+    el.setAttribute("tabindex", "0");
+    if (label) el.setAttribute("aria-label", String(label));
+    el.dataset.clickable = "1";
+    el.addEventListener("click", (e) => onActivate(e));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); onActivate(e); }
+    });
+    return el;
+  }
+
   function bindOnce(sel, fn) { const el = $(sel); if (el && !el.dataset.bound) { el.dataset.bound = "1"; el.addEventListener("click", fn); } }
 
   // —— ①a 能力诊断（自适应：答对升级难度、答错停该域、每域最多 3 题）——
