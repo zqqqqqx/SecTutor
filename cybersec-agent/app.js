@@ -747,7 +747,10 @@
         <div class="rev-chips">${chips}</div>
         <button class="btn small" id="revStartBtn">开始复习（${due.length} 题）</button>`;
     } else {
-      body = `<p class="rev-empty">暂无到期复习内容。已掌握的知识点会在记忆曲线到点时提醒你。</p>` +
+      body = stateBlock("empty", {
+        title: "暂无到期复习内容",
+        hint: "已掌握的知识点会在记忆曲线到点时提醒你。",
+      }) +
         (revIds.length ? `<button class="btn small" id="revStartBtn">随机复习（${revIds.length} 个已掌握）</button>` : "");
     }
     openModal("🔔 复习提醒", body);
@@ -1273,7 +1276,17 @@
     if (q) {
       const hits = allTopics().filter((t) => matchSearch(t, q));
       if (hits.length === 0) {
-        grid.innerHTML = `<p class="u-muted empty-state">未找到与「${escapeHtml(kbSearch.trim())}」相关的知识点，换个关键词试试。</p>`;
+        grid.innerHTML = stateBlock("empty", {
+          title: "未找到与「" + kbSearch.trim() + "」相关的知识点",
+          hint: "试试更短的关键词（如「注入」「Kubernetes」），或直接按领域浏览。",
+          actionText: "清除搜索",
+          onAction: () => {
+            kbSearch = "";
+            const s = $("#kbSearch"); if (s) s.value = "";
+            renderTopicGrid();
+          },
+        });
+        bindStateBlocks(grid);
         return;
       }
       sortTopics(hits).forEach((t) => {
@@ -1288,7 +1301,17 @@
       (t) => kbLevelFilter === "all" || t.level === kbLevelFilter
     );
     if (topics.length === 0) {
-      grid.innerHTML = `<p class="u-muted empty-state">该难度下暂无知识点，试试其他筛选。</p>`;
+      grid.innerHTML = stateBlock("empty", {
+        title: "该难度下暂无知识点",
+        hint: "当前领域在「" + escapeHtml(kbLevelFilter) + "」档没有内容，换个难度或看看全部。",
+        actionText: "看全部难度",
+        onAction: () => {
+          kbLevelFilter = "all";
+          const chip = $('#levelChips .chip[data-level="all"]');
+          if (chip) chip.click(); else renderTopicGrid();
+        },
+      });
+      bindStateBlocks(grid);
       return;
     }
     sortTopics(topics).forEach((t) => {
@@ -2850,7 +2873,17 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const hours = parseInt($("#planHours").value, 10);
     const weeks = parseInt($("#planWeeks").value, 10);
     const pool = cat === "all" ? allTopics() : catById(cat).topics.map((t) => ({ ...t, cat }));
-    if (pool.length === 0) { $("#planOutput").innerHTML = "<p>该领域暂无内容。</p>"; return; }
+    if (pool.length === 0) {
+      const out = $("#planOutput");
+      out.innerHTML = stateBlock("empty", {
+        title: "该领域暂无内容",
+        hint: "换一个领域，或去知识体系看看 12 个领域的完整覆盖。",
+        actionText: "去知识体系",
+        onAction: () => activateTab("knowledge"),
+      });
+      bindStateBlocks(out);
+      return;
+    }
     // 自适应排序（方向①b）：优先补强「能力画像最弱」且「尚未掌握」的领域/知识点
     const order = { "入门": 0, "初级": 1, "中级": 2, "高级": 3 };
     const weakness = (catId) => (state.profile && state.profile[catId] != null) ? (100 - state.profile[catId]) : 50;
@@ -3165,15 +3198,22 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     panel.innerHTML = `<div class="env-status">⏳ 正在向后端申请临时环境…</div>`;
     const btn = $("#genEnvBtn"); if (btn) btn.disabled = true;
     requestEnvCore(lab).then((res) => {
-      if (!res.ok) { showEnvDegrade(panel, btn, res.error); return; }
+      if (!res.ok) { showEnvDegrade(panel, btn, res.error, () => requestEnv(lab)); return; }
       showEnvReady(panel, btn, res.env);
       toast(res.env && res.env.simulated ? "靶场已就绪（本地仿真模式，无需后端）" : "靶场环境已就绪，可开始练习", "ok");
     });
   }
-  function showEnvDegrade(panel, btn, msg) {
-    panel.innerHTML = `<div class="env-status warn">⚠️ 临时靶场后端不可用（${escapeHtml(msg || "")}），已回退到本地仿真演练。你仍可在此页面完成前端练习。</div>`;
+  function showEnvDegrade(panel, btn, msg, onRetry) {
+    // v1.5.4 B2：失败要给出路 —— 面板内提供「重试」，toast 也挂重试动作
+    panel.innerHTML = stateBlock("error", {
+      title: "临时靶场后端不可用，已回退本地仿真",
+      hint: (msg || "未知原因") + "；你也可以直接在当前页面完成前端练习。",
+      actionText: onRetry ? "重试" : null,
+      onAction: onRetry,
+    });
+    bindStateBlocks(panel);
     if (btn) btn.disabled = false;
-    toast("靶场后端不可用，已回退本地仿真：" + (msg || "未知原因"), "err");
+    toast("靶场后端不可用，已回退本地仿真：" + (msg || "未知原因"), "err", onRetry ? { actionText: "重试", onAction: onRetry } : undefined);
   }
   function proxyUrl(env) {
     const base = env && env.accessUrl;
@@ -4465,6 +4505,34 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     return el;
   }
 
+  // 三态统一（v1.5.4 B1）：复用 styles.css 既有的 .empty-state/.loading-state/.error-state 约定，
+  // 统一成「标题 + 说明 + 可选行动按钮」结构，替掉各处临时拼的裸 <p>。
+  let stateBlockSeq = 0;
+  const stateBlockActions = {};
+  function stateBlock(kind, opts) {
+    const o = opts || {};
+    const cls = kind === "loading" ? "loading-state" : (kind === "error" ? "error-state" : "empty-state");
+    const id = "sb" + (++stateBlockSeq);
+    if (typeof o.onAction === "function") stateBlockActions[id] = o.onAction;
+    return '<div class="' + cls + ' state-block" id="' + id + '" data-state="' + kind + '">' +
+      (o.title ? '<div class="sb-t">' + escapeHtml(o.title) + "</div>" : "") +
+      (o.hint ? '<div class="sb-h">' + escapeHtml(o.hint) + "</div>" : "") +
+      (o.actionText ? '<button type="button" class="btn small ghost sb-a" data-sb-action="' + id + '">' + escapeHtml(o.actionText) + "</button>" : "") +
+      "</div>";
+  }
+  // 渲染完含 stateBlock 的内容后调用，把行动按钮接上
+  function bindStateBlocks(root) {
+    const host = root || document;
+    host.querySelectorAll("[data-sb-action]").forEach((b) => {
+      if (b.dataset.bound) return;
+      b.dataset.bound = "1";
+      b.addEventListener("click", () => {
+        const fn = stateBlockActions[b.getAttribute("data-sb-action")];
+        if (fn) fn();
+      });
+    });
+  }
+
   function bindOnce(sel, fn) { const el = $(sel); if (el && !el.dataset.bound) { el.dataset.bound = "1"; el.addEventListener("click", fn); } }
 
   // —— ①a 能力诊断（自适应：答对升级难度、答错停该域、每域最多 3 题）——
@@ -4704,7 +4772,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const due = dueReviews();
     if (!due.length) {
       box.innerHTML = `<div class="acard-head">🔔 复习提醒</div>
-        <p class="u-muted empty-state">暂无到期复习项。掌握知识点后，Agent 会按记忆曲线（1/2/4/7/15/30 天）提醒你复习。</p>
+        ${stateBlock("empty", {
+          title: "暂无到期复习项",
+          hint: "掌握知识点后，Agent 会按记忆曲线（1/2/4/7/15/30 天）提醒你复习。",
+          actionText: "去做一次自测",
+          onAction: () => activateTab("quiz"),
+        })}
         <div class="review-curve-wrap">${reviewCurveSvg()}<p class="muted u-f11 u-mt4-mb0">遗忘曲线（红点=复习检查点）：越靠右记忆留存越低，到点复习可重置曲线。</p></div>`;
       return;
     }

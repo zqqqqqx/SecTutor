@@ -1451,6 +1451,10 @@ kbd {
   border: 1px dashed var(--line); background: var(--panel-2); color: var(--muted);
 }
 .loading-state { border-style: solid; }
+/* 三态内容结构（v1.5.4 B1）：标题 + 说明 + 行动按钮，避免每处各写一套排版 */
+.state-block .sb-t { color: var(--ink); font-weight: 700; font-size: 14px; }
+.state-block .sb-h { margin-top: 6px; font-size: 12.5px; line-height: 1.6; }
+.state-block .sb-a { margin-top: 12px; }
 .error-state { border-color: color-mix(in srgb, var(--bad) 40%, transparent); color: var(--bad); background: var(--bad-bg); }
 
 /* ==================================================================

@@ -1662,7 +1662,7 @@ $("#backLab").click();
     assert(bad.length === 0, `可点击元素均有 role/tabindex/名称（不合格 ${bad.length} 个）`);
 
     // 关键家族必须全覆盖（防止以后新增渲染分支时漏掉）
-    ["#topicGrid .topic-card", "#kbNav .dom", ".range-card", ".news-card"].forEach((sel) => {
+    ["#topicGrid .topic-card", "#catList .dom", ".range-card", ".news-card"].forEach((sel) => {
       const els = Array.from(doc.querySelectorAll(sel));
       if (!els.length) return;
       const un = els.filter((el) => el.dataset.clickable !== "1");
@@ -1696,6 +1696,73 @@ $("#backLab").click();
     const src = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
     assert(src.indexOf("window.confirm") < 0, "源码中无 window.confirm");
     assert(src.indexOf('typeof confirm === "function"') < 0, "源码中无原生 confirm 调用");
+  }
+
+  // ===== 50. 三态统一与失败可重试（v1.5.4 批次 2）=====
+  {
+    // ① 搜索无结果 → 统一三态结构（标题 + 说明 + 行动按钮）
+    clickTab("knowledge");
+    await delay(20);
+    const sInp = doc.querySelector("#kbSearch");
+    if (sInp) {
+      sInp.value = "zzz-not-exist-zzz";
+      sInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+      if (window.__kbFlushSearch) window.__kbFlushSearch();
+      await delay(40);
+      const sb = doc.querySelector("#topicGrid .state-block.empty-state");
+      assert(!!sb, "搜索无结果显示统一空态（.state-block.empty-state）");
+      if (sb) {
+        assert(!!sb.querySelector(".sb-t") && !!sb.querySelector(".sb-h"), "空态含标题与说明两段结构");
+        const act = sb.querySelector("[data-sb-action]");
+        assert(!!act, "空态提供行动按钮（不是死胡同）");
+        if (act) {
+          act.click();
+          await delay(40);
+          assert((doc.querySelector("#kbSearch").value || "") === "", "点「清除搜索」后搜索框被清空");
+          assert(!doc.querySelector("#topicGrid .state-block.empty-state"), "清除后列表恢复（空态消失）");
+        }
+      }
+    }
+
+    // ② 无内容的难度档 → 统一空态 + 一键恢复筛选（蓝队无「入门」档）
+    const doms = Array.from(doc.querySelectorAll("#catList .dom"));
+    const blue = doms.find((d) => /蓝队/.test(d.textContent || ""));
+    if (blue) {
+      blue.click();
+      await delay(30);
+      const chipB = doc.querySelector('#levelChips .chip[data-level="入门"]');
+      if (chipB) {
+        chipB.click();
+        await delay(40);
+        const sb2 = doc.querySelector("#topicGrid .state-block.empty-state");
+        if (sb2) {
+          assert(!!sb2, "该难度无内容时显示统一空态");
+          const a2 = sb2.querySelector("[data-sb-action]");
+          assert(!!a2, "并提供「看全部难度」行动按钮");
+          if (a2) {
+            a2.click();
+            await delay(40);
+            const allChip = doc.querySelector('#levelChips .chip[data-level="all"]');
+            assert(!!allChip && allChip.classList.contains("active"), "点行动按钮后筛选恢复为「全部」");
+          }
+        }
+      }
+      const web = doms.find((d) => /Web/.test(d.textContent || ""));
+      if (web) web.click();
+      await delay(30);
+    }
+
+    // ③ 源码级：裸空态写法已收敛，失败路径可重试
+    const src2 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    const bareEmpty = (src2.match(/<p class="u-muted empty-state">/g) || []).length;
+    assert(bareEmpty === 0, `旧的裸空态写法已全部收敛（剩余 ${bareEmpty} 处）`);
+    assert(src2.indexOf('actionText: onRetry ? "重试" : null') >= 0, "靶场环境失败提供「重试」按钮");
+    assert(src2.indexOf("showEnvDegrade(panel, btn, msg, onRetry)") >= 0 &&
+           src2.indexOf("typeof opts.onAction") >= 0,
+           "失败路径已接上重试回调（点 toast 或按钮都能重试）");
+
+    clickTab("today");
+    await delay(20);
   }
 
   console.log("\n==== 自测结果 ====");
