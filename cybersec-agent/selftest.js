@@ -1765,6 +1765,88 @@ $("#backLab").click();
     await delay(20);
   }
 
+  // ===== 51. 自测动线闭环 + 搜索结果键盘导航（v1.5.4 批次 3）=====
+  {
+    // ① 故意答错一整套题 → 成绩页必须给出「去看薄弱知识点」并真的能跳过去
+    clickTab("quiz");
+    await delay(20);
+    const SD2 = window.eval("SEC_DATA");
+    const startBtn = doc.querySelector("#quizStart");
+    if (startBtn) {
+      startBtn.click();
+      await delay(30);
+      let guard = 0;
+      while (guard++ < 80) {
+        const opts = Array.from(doc.querySelectorAll("#quizMain .quiz-opt"));
+        const submit = doc.querySelector("#quizSubmit");
+        if (opts.length && submit) {
+          const qText = ((doc.querySelector("#quizMain .quiz-q") || {}).textContent || "").trim();
+          const item = SD2.quizzes.find((q) => q.q === qText);
+          const ansText = item ? item.options[item.answer] : "";
+          // 选一个「不是正确答案」的选项
+          const wrongBtn = opts.find((b) => {
+            const t = b.textContent.replace(/^\d+\.\s*/, "").trim();
+            return t !== ansText && t.indexOf(ansText) !== 0;
+          }) || opts[0];
+          wrongBtn.click();
+          submit.click();
+          await delay(15);
+        }
+        const next = doc.querySelector("#quizNext");
+        if (next) { next.click(); await delay(15); continue; }
+        if (doc.querySelector("#quizToWeak") || doc.querySelector("#quizAgain")) break;
+        if (!doc.querySelector("#quizMain .quiz-opt")) break;
+      }
+      const weakBtn = doc.querySelector("#quizToWeak");
+      assert(!!weakBtn, "全部答错后成绩页给出「去看薄弱知识点」按钮（动线闭环）");
+      if (weakBtn) {
+        const resultTxt = doc.querySelector("#quizMain").textContent || "";
+        assert(/薄弱领域/.test(resultTxt), "成绩页列出薄弱领域");
+        weakBtn.click();
+        await delay(60);
+        const kbPanel = doc.querySelector("#panel-knowledge");
+        assert(!!kbPanel && kbPanel.classList.contains("active"), "点击后跳转到知识体系面板");
+        const actDom = doc.querySelector("#catList .dom.active");
+        assert(!!actDom, "并自动切到错题所属领域（有高亮领域项）");
+        const cards = doc.querySelectorAll("#topicGrid .topic-card");
+        assert(cards.length > 0, `该领域下正常列出知识点（${cards.length} 张卡片）`);
+      }
+    }
+
+    // ② 搜索结果键盘导航：搜索框 ↓ 进结果、结果间 ↑↓、Esc 回搜索框
+    clickTab("knowledge");
+    await delay(30);
+    const si = doc.querySelector("#kbSearch");
+    if (si) {
+      si.value = "注入";
+      si.dispatchEvent(new window.Event("input", { bubbles: true }));
+      if (window.__kbFlushSearch) window.__kbFlushSearch();
+      await delay(50);
+      const cards = Array.from(doc.querySelectorAll("#topicGrid .topic-card"));
+      assert(cards.length >= 2, `搜索「注入」命中多张卡片（${cards.length}）`);
+      si.focus();
+      si.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await delay(20);
+      assert(doc.activeElement === cards[0], "搜索框按 ↓ 聚焦第一张结果卡片");
+      cards[0].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await delay(20);
+      assert(doc.activeElement === cards[1], "结果卡片间按 ↓ 向下移动");
+      cards[1].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+      await delay(20);
+      assert(doc.activeElement === cards[0], "按 ↑ 向上移动");
+      cards[0].dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await delay(20);
+      assert(doc.activeElement === si, "按 Esc 回到搜索框");
+      si.value = "";
+      si.dispatchEvent(new window.Event("input", { bubbles: true }));
+      if (window.__kbFlushSearch) window.__kbFlushSearch();
+      await delay(30);
+    }
+
+    clickTab("today");
+    await delay(20);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

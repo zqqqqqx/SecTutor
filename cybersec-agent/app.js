@@ -1137,6 +1137,39 @@
     openModal("⌨️ 键盘快捷键", html);
   }
 
+  // v1.5.4 B4：知识库键盘导航 —— 搜索框按 ↓ 进结果，结果间 ↑↓ 移动，Esc 回到搜索框。
+  // 用事件委托（卡片每次渲染都会重建，直接绑会失效）。
+  function initKbKeyboardNav() {
+    const grid = $("#topicGrid");
+    const inp = $("#kbSearch");
+    if (inp && !inp.dataset.kbnav) {
+      inp.dataset.kbnav = "1";
+      inp.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowDown" && e.key !== "Down") return;
+        const first = grid && grid.querySelector(".topic-card");
+        if (first) { e.preventDefault(); first.focus(); }
+      });
+    }
+    if (grid && !grid.dataset.kbnav) {
+      grid.dataset.kbnav = "1";
+      grid.addEventListener("keydown", (e) => {
+        const cur = e.target && e.target.closest ? e.target.closest(".topic-card") : null;
+        if (!cur) return;
+        const cards = Array.prototype.slice.call(grid.querySelectorAll(".topic-card"));
+        const i = cards.indexOf(cur);
+        if (e.key === "ArrowDown" || e.key === "Down") {
+          if (i >= 0 && i + 1 < cards.length) { e.preventDefault(); cards[i + 1].focus(); }
+        } else if (e.key === "ArrowUp" || e.key === "Up") {
+          e.preventDefault();
+          if (i > 0) cards[i - 1].focus(); else if (inp) inp.focus();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          if (inp) inp.focus();
+        }
+      });
+    }
+  }
+
   function initHotkeys() {
     document.addEventListener("keydown", (e) => {
       const key = e.key;
@@ -1181,6 +1214,7 @@
     });
   }
   initHotkeys();
+  initKbKeyboardNav();
 
   /* ============================================================
      知识体系
@@ -3793,7 +3827,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     let pool = SEC_DATA.quizzes;
     if (cat !== "all") pool = pool.filter((q) => q.cat === cat);
     const items = shuffle(pool).slice(0, Math.min(n, pool.length)).map(prepareQuestion);
-    quizState = { items, idx: 0, score: 0, answered: new Set(), picked: -1 };
+    // v1.5.4 B3：记录错题领域，供成绩页做「去看薄弱知识点」的动线闭环
+    quizState = { items, idx: 0, score: 0, answered: new Set(), picked: -1, wrong: [] };
     $("#quizRestart").classList.remove("hidden");
     renderQuiz();
   }
@@ -4006,6 +4041,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         st.picked = picked;
         st.answered.add(st.idx);
         if (picked === q.answer) st.score++;
+        else st.wrong.push({ cat: q.cat, level: q.level });
         renderQuiz();
       });
     }
@@ -4030,14 +4066,45 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const qDomain = (qcat && qcat !== "all" && DOMAINS.some((d) => d.id === qcat)) ? qcat : null;
     recordQuizResult(qDomain, total ? st.score / total : null, total);
     logEvent("quiz", total ? Math.round((st.score / total) * 100) : 0);   // 供今日页标记「自测已完成」
+    // v1.5.4 B3：把错题按领域聚合，成绩页直接给出「下一步去哪」的按钮
+    const wrongByCat = {};
+    (st.wrong || []).forEach((w) => { wrongByCat[w.cat] = (wrongByCat[w.cat] || 0) + 1; });
+    const weakCats = Object.keys(wrongByCat)
+      .sort((a, b) => wrongByCat[b] - wrongByCat[a])
+      .map((id) => ({ id: id, name: (catById(id) || {}).name || id, n: wrongByCat[id] }));
+    const weakText = weakCats.length
+      ? weakCats.slice(0, 3).map((w) => w.name + "（错 " + w.n + " 题）").join("、")
+      : "";
     main.innerHTML = `
       <div class="quiz-result">
         <h3>🎉 自测完成</h3>
         <div class="quiz-score-big">${st.score} / ${total}（${pct}%）</div>
         <p class="u-muted">${pct >= 80 ? "掌握得很扎实！" : pct >= 60 ? "基础不错，薄弱环节再回到「知识体系」复习对应知识点。" : "建议回到「知识体系」重点复习标红领域。"}</p>
-        <button class="btn" id="quizAgain">再来一组</button>
+        ${weakCats.length ? '<p class="u-muted u-f12">薄弱领域：' + escapeHtml(weakText) + "</p>" : ""}
+        <div class="quiz-result-actions">
+          <button class="btn" id="quizAgain">再来一组</button>
+          ${weakCats.length ? '<button class="btn ghost" id="quizToWeak">去看薄弱知识点 →</button>' : ""}
+          <button class="btn ghost" id="quizToToday">回今日</button>
+        </div>
       </div>`;
     $("#quizAgain").addEventListener("click", startQuiz);
+    const toToday = $("#quizToToday");
+    if (toToday) toToday.addEventListener("click", () => activateTab("today"));
+    const toWeak = $("#quizToWeak");
+    if (toWeak) toWeak.addEventListener("click", () => {
+      const top = weakCats[0] && weakCats[0].id;
+      activateTab("knowledge");
+      if (top) {
+        kbActiveCat = top;
+        kbLevelFilter = "all";
+        kbSearch = "";
+        const si = $("#kbSearch"); if (si) si.value = "";
+        const chip = $('#levelChips .chip[data-level="all"]');
+        if (chip) chip.classList.add("active");
+        renderCatList();
+        renderTopicGrid();
+      }
+    });
     const score = $("#quizScore");
     score.classList.remove("hidden");
     score.textContent = `最近成绩：${st.score}/${total}`;
