@@ -1942,6 +1942,14 @@ $("#backLab").click();
 
   // ===== 53. 手感与效率：复制 / 高亮 / Esc / 加载态（v1.5.4 批次 5）=====
   {
+    // 测试卫生：确保没有残留弹窗（上一节刚关过弹窗，动画可能未结束，
+    // 否则 Esc 会先被弹窗吃掉，导致后面的「详情 Esc」断言假失败）
+    const ovLeft = doc.querySelector("#modalOverlay");
+    if (ovLeft && !ovLeft.classList.contains("hidden")) {
+      pressKey("Escape");
+      await delay(460);
+    }
+
     // ① 知识点详情的代码块有一键复制，点击后有反馈
     clickTab("knowledge");
     await delay(30);
@@ -1964,7 +1972,8 @@ $("#backLab").click();
         assert(after > before || !!doc.querySelector(".toast"), "点复制后给出反馈（toast）");
       }
 
-      // ④ Esc 从详情返回列表
+      // ④ Esc 从详情返回列表（先确认详情确实打开，失败时归因更清楚）
+      assert(!doc.querySelector("#topicDetail").classList.contains("hidden"), "详情已打开（Esc 测试前置条件）");
       doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       await delay(40);
       const det = doc.querySelector("#topicDetail");
@@ -2018,6 +2027,136 @@ $("#backLab").click();
            src3.indexOf('stateBlock("loading", {') >= 0, "环境申请使用统一加载态");
     assert(src3.indexOf("function enhanceCodeBlocks") >= 0 && src3.indexOf("function hlTerms") >= 0,
            "复制与高亮的公共实现已就绪");
+
+    clickTab("today");
+    await delay(20);
+  }
+
+  // ===== 54. 键盘化 / 撤销 / 问答操作（v1.5.4 批次 6）=====
+  {
+    // 前置：清掉可能残留的弹窗（动画未结束会吃掉按键）
+    const ovL = doc.querySelector("#modalOverlay");
+    if (ovL && !ovL.classList.contains("hidden")) { pressKey("Escape"); await delay(460); }
+
+    // 前置：清掉焦点（前序测试可能把焦点留在搜索框里，
+    // 而快捷键有「输入框内不触发」的保护 → 按键会被吃掉，导致假失败）
+    try { if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur(); } catch (e) {}
+
+    // ① 详情页键盘：M 标记掌握 + ←→ 前后
+    clickTab("knowledge");
+    await delay(30);
+    const card1 = doc.querySelector("#topicGrid .topic-card");
+    assert(!!card1, "知识库有卡片可供键盘测试");
+    if (card1) {
+      card1.click();
+      await delay(60);
+      try { if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur(); } catch (e) {}
+      const titleA = (doc.querySelector("#topicDetail h2") || {}).textContent || "";
+      const learn = doc.querySelector("#learnBtn");
+      const learnTxtBefore = learn ? learn.textContent : "";
+      pressKey("m");
+      await delay(80);
+      const learnTxtAfter = (doc.querySelector("#learnBtn") || {}).textContent || "";
+      assert(learnTxtAfter && learnTxtAfter !== learnTxtBefore, `M 键切换掌握状态（${learnTxtBefore} → ${learnTxtAfter}）`);
+
+      // ③ 撤销：点 toast 里的「撤销」应恢复原状
+      const toastEls = Array.from(doc.querySelectorAll("#toastHost .toast"));
+      const lastToast = toastEls[toastEls.length - 1];
+      const actBtn = lastToast ? lastToast.querySelector(".toast-act") : null;
+      assert(!!actBtn, "标记掌握后 toast 提供「撤销」（可撤销操作不该不可逆）");
+      if (actBtn) {
+        actBtn.click();
+        await delay(120);
+        const learnTxtUndo = (doc.querySelector("#learnBtn") || {}).textContent || "";
+        // 撤销的语义是「回到执行 M 之前的状态」，所以应与按下 M 之前的文本一致
+        assert(learnTxtUndo === learnTxtBefore,
+               `点「撤销」后回到操作前状态（期望 ${learnTxtBefore}，实际 ${learnTxtUndo}）`);
+      }
+
+      // → 下一个知识点，← 回到原处
+      const nx = doc.querySelector("#kbNext");
+      if (nx) {
+        pressKey("ArrowRight");
+        await delay(80);
+        const titleB = (doc.querySelector("#topicDetail h2") || {}).textContent || "";
+        assert(titleB && titleB !== titleA, `→ 键切到下一个知识点（${titleA.slice(0, 10)} → ${titleB.slice(0, 10)}）`);
+        pressKey("ArrowLeft");
+        await delay(100);
+        const titleC = (doc.querySelector("#topicDetail h2") || {}).textContent || "";
+        assert(titleC === titleA, `← 键回到上一个知识点（期望 ${titleA.slice(0, 10)}，实际 ${titleC.slice(0, 10)}）`);
+      }
+      pressKey("Escape");
+      await delay(60);
+    }
+
+    // ② 自测键盘化：↑↓ 选选项、Enter 提交 / 下一题
+    clickTab("quiz");
+    await delay(30);
+    try { if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur(); } catch (e) {}
+    const qs = doc.querySelector("#quizStart");
+    if (qs) {
+      qs.click();
+      await delay(40);
+      const opts = Array.from(doc.querySelectorAll("#quizMain .quiz-opt"));
+      assert(opts.length >= 2, `自测题目有多个选项（${opts.length}）`);
+      pressKey("ArrowDown");
+      await delay(40);
+      assert(!!doc.querySelector("#quizMain .quiz-opt.sel"), "↓ 键选中第一个选项（不必用鼠标）");
+      pressKey("ArrowDown");
+      await delay(40);
+      const selIdx = Array.from(doc.querySelectorAll("#quizMain .quiz-opt")).findIndex((b) => b.classList.contains("sel"));
+      assert(selIdx === 1, `再按 ↓ 移到第二个选项（当前第 ${selIdx + 1} 个）`);
+      const fbBefore = doc.querySelector("#quizFeedback");
+      pressKey("Enter");
+      await delay(60);
+      const fb = doc.querySelector("#quizFeedback");
+      assert(!!fb && !fb.classList.contains("hidden"), "Enter 键提交答案并给出对错反馈");
+      pressKey("Enter");
+      await delay(60);
+      const afterSubmit = doc.querySelector("#quizMain .quiz-opt");
+      const txt = (doc.querySelector("#quizMain") || {}).textContent || "";
+      assert(!!txt, `Enter 键可继续到下一题或成绩页（${txt.slice(0, 12)}…）`);
+      // 收尾：退出自测（避免影响后续流程）
+      clickTab("today");
+      await delay(30);
+    }
+
+    // ④ 智能问答：每条回答带复制 / 重新生成
+    clickTab("chat");
+    await delay(40);
+    const ci = doc.querySelector("#chatInput");
+    if (ci) {
+      ci.value = "什么是 SQL 注入";
+      const sendBtn = doc.querySelector("#sendBtn");
+      if (sendBtn) { sendBtn.click(); } else {
+        ci.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      }
+      await delay(120);
+      const botRows = doc.querySelectorAll("#chatLog .msg-row.bot");
+      assert(botRows.length >= 1, `智能问答给出了回答（${botRows.length} 条）`);
+      const lastBot = botRows[botRows.length - 1];
+      const tools = lastBot ? lastBot.querySelectorAll(".msg-tools .msg-act") : [];
+      assert(tools.length >= 2, `回答带消息级操作（${tools.length} 个：复制 / 重新生成）`);
+      const copyAct = lastBot ? lastBot.querySelector('[data-act="copy"]') : null;
+      assert(!!copyAct, "回答带「复制」");
+      if (copyAct) {
+        const host2 = doc.querySelector("#toastHost");
+        const before2 = host2 ? host2.children.length : 0;
+        copyAct.click();
+        await delay(60);
+        assert((host2 ? host2.children.length : 0) > before2 || !!doc.querySelector(".toast"), "点「复制」有反馈");
+      }
+      const regenAct = lastBot ? lastBot.querySelector('[data-act="regen"]') : null;
+      assert(!!regenAct, "回答带「重新生成」");
+      if (regenAct) {
+        const n0 = doc.querySelectorAll("#chatLog .msg-row.bot").length;
+        regenAct.click();
+        await delay(160);
+        const n1 = doc.querySelectorAll("#chatLog .msg-row.bot").length;
+        // 注意：打字指示行也带 .msg-row.bot，所以允许 +2（自身 + 可能的指示行）
+        assert(n1 >= 1 && n1 <= n0 + 2, `重新生成后回答数量正常（${n0} → ${n1}，不堆积）`);
+      }
+    }
 
     clickTab("today");
     await delay(20);

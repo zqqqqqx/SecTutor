@@ -510,11 +510,17 @@
     type = TOAST_ICON[type] ? type : "info";
     opts = opts || {};
     const host = toastHost();
-    // 最多同时 3 条，超出移除最早的一条
-    while (host.children.length >= 3) {
+    // 最多同时 3 条，超出移除最早的一条。
+    // ⚠️ 必须保证循环收敛：曾出现「宿主里存在未登记在 toastRecs 的残留节点」时
+    // closeToast 直接 return、children 数量不变 → while 死循环 → 整个界面卡死。
+    // 所以这里 ① 兜底直接移除节点 ② 再加硬上限双保险。
+    let guard = 0;
+    while (host.children.length >= 3 && guard++ < 30) {
       const first = host.firstElementChild;
       if (!first) break;
-      closeToast(first.getAttribute("data-toast-id"), true);
+      const tid = first.getAttribute("data-toast-id");
+      if (tid) closeToast(tid, true);
+      if (first.parentNode) first.parentNode.removeChild(first);
     }
     const id = "t" + (++toastSeq);
     const el = document.createElement("div");
@@ -1172,7 +1178,10 @@
       ["打开本帮助", "?"],
       ["知识库结果上下浏览", "↑ / ↓"],
       ["在结果中返回搜索框", "Esc"],
-      ["今日页：直达各步骤", "点击步骤卡片"],
+      ["知识点详情：标记/取消掌握", "M"],
+      ["知识点详情：上一个 / 下一个", "← / →"],
+      ["自测：选择选项", "↑ / ↓"],
+      ["自测：提交 / 下一题", "Enter"],
     ].concat(TAB_KEYS.map((k, i) => ["切换到 " + TAB_NAMES[k], String(i + 1)]));
     const html = `<div class="hk-list">` + rows
       .map((r) => `<div class="hk-row"><span>${escapeHtml(r[0])}</span><span><kbd>${escapeHtml(r[1])}</kbd></span></div>`)
@@ -1245,6 +1254,45 @@
       }
       // 以下快捷键在输入框内不触发，避免打字时误触
       if (isTypingTarget(document.activeElement)) return;
+
+      // (v1.5.4) 知识点详情：M 标记/取消掌握，← → 上一个/下一个
+      const detPanel = $("#topicDetail");
+      if (detPanel && !detPanel.classList.contains("hidden") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (key === "m" || key === "M") {
+          const lb = $("#learnBtn");
+          if (lb) { e.preventDefault(); lb.click(); return; }
+        }
+        if (key === "ArrowLeft") {
+          const pv = $("#kbPrev");
+          if (pv) { e.preventDefault(); pv.click(); return; }
+        }
+        if (key === "ArrowRight") {
+          const nx = $("#kbNext");
+          if (nx) { e.preventDefault(); nx.click(); return; }
+        }
+      }
+
+      // (v1.5.4) 自测答题键盘化：↑↓ 选选项、Enter 提交 / 下一题
+      // 注意：选项不用数字键，避免与「数字键切面板」互相打架（用户会分不清）
+      const quizPanel = $("#panel-quiz");
+      if (quizPanel && quizPanel.classList.contains("active") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const opts = $$("#quizMain .quiz-opt");
+        const submitBtn = $("#quizSubmit");
+        const nextBtn = $("#quizNext");
+        if (opts.length) {
+          const curIdx = opts.findIndex((b) => b.classList.contains("sel"));
+          if (key === "ArrowDown" || key === "Down" || key === "ArrowUp" || key === "Up") {
+            const dir = (key === "ArrowDown" || key === "Down") ? 1 : -1;
+            const base = curIdx < 0 ? (dir > 0 ? -1 : 0) : curIdx;
+            const nxt = Math.min(opts.length - 1, Math.max(0, base + dir));
+            if (opts[nxt]) { e.preventDefault(); opts[nxt].click(); return; }
+          }
+        }
+        if (key === "Enter") {
+          if (submitBtn) { e.preventDefault(); submitBtn.click(); return; }
+          if (nextBtn) { e.preventDefault(); nextBtn.click(); return; }
+        }
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (key >= "1" && key <= "8") {
         const tab = TAB_KEYS[parseInt(key, 10) - 1];
@@ -1630,8 +1678,24 @@
       saveMastery();
       saveMasteryDates();
       showTopicDetail(topic.id);
-      // 反馈闭环：原先点击后只有按钮文案变化，缺少明确的结果提示
-      toast(wasMastered ? "已取消掌握：" + topic.name : "已标记掌握：" + topic.name, wasMastered ? "info" : "ok");
+      // 反馈闭环 + 可撤销（v1.5.4）：误点一下不用再手动改回来
+      const prevDate = state.masteryDates[topic.id];
+      const undo = () => {
+        if (wasMastered) {
+          state.mastery.add(topic.id);
+          state.masteryDates[topic.id] = prevDate || { t: Date.now(), r: 0 };
+        } else {
+          state.mastery.delete(topic.id);
+          delete state.masteryDates[topic.id];
+        }
+        saveMastery();
+        saveMasteryDates();
+        renderToday();
+        showTopicDetail(topic.id);
+        toast("已撤销", "info");
+      };
+      toast(wasMastered ? "已取消掌握：" + topic.name : "已标记掌握：" + topic.name, wasMastered ? "info" : "ok",
+        { actionText: "撤销", onAction: undo });
     });
   }
 
@@ -1763,12 +1827,43 @@
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
     if (nearBottom) log.scrollTop = log.scrollHeight;
   }
+  // (v1.5.4) 问答体验：取最后一条用户提问（供「重新生成」）
+  function lastUserQuestion() {
+    try {
+      if (state.history && state.history.length) {
+        for (let i = state.history.length - 1; i >= 0; i--) {
+          const h = state.history[i];
+          if (h && h.role === "user" && h.content) return String(h.content).replace(/^\[图片\]\s*/, "");
+        }
+      }
+    } catch (e) {}
+    const rows = $$("#chatLog .msg-row.user .msg");
+    const last = rows[rows.length - 1];
+    return last ? (last.textContent || "").trim() : "";
+  }
+  // 按当前配置走同一条回答路径（有 LLM 走 LLM，否则走内置知识引擎）
+  function askSame(q) {
+    try {
+      if (state.llm && state.llm.key) { askAgent(q, {}); return; }
+    } catch (e) {}
+    askBuiltin(q);
+  }
+
   function addMsg(role, html) {
     const log = $("#chatLog");
     const row = document.createElement("div");
     row.className = "msg-row " + role;
     const face = role === "bot" ? "🛡️" : "🧑";
     row.innerHTML = `<div class="avatar ${role}">${face}</div><div class="msg ${role}">${html}</div>`;
+    // (v1.5.4) 智能问答的回答此前没有任何消息级操作（只有副驾驶有）→ 补复制 / 重新生成
+    if (role === "bot") {
+      const body = row.querySelector(".msg");
+      if (body) body.insertAdjacentHTML("beforeend",
+        '<div class="msg-tools">' +
+        '<button type="button" class="msg-act" data-act="copy">复制</button>' +
+        '<button type="button" class="msg-act" data-act="regen">重新生成</button>' +
+        "</div>");
+    }
     log.appendChild(row);
     autoScrollChat(log);
     saveChat();
@@ -2753,6 +2848,26 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   });
   // 聊天引用条目可点击：跳转到对应模块（知识点打开详情 / 资讯·工具·靶场聚焦面板）
   $("#chatLog").addEventListener("click", (e) => {
+    // (v1.5.4) 消息级操作：复制 / 重新生成
+    const act = e.target.closest ? e.target.closest("[data-act]") : null;
+    if (act) {
+      const msgEl = act.closest(".msg");
+      const kind = act.getAttribute("data-act");
+      if (kind === "copy") {
+        const clone = msgEl ? msgEl.cloneNode(true) : null;
+        if (clone) clone.querySelectorAll(".msg-tools").forEach((x) => x.remove());
+        copyToClipboard(clone ? clone.textContent.trim() : "", "已复制回答");
+      } else if (kind === "regen") {
+        const lastQ = lastUserQuestion();
+        if (!lastQ) { toast("没有可重新生成的问题", "info"); return; }
+        const rows = $$("#chatLog .msg-row.bot");
+        const lastBot = rows[rows.length - 1];
+        if (lastBot) lastBot.remove();          // 去掉旧回答再重跑，避免堆积
+        saveChat();
+        askSame(lastQ);
+      }
+      return;
+    }
     const el = e.target.closest(".cite");
     if (!el || !el.dataset.id) return;
     const doc = DOC_BY_ID.get(el.dataset.id);
