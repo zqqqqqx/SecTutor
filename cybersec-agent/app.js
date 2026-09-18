@@ -1234,6 +1234,9 @@
         if (cd && !cd.hidden) { closeCopilot(); return; }
         const ov = $("#modalOverlay");
         if (ov && !ov.classList.contains("hidden")) { e.preventDefault(); closeModal(); return; }
+        // 知识点详情打开时，Esc 返回列表（键盘不必去点「返回列表」）
+        const det = $("#topicDetail");
+        if (det && !det.classList.contains("hidden")) { e.preventDefault(); renderTopicGrid(); return; }
         if (isTypingTarget(document.activeElement) && document.activeElement.value) {
           document.activeElement.value = "";
           e.preventDefault();
@@ -1406,9 +1409,9 @@
     const mastPct = state.mastery.has(t.id) ? 100 : (t.level === "入门" ? 20 : t.level === "初级" ? 45 : t.level === "中级" ? 70 : 90);
     const refs = parseRefs(t.refs);
     card.innerHTML = `
-      <div class="tc-hd"><h4>${escapeHtml(t.name)}</h4><span class="dom-tag">${escapeHtml(cat.name)}</span></div>
+      <div class="tc-hd"><h4>${hlTerms(escapeHtml(t.name), kbSearch)}</h4><span class="dom-tag">${escapeHtml(cat.name)}</span></div>
       <span class="lvl-tag lvl-${t.level}">${t.level}</span>
-      <p>${escapeHtml(t.summary)}</p>
+      <p>${hlTerms(escapeHtml(t.summary), kbSearch)}</p>
       <div class="mast"><div class="ml"><span>掌握度</span><b>${mastPct}%</b></div><div class="bar" role="progressbar" aria-valuenow="${mastPct}" aria-valuemin="0" aria-valuemax="100" aria-label="掌握度 ${mastPct}%"><i class="u-fill" style="--w:${mastPct}%"></i></div></div>
       <div class="refs">${refs.map((r) => `<span class="ref${r.cve ? " cve" : ""}">${escapeHtml(r.t)}</span>`).join("")}</div>
       <div class="tc-ft">
@@ -1442,7 +1445,17 @@
     const cnt = $("#kbSearchCount");
     const docs = retrieve(q, 40);
     if (!docs.length) {
-      grid.innerHTML = `<p class="u-muted">${t("kb.globalEmpty")}</p>`;
+      grid.innerHTML = stateBlock("empty", {
+        title: t("kb.globalEmpty"),
+        hint: "试试更短的关键词，或按领域浏览 12 个领域的完整内容。",
+        actionText: "清除搜索",
+        onAction: () => {
+          kbSearch = "";
+          const s = $("#kbSearch"); if (s) s.value = "";
+          renderTopicGrid();
+        },
+      });
+      bindStateBlocks(grid);
       if (cnt) cnt.textContent = "";
       return;
     }
@@ -1580,6 +1593,7 @@
         ${nextT ? '<button class="btn ghost small" id="kbNext" title="下一个知识点">' + escapeHtml(nextT.name) + ' →</button>' : '<span class="u-muted u-f12">已是最后一个</span>'}
       </div>
     `;
+    enhanceCodeBlocks(detail);   // 代码示例一键复制
     const rel = relatedDocs(topic);
     if (rel.length) {
       const box = $("#relBox");
@@ -3287,7 +3301,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     if (!panel) return;
     panel.classList.remove("hidden");
     stopEnvTimers();
-    panel.innerHTML = `<div class="env-status">⏳ 正在向后端申请临时环境…</div>`;
+    panel.innerHTML = stateBlock("loading", {
+      title: "正在向后端申请临时环境…",
+      hint: "通常几秒内完成；若后端未启动，会自动回退到本地仿真演练。",
+    }) + '<div class="env-status u-f12 u-muted">⏳ 请稍候</div>';
     const btn = $("#genEnvBtn"); if (btn) btn.disabled = true;
     requestEnvCore(lab).then((res) => {
       if (!res.ok) { showEnvDegrade(panel, btn, res.error, () => requestEnv(lab)); return; }
@@ -4662,6 +4679,78 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     });
   }
 
+  // ============ v1.5.4 手感与效率 ============
+  // 复制文本：优先 navigator.clipboard，不可用时降级到 textarea + execCommand，最后才提示失败
+  function copyToClipboard(text, okMsg) {
+    const done = () => toast(okMsg || "已复制到剪贴板", "ok");
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+        return;
+      }
+    } catch (e) {}
+    fallbackCopy(text, done);
+  }
+  function fallbackCopy(text, done) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", "");
+      ta.style.position = "fixed"; ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      done();
+    } catch (e) {
+      toast("复制失败，请手动选择文本", "info");
+    }
+  }
+  // 给每个代码块挂「复制」按钮（含工具输出 pre）。幂等：已挂过的跳过，
+  // 因此在任何渲染之后调用都安全（详情面板 / 弹窗 / 工具输出）。
+  function enhanceCodeBlocks(root) {
+    const host = root || document;
+    host.querySelectorAll("pre").forEach((pre) => {
+      // 标记 + 按钮实际存在 双重判断：有些地方用 textContent 重写内容，
+      // 会把按钮一起清掉但保留 dataset 标记，只看标记就会漏加（实测踩过）
+      if (pre.dataset && pre.dataset.copyReady === "1" && pre.querySelector(".code-copy")) return;
+      const code = pre.querySelector("code");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "code-copy";
+      btn.setAttribute("aria-label", "复制代码");
+      btn.textContent = "复制";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        copyToClipboard((code ? code.textContent : pre.textContent) || "", "已复制");
+      });
+      if (pre.dataset) pre.dataset.copyReady = "1";
+      // 关键：按钮不放进 pre（否则 pre.textContent 会多出「复制」两字，
+      // 既污染手动选中复制的内容，也会让读取 textContent 的既有断言失败）
+      let wrap = pre.parentNode;
+      if (!wrap || !wrap.classList || !wrap.classList.contains("code-wrap")) {
+        wrap = document.createElement("div");
+        wrap.className = "code-wrap";
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+      }
+      wrap.appendChild(btn);
+    });
+  }
+  // 搜索命中高亮：传入「已转义的 HTML」与原始查询，返回带 mark 的 HTML
+  function hlTerms(escapedText, query) {
+    const q = String(query || "").trim();
+    if (!q) return escapedText;
+    const tokens = q.split(/\s+/).filter((x) => x.length >= 2);
+    if (!tokens.length) return escapedText;
+    let out = escapedText;
+    tokens.forEach((tk) => {
+      const esc = escapeHtml(tk).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!esc) return;
+      out = out.replace(new RegExp(esc, "gi"), (m) => '<mark class="hl">' + m + "</mark>");
+    });
+    return out;
+  }
+
   function bindOnce(sel, fn) { const el = $(sel); if (el && !el.dataset.bound) { el.dataset.bound = "1"; el.addEventListener("click", fn); } }
 
   // —— ①a 能力诊断（自适应：答对升级难度、答错停该域、每域最多 3 题）——
@@ -4961,6 +5050,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     modalPrevFocus = document.activeElement;
     const first = ov.querySelector(".modal " + FOCUSABLE_SEL);
     if (first && typeof first.focus === "function") { try { first.focus(); } catch (err) {} }
+    enhanceCodeBlocks(ov);      // 弹窗里的代码块（题解/报告等）也给复制按钮
     return ov;
   }
 
@@ -5751,6 +5841,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       else if (op === "md5") out = tbHash(input, "md5");
       else if (op === "sha256") out = tbHash(input, "sha256");
       $("#tbOut").textContent = out;
+      enhanceCodeBlocks($("#tbOut") ? $("#tbOut").parentNode : document);
     });
     bindOnce("#tbClear", () => { $("#tbInput").value = ""; $("#tbOut").textContent = ""; });
   }

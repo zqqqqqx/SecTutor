@@ -1940,6 +1940,89 @@ $("#backLab").click();
     await delay(20);
   }
 
+  // ===== 53. 手感与效率：复制 / 高亮 / Esc / 加载态（v1.5.4 批次 5）=====
+  {
+    // ① 知识点详情的代码块有一键复制，点击后有反馈
+    clickTab("knowledge");
+    await delay(30);
+    const c0 = doc.querySelector("#topicGrid .topic-card");
+    if (c0) {
+      c0.click();
+      await delay(60);
+      const copyBtn = doc.querySelector("#topicDetail .code-copy");
+      assert(!!copyBtn, "知识点代码块带「复制」按钮");
+      const codePre = doc.querySelector("#topicDetail pre");
+      assert(!!codePre && (codePre.textContent || "").indexOf("复制") < 0,
+             "复制按钮不污染代码文本（手动选中复制不会带上按钮文字）");
+      assert((copyBtn && copyBtn.getAttribute("aria-label")) === "复制代码", "复制按钮有无障碍名称");
+      if (copyBtn) {
+        const host = doc.querySelector("#toastHost");
+        const before = host ? host.children.length : 0;
+        copyBtn.click();
+        await delay(60);
+        const after = host ? host.children.length : 0;
+        assert(after > before || !!doc.querySelector(".toast"), "点复制后给出反馈（toast）");
+      }
+
+      // ④ Esc 从详情返回列表
+      doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await delay(40);
+      const det = doc.querySelector("#topicDetail");
+      const grid = doc.querySelector("#topicGrid");
+      assert(!!det && det.classList.contains("hidden"), "详情页按 Esc 已收起");
+      assert(!!grid && !grid.classList.contains("hidden"), "Esc 后回到知识点列表");
+    }
+
+    // ② 搜索命中高亮
+    const si2 = doc.querySelector("#kbSearch");
+    if (si2) {
+      si2.value = "注入";
+      si2.dispatchEvent(new window.Event("input", { bubbles: true }));
+      if (window.__kbFlushSearch) window.__kbFlushSearch();
+      await delay(50);
+      const marks = doc.querySelectorAll("#topicGrid .topic-card mark.hl");
+      assert(marks.length > 0, `搜索结果高亮命中词（${marks.length} 处）`);
+      const firstMark = marks[0];
+      assert(!!firstMark && /注入/.test(firstMark.textContent || ""), "高亮内容就是搜索词");
+      si2.value = "";
+      si2.dispatchEvent(new window.Event("input", { bubbles: true }));
+      if (window.__kbFlushSearch) window.__kbFlushSearch();
+      await delay(30);
+    }
+
+    // ③ 工具箱输出也能一键复制
+    clickTab("tools");
+    await delay(40);
+    const ti = doc.querySelector("#tbInput");
+    const to = doc.querySelector("#tbOp");
+    const tr = doc.querySelector("#tbRun");
+    if (ti && to && tr) {
+      ti.value = "hello";
+      to.value = "b64e";
+      if (to.dispatchEvent) to.dispatchEvent(new window.Event("change", { bubbles: true }));
+      tr.click();
+      await delay(60);
+      const tbOut = doc.querySelector("#tbOut");
+      assert(!!tbOut && (tbOut.textContent || "").indexOf("aGVsbG8") === 0, "工具箱正常产出结果");
+      const tbOutEl = doc.querySelector("#tbOut");
+      const tbWrap = tbOutEl && tbOutEl.parentNode;
+      assert(!!tbWrap && tbWrap.classList.contains("code-wrap") && !!tbWrap.querySelector(".code-copy"),
+             "工具箱输出带「复制」按钮");
+      assert(!!tbOutEl && (tbOutEl.textContent || "").indexOf("复制") < 0, "输出文本未被复制按钮污染");
+    }
+
+    // ⑤ 加载态真正启用（源码级：环境申请用统一 loading 三态）
+    const src3 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(src3.indexOf('stateBlock("loading"') >= 0, "存在统一加载态用法");
+    assert(/正在向后端申请临时环境[\s\S]{0,120}stateBlock\(\"loading\"/.test(src3) ||
+           src3.indexOf('stateBlock("loading", {') >= 0, "环境申请使用统一加载态");
+    assert(src3.indexOf("function enhanceCodeBlocks") >= 0 && src3.indexOf("function hlTerms") >= 0,
+           "复制与高亮的公共实现已就绪");
+
+    clickTab("today");
+    await delay(20);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
