@@ -1455,6 +1455,22 @@ kbd {
 .state-block .sb-t { color: var(--ink); font-weight: 700; font-size: 14px; }
 .state-block .sb-h { margin-top: 6px; font-size: 12.5px; line-height: 1.6; }
 .state-block .sb-a { margin-top: 12px; }
+/* 知识点详情的连续阅读导航（v1.5.4 C2） */
+.kb-nav-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); flex-wrap: wrap;
+}
+.kb-nav-row .btn { max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 首次使用引导（v1.5.4 C1） */
+.onboard-step { padding: 10px 0; border-bottom: 1px dashed var(--line); }
+.onboard-step:last-of-type { border-bottom: none; }
+.onboard-step b { color: var(--ink); }
+.onboard-step p { margin: 6px 0 0; font-size: 13px; line-height: 1.65; color: var(--muted); }
+.onboard-step kbd {
+  padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--chip); color: var(--ink); font-size: 11.5px;
+}
+.onboard-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .error-state { border-color: color-mix(in srgb, var(--bad) 40%, transparent); color: var(--bad); background: var(--bad-bg); }
 
 /* ==================================================================

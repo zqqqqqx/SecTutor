@@ -1847,6 +1847,99 @@ $("#backLab").click();
     await delay(20);
   }
 
+  // ===== 52. 首启引导 / 详情连续阅读 / 快捷键面板（v1.5.4 批次 4）=====
+  {
+    // ① 首次引导：三步骤 + 关闭后写标记；自测环境不会自动弹（不干扰其他断言）
+    const ovAtLoad = doc.querySelector("#modalOverlay");
+    assert(!ovAtLoad || ovAtLoad.classList.contains("hidden"), "自测环境不自动弹出新手引导");
+    assert(typeof window.__ui.openOnboarding === "function", "引导入口已暴露（便于测试与设置复用）");
+    const ov2 = window.__ui.openOnboarding();
+    await delay(30);
+    assert(!!ov2 && !ov2.classList.contains("hidden"), "引导弹窗可打开");
+    const steps = ov2.querySelectorAll(".onboard-step");
+    assert(steps.length === 3, `引导含三步说明（实测 ${steps.length} 步）`);
+    const guideTxt = ov2.textContent || "";
+    assert(/今日/.test(guideTxt) && /快捷键|Ctrl/.test(guideTxt) && /自测/.test(guideTxt),
+           "三步分别讲清：入口 / 键盘 / 练题");
+    const okBtn = ov2.querySelector("#onboardOk");
+    assert(!!okBtn, "引导有「开始使用」按钮");
+    if (okBtn) {
+      okBtn.click();
+      await delay(420);            // 弹窗关闭有过渡动画，等它真正隐藏
+      assert(ov2.classList.contains("hidden"), "点「开始使用」后引导关闭");
+      let flag = "";
+      try { flag = window.localStorage.getItem("sectutor_onboarded") || ""; } catch (e) {}
+      assert(flag === "1", "关闭后写入「已看过引导」标记（不再重复打扰）");
+    }
+
+    // ② 设置面板里有重看入口
+    const setBtn = doc.querySelector("#btnSettings");
+    if (setBtn) {
+      setBtn.click();
+      await delay(40);
+      const g2 = doc.querySelector("#setGuide");
+      assert(!!g2, "设置面板提供「重新查看新手引导」入口");
+      if (g2) {
+        g2.click();
+        await delay(40);
+        const steps2 = doc.querySelectorAll(".onboard-step");
+        assert(steps2.length === 3, "从设置重新打开引导可用");
+        const sk = doc.querySelector("#onboardSkip");
+        if (sk) { sk.click(); await delay(40); }
+      } else {
+        pressKey("Escape");
+        await delay(40);
+      }
+    }
+
+    // ③ 详情页连续阅读：上一个 / 下一个 + 位置指示
+    clickTab("knowledge");
+    await delay(30);
+    const firstCard = doc.querySelector("#topicGrid .topic-card");
+    if (firstCard) {
+      firstCard.click();
+      await delay(50);
+      const row = doc.querySelector("#topicDetail .kb-nav-row");
+      assert(!!row, "知识点详情底部有前后导航行");
+      const posTxt = row ? (row.textContent || "") : "";
+      assert(/\d+\s*\/\s*\d+/.test(posTxt), `详情显示位置指示（${(posTxt.match(/\d+\s*\/\s*\d+/) || [""])[0]}）`);
+      const titleBefore = (doc.querySelector("#topicDetail h2") || {}).textContent || "";
+      const nx = doc.querySelector("#kbNext");
+      assert(!!nx, "存在「下一个」按钮");
+      if (nx) {
+        nx.click();
+        await delay(50);
+        const titleAfter = (doc.querySelector("#topicDetail h2") || {}).textContent || "";
+        assert(titleAfter && titleAfter !== titleBefore, "点「下一个」切换到另一条知识点");
+        const pv = doc.querySelector("#kbPrev");
+        assert(!!pv, "切换后出现「上一个」按钮");
+        if (pv) {
+          pv.click();
+          await delay(50);
+          const titleBack = (doc.querySelector("#topicDetail h2") || {}).textContent || "";
+          assert(titleBack === titleBefore, "点「上一个」回到原来的知识点");
+        }
+      }
+      const back = doc.querySelector("#backKb");
+      if (back) { back.click(); await delay(30); }
+    }
+
+    // ④ 快捷键面板补全（含知识库导航与 9 个面板）
+    window.__ui.openHotkeyHelp();
+    await delay(60);
+    const hk = doc.querySelector("#modalBody");
+    const hkTxt = hk ? (hk.textContent || "") : "";
+    assert(/知识库结果上下浏览/.test(hkTxt), "快捷键面板含「知识库结果上下浏览」");
+    assert(/在结果中返回搜索框/.test(hkTxt), "快捷键面板含「结果中返回搜索框」");
+    const panelRows = (hkTxt.match(/切换到 /g) || []).length;
+    assert(panelRows === 9, `快捷键面板列出全部 9 个面板（实测 ${panelRows}）`);
+    pressKey("Escape");
+    await delay(40);
+
+    clickTab("today");
+    await delay(20);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

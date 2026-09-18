@@ -773,6 +773,7 @@
         <div class="chips">
           <button class="btn small" id="setPdf">📄 导出学习计划</button>
           <button class="btn small ghost" id="setChat">🗑 导出对话</button>
+          <button class="btn small ghost" id="setGuide">🧭 重新查看新手引导</button>
           <button class="btn small ghost" id="setReset">♻️ 重置进度</button>
           <button class="btn small ghost" id="setExport">💾 导出进度备份</button>
           <button class="btn small ghost" id="setImport">📥 导入进度备份</button>
@@ -805,6 +806,7 @@
     }));
     const pdf = $("#setPdf"); if (pdf) pdf.addEventListener("click", () => { closeModal(); exportPlanPdf(); });
     const chat = $("#setChat"); if (chat) chat.addEventListener("click", () => { closeModal(); exportChat(); });
+    const guide = $("#setGuide"); if (guide) guide.addEventListener("click", () => { closeModal(); openOnboarding(); });
     const reset = $("#setReset"); if (reset) reset.addEventListener("click", () => {
       // v1.5.4：可撤销的动作直接执行 + 「限时撤销」，不再拦原生确认框
       const snap = snapshotMastery();
@@ -1123,6 +1125,44 @@
     return tag === "input" || tag === "textarea" || tag === "select" || !!el.isContentEditable;
   }
 
+  // v1.5.4 C1：首次使用引导 —— 三句话说明「从哪开始 / 键盘更快 / 学完就练」，
+  // 只自动弹一次；设置里可随时重看（也便于自测直接调用）。
+  const ONBOARD_KEY = "sectutor_onboarded";
+  function onboardSeen() {
+    try { return localStorage.getItem(ONBOARD_KEY) === "1"; } catch (e) { return true; }
+  }
+  function openOnboarding() {
+    const ov = openModal("👋 欢迎使用 SecTutor", `
+      <div class="onboard">
+        <div class="onboard-step"><b>1 · 从「今日」开始</b>
+          <p>每天打开先看「今日」：它按你的进度推荐该复习、该补强、该推进的下一步，不用自己挑。</p></div>
+        <div class="onboard-step"><b>2 · 键盘更快</b>
+          <p>按 <kbd>?</kbd> 查看全部快捷键：<kbd>Ctrl</kbd>+<kbd>K</kbd> 全局搜索，数字键
+             <kbd>1</kbd>~<kbd>9</kbd> 切换面板，知识库结果可用 <kbd>↑</kbd><kbd>↓</kbd> 浏览、<kbd>Esc</kbd> 回到搜索框。</p></div>
+        <div class="onboard-step"><b>3 · 学完就练</b>
+          <p>12 个领域 · 246 个知识点 · 744 道题。点「随机自测」检验，<b>答错的题会带你去对应知识点</b>。</p></div>
+        <div class="onboard-actions">
+          <button class="btn ghost small" id="onboardSkip">跳过</button>
+          <button class="btn small accent" id="onboardOk">开始使用</button>
+        </div>
+        <p class="u-muted u-f12 u-mt8">以后可在「设置」里重新查看本引导。</p>
+      </div>`);
+    const close = () => {
+      try { localStorage.setItem(ONBOARD_KEY, "1"); } catch (e) {}
+      closeModal();
+    };
+    const ok = ov.querySelector("#onboardOk");
+    if (ok) ok.addEventListener("click", close);
+    const sk = ov.querySelector("#onboardSkip");
+    if (sk) sk.addEventListener("click", close);
+    return ov;
+  }
+  function maybeShowOnboarding() {
+    if (window.__SELFTEST__) return;      // 自测里不自动弹，避免干扰其它断言（测试直接调 openOnboarding）
+    if (onboardSeen()) return;
+    openOnboarding();
+  }
+
   function openHotkeyHelp() {
     const rows = [
       ["打开全局搜索", "Ctrl / ⌘ + K"],
@@ -1130,6 +1170,9 @@
       ["聚焦当前搜索框", "/"],
       ["发送消息", "Enter"],
       ["打开本帮助", "?"],
+      ["知识库结果上下浏览", "↑ / ↓"],
+      ["在结果中返回搜索框", "Esc"],
+      ["今日页：直达各步骤", "点击步骤卡片"],
     ].concat(TAB_KEYS.map((k, i) => ["切换到 " + TAB_NAMES[k], String(i + 1)]));
     const html = `<div class="hk-list">` + rows
       .map((r) => `<div class="hk-row"><span>${escapeHtml(r[0])}</span><span><kbd>${escapeHtml(r[1])}</kbd></span></div>`)
@@ -1513,6 +1556,12 @@
     const lvl = state.userLevel;
     const body = topic.levels[lvl] || topic.levels["入门"];
     const learned = state.mastery.has(topic.id);
+    // v1.5.4 C2：同领域（沿用当前难度筛选）的上一个 / 下一个，支持连续阅读
+    const sibCat = CATS.find((c) => c.id === topic.cat);
+    const sibs = sibCat ? sortTopics(sibCat.topics.filter((x) => kbLevelFilter === "all" || x.level === kbLevelFilter)) : [];
+    const sibIdx = sibs.findIndex((x) => x.id === topic.id);
+    const prevT = sibIdx > 0 ? sibs[sibIdx - 1] : null;
+    const nextT = sibIdx >= 0 && sibIdx + 1 < sibs.length ? sibs[sibIdx + 1] : null;
     detail.innerHTML = `
       <button class="back-btn" id="backKb">← 返回列表</button>
       <h2>${topic.name} <span class="lvl-tag lvl-${topic.level}">${topic.level}</span></h2>
@@ -1525,6 +1574,11 @@
       <div class="kb-section"><h4>🔗 ${t("kb.related")}</h4><div class="rel-box" id="relBox"></div></div>
       <div class="ai-helpers"><button class="btn ghost small" id="topicAiBtn">🤖 AI 辅助（讲解/自测/拓展）</button></div>
       <button class="learn-btn btn accent${learned ? " mastered" : ""}" id="learnBtn" aria-pressed="${learned ? "true" : "false"}">${learned ? "✓ 已掌握（点击取消）" : "我已掌握此知识点"}</button>
+      <div class="kb-nav-row">
+        ${prevT ? '<button class="btn ghost small" id="kbPrev" title="上一个知识点">← ' + escapeHtml(prevT.name) + '</button>' : '<span class="u-muted u-f12">已是第一个</span>'}
+        <span class="u-muted u-f12">${sibIdx + 1} / ${sibs.length}</span>
+        ${nextT ? '<button class="btn ghost small" id="kbNext" title="下一个知识点">' + escapeHtml(nextT.name) + ' →</button>' : '<span class="u-muted u-f12">已是最后一个</span>'}
+      </div>
     `;
     const rel = relatedDocs(topic);
     if (rel.length) {
@@ -1542,6 +1596,10 @@
       });
     }
     $("#backKb").addEventListener("click", renderTopicGrid);
+    const kbPrevBtn = $("#kbPrev");
+    if (kbPrevBtn && prevT) kbPrevBtn.addEventListener("click", () => showTopicDetail(prevT.id));
+    const kbNextBtn = $("#kbNext");
+    if (kbNextBtn && nextT) kbNextBtn.addEventListener("click", () => showTopicDetail(nextT.id));
     const topicAiBtn = $("#topicAiBtn");
     if (topicAiBtn) topicAiBtn.addEventListener("click", () => aiAssistForTopic(topic));
     $("#learnBtn").addEventListener("click", () => {
@@ -3851,6 +3909,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   // 交互反馈层自测钩子
   if (typeof window !== "undefined") {
     window.__ui = {
+      openOnboarding: openOnboarding,
+      openHotkeyHelp: openHotkeyHelp,
       toast: toast,
       closeToast: closeToast,
       withPending: withPending,
@@ -4157,6 +4217,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     setTimeout(() => {
       splash.classList.add("done");
       setTimeout(() => { splash.style.display = "none"; }, 480);
+      // 首次使用：开场界面收起后再弹引导，避免两层弹层同时出现
+      setTimeout(maybeShowOnboarding, 620);
     }, 80);
   }
 
