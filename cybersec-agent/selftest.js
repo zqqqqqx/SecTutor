@@ -2162,6 +2162,29 @@ $("#backLab").click();
     await delay(20);
   }
 
+  // ===== 55. CSS 层叠：两代规则残留检测（v1.5.4 修复「搜索框里套小框」）=====
+  {
+    // 背景：.kb-search 有两代规则（旧代 input 自己是框；新代外层是框、input 透明）。
+    // 新代漏重置 padding/box-shadow/border-radius，且旧代 :focus 仍给内层画 4px 环
+    // → 聚焦时外层框里多出一个「隐形小框」。用计算样式直接守住，防止回潮。
+    const kb = doc.querySelector("#kbSearch");
+    assert(!!kb, "知识库搜索框存在");
+    if (kb) {
+      const cs = window.getComputedStyle(kb);
+      const pad = String(cs.padding || "").replace("px", "");
+      const shadow = String(cs.boxShadow || "").trim();
+      assert(pad === "0" || pad === "0px", `搜索框内层 input 的内边距已归零（实际 ${cs.padding}）`);
+      assert(shadow === "" || shadow === "none", `搜索框内层 input 不残留阴影（实际 ${shadow || "无"}）`);
+      const csBorder = String(cs.borderTopStyle || "");
+      assert(csBorder === "none", `搜索框内层 input 无边框（实际 ${csBorder}）`);
+    }
+    // 焦点可见性由外层容器承担，不能因为归零而丢失
+    const cssTxt = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
+    assert(/\.kb-search:focus-within/.test(cssTxt), "焦点反馈由外层 .kb-search:focus-within 承担（未丢失）");
+    const focusBlock = (cssTxt.match(/\.kb-search input:focus \{[^}]*\}/) || [""])[0];
+    assert(focusBlock.indexOf("box-shadow: none") >= 0, "内层 input 的 :focus 不再画焦点环（避免框里套框）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

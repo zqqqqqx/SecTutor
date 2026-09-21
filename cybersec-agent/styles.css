@@ -404,7 +404,11 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   border: 1px solid var(--line); background: var(--panel); color: var(--ink); transition: border-color .18s, box-shadow .18s;
   box-shadow: var(--shadow-sm);
 }
-.kb-search input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
+/* v1.5.4 修复「框里套框」：此处原为旧一代写法（input 自己就是输入框），
+   新一代改成外层容器是框、input 透明；但这条 :focus 仍给内层 input 又画了 4px 焦点环，
+   与外层边框叠加成「外框里多出一个隐形小框」（亮色主题 --brand-soft 淡薄荷色时尤其明显）。
+   焦点反馈统一交给外层 .kb-search:focus-within。 */
+.kb-search input:focus { outline: none; box-shadow: none; }
 .kb-search-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; min-width: 64px; }
 .cat-tag {
   display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 12px; margin-top: 10px; margin-left: 6px;
@@ -483,7 +487,9 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   border-radius: 10px; padding: 0 13px; height: 42px; transition: .16s; }
 .kb-search:focus-within { border-color: color-mix(in srgb, var(--mag) 45%, transparent); box-shadow: var(--glow-cyan); }
 .kb-search svg { width: 17px; height: 17px; stroke: var(--muted); fill: none; stroke-width: 1.8; }
-.kb-search input { flex: 1; background: none; border: none; outline: none; color: var(--ink); font-family: "Rajdhani","Segoe UI",sans-serif; font-size: 14.5px; }
+.kb-search input { flex: 1; background: none; border: none; outline: none; color: var(--ink); font-family: "Rajdhani","Segoe UI",sans-serif; font-size: 14.5px;
+  /* 旧一代给这个 input 设过 padding/圆角/阴影，新一代必须显式归零，否则会残留成「隐形内框」并顶掉垂直居中 */
+  padding: 0; border-radius: 0; box-shadow: none; }
 .kb-search input::placeholder { color: var(--muted); }
 .kb-sort { display: flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 10px; height: 42px; padding: 0 13px; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
