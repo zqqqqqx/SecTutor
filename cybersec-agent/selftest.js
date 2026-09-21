@@ -1614,7 +1614,8 @@ $("#backLab").click();
     assert(noName.length === 0, `输入控件均有无障碍名称（实测 ${inputs.length} 个，缺名称 ${noName.length} 个）`);
 
     // outline:none 必须有 :focus/:focus-visible 补充（防「焦点不可见」回潮）
-    const cssText = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
+    // 扫描前先剥掉注释：否则说明性注释里出现的 "outline: none" 会被当成选择器块（实测踩过）
+    const cssText = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const noOutlineBlocks = cssText.match(/[^{}]*\{[^{}]*outline:\s*none[^{}]*\}/g) || [];
     const missing = [];
     noOutlineBlocks.forEach((blk) => {
@@ -2162,27 +2163,34 @@ $("#backLab").click();
     await delay(20);
   }
 
-  // ===== 55. CSS 层叠：两代规则残留检测（v1.5.4 修复「搜索框里套小框」）=====
+  // ===== 55. CSS 层叠：内层 input 必须完全透明（防「搜索框里套小框」回潮）=====
   {
-    // 背景：.kb-search 有两代规则（旧代 input 自己是框；新代外层是框、input 透明）。
-    // 新代漏重置 padding/box-shadow/border-radius，且旧代 :focus 仍给内层画 4px 环
-    // → 聚焦时外层框里多出一个「隐形小框」。用计算样式直接守住，防止回潮。
+    // ⚠️ 不要用 getComputedStyle 断言 padding / border：
+    //    实测 jsdom 24（CI 里 npm install 装的版本）不解析样式表层叠，这两个属性会直接返回
+    //    UA 默认值（padding:1px / border:inset）→ 断言假失败；而 jsdom 30（本机托管回退路径）
+    //    会正确解析。把断言绑在 jsdom 版本上毫无意义，因此改为源码级检查（各版本一致）。
     const kb = doc.querySelector("#kbSearch");
     assert(!!kb, "知识库搜索框存在");
-    if (kb) {
-      const cs = window.getComputedStyle(kb);
-      const pad = String(cs.padding || "").replace("px", "");
-      const shadow = String(cs.boxShadow || "").trim();
-      assert(pad === "0" || pad === "0px", `搜索框内层 input 的内边距已归零（实际 ${cs.padding}）`);
-      assert(shadow === "" || shadow === "none", `搜索框内层 input 不残留阴影（实际 ${shadow || "无"}）`);
-      const csBorder = String(cs.borderTopStyle || "");
-      assert(csBorder === "none", `搜索框内层 input 无边框（实际 ${csBorder}）`);
-    }
+    const cssTxt = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const innerRule = (cssTxt.match(/\.kb-search\s*>?\s*input\s*\{[^}]*\}/) || [""])[0];
+    assert(!!innerRule, "存在内层 input 的权威样式规则");
+    assert(/padding:\s*0/.test(innerRule), "内层 input 内边距归零");
+    assert(/border:\s*(0|none)/.test(innerRule), "内层 input 无边框");
+    assert(/box-shadow:\s*none/.test(innerRule), "内层 input 无阴影（否则会变成「框里套框」）");
+    assert(/appearance:\s*none/.test(innerRule), "内层 input 关闭 UA 默认外观（appearance: none）");
     // 焦点可见性由外层容器承担，不能因为归零而丢失
-    const cssTxt = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
     assert(/\.kb-search:focus-within/.test(cssTxt), "焦点反馈由外层 .kb-search:focus-within 承担（未丢失）");
-    const focusBlock = (cssTxt.match(/\.kb-search input:focus \{[^}]*\}/) || [""])[0];
-    assert(focusBlock.indexOf("box-shadow: none") >= 0, "内层 input 的 :focus 不再画焦点环（避免框里套框）");
+    const wrapFocus = (cssTxt.match(/\.kb-search:focus-within\s*\{[^}]*\}/) || [""])[0];
+    assert(/box-shadow|border-color/.test(wrapFocus), "外层容器聚焦时有可见反馈");
+    const focusBlocks = cssTxt.match(/\.kb-search[^{]*input:focus\s*\{[^}]*\}/g) || [];
+    // 注意：不要写成 /box-shadow:\s*(?!none)/ —— \s* 可以匹配零个空格，
+    // 于是 "box-shadow: none" 里 `none` 前的空格会让否定预查通过 → 误报为「有内环」（踩过）。
+    // 正确做法是解析出值再比较。
+    const hasInnerRing = focusBlocks.some((b) => {
+      const m = b.match(/box-shadow:\s*([^;]+)/);
+      return !!m && m[1].trim() !== "none";
+    });
+    assert(!hasInnerRing, "内层 input 的 :focus 不再画焦点环（避免框里套框）");
   }
 
   console.log("\n==== 自测结果 ====");

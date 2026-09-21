@@ -399,16 +399,10 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 
 /* ---------- 知识点搜索 ---------- */
 .kb-search { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-.kb-search input {
-  flex: 1; padding: 12px 15px; font-size: 14px; border-radius: var(--radius);
-  border: 1px solid var(--line); background: var(--panel); color: var(--ink); transition: border-color .18s, box-shadow .18s;
-  box-shadow: var(--shadow-sm);
-}
-/* v1.5.4 修复「框里套框」：此处原为旧一代写法（input 自己就是输入框），
-   新一代改成外层容器是框、input 透明；但这条 :focus 仍给内层 input 又画了 4px 焦点环，
-   与外层边框叠加成「外框里多出一个隐形小框」（亮色主题 --brand-soft 淡薄荷色时尤其明显）。
-   焦点反馈统一交给外层 .kb-search:focus-within。 */
-.kb-search input:focus { outline: none; box-shadow: none; }
+/* （v1.5.5 清理）此处原有一代旧的 .kb-search input 规则：input 自己是可见框
+   （border + background + box-shadow + :focus 4px 焦点环）。新一代改为「外层容器是框、input 透明」后，
+   这些声明没被覆盖就残留下来，聚焦时会在外框内部多画一个隐含小框。
+   现已整段删除，权威定义见下方 .kb-search > input（含完整重置）。 */
 .kb-search-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; min-width: 64px; }
 .cat-tag {
   display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 12px; margin-top: 10px; margin-left: 6px;
@@ -487,9 +481,13 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   border-radius: 10px; padding: 0 13px; height: 42px; transition: .16s; }
 .kb-search:focus-within { border-color: color-mix(in srgb, var(--mag) 45%, transparent); box-shadow: var(--glow-cyan); }
 .kb-search svg { width: 17px; height: 17px; stroke: var(--muted); fill: none; stroke-width: 1.8; }
-.kb-search input { flex: 1; background: none; border: none; outline: none; color: var(--ink); font-family: "Rajdhani","Segoe UI",sans-serif; font-size: 14.5px;
-  /* 旧一代给这个 input 设过 padding/圆角/阴影，新一代必须显式归零，否则会残留成「隐形内框」并顶掉垂直居中 */
-  padding: 0; border-radius: 0; box-shadow: none; }
+/* 内层 input 必须"完全透明"：外框由 .kb-search 承担，任何内层边框/内边距/阴影都会变成「框里套框」 */
+.kb-search > input {
+  flex: 1; min-width: 0; color: var(--ink); font-family: "Rajdhani","Segoe UI",sans-serif; font-size: 14.5px;
+  padding: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none; outline: none;
+  background: transparent; appearance: none; -webkit-appearance: none;
+}
+.kb-search > input:focus { outline: none; border: 0; box-shadow: none; }
 .kb-search input::placeholder { color: var(--muted); }
 .kb-sort { display: flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 10px; height: 42px; padding: 0 13px; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
