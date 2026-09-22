@@ -398,7 +398,9 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .kb-hero .hero-stat span { display: block; font-size: 12px; color: var(--muted); }
 
 /* ---------- 知识点搜索 ---------- */
-.kb-search { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+/* （样式债清理）此处原有旧代 .kb-search 规则：display/align-items/gap 已被新代覆盖，
+   但 margin-bottom: 16px 无人覆盖而残留 —— 该元素如今是 .kb-toolbar 里的 flex 子项，
+   同行兄弟都无此 margin，导致搜索框在整行里偏高约 8px。整块删除。 */
 /* （v1.5.5 清理）此处原有一代旧的 .kb-search input 规则：input 自己是可见框
    （border + background + box-shadow + :focus 4px 焦点环）。新一代改为「外层容器是框、input 透明」后，
    这些声明没被覆盖就残留下来，聚焦时会在外框内部多画一个隐含小框。
@@ -1461,6 +1463,8 @@ kbd {
 .state-block .sb-a { margin-top: 12px; }
 /* 代码块一键复制（v1.5.4 批次 5）：按钮绝对定位在代码块右上角 */
 .code-wrap { position: relative; flex: 1; min-width: 0; }
+/* 工具面板的「输入/操作/输出」是 flex 行：包裹容器带纵向 margin 会把输出框压低、与标签错位 */
+.tb-row .code-wrap { margin: 0; }
 .code-copy {
   position: absolute; top: 6px; right: 6px; z-index: 2;
   padding: 2px 9px; font-size: 11.5px; cursor: pointer; font-family: inherit;

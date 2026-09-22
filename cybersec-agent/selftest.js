@@ -2193,6 +2193,72 @@ $("#backLab").click();
     assert(!hasInnerRing, "内层 input 的 :focus 不再画焦点环（避免框里套框）");
   }
 
+  // ===== 56. 样式债守护：不得新增「旧代残留」的盒模型/布局冲突（v1.5.5）=====
+  {
+    // 背景：styles.css 经多轮 UI 迭代，同一选择器存在多代定义。后代若"重新布局"了该元素
+    // （设了 display/flex/position/尺寸…），却没覆盖旧代的盒模型声明，旧值就会继续生效 ——
+    // 「搜索框里套小框」「搜索框比同行控件高 8px」都属这一类。
+    // 这里做静态检测（与 jsdom 无关，各版本一致）：同一选择器多代定义 + 后代有布局声明 +
+    // 旧代盒模型声明未被覆盖 → 命中。已人工复核属有意保留的写入 ALLOW。
+    const cssRaw2 = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const parseRules = (cssText, media) => {
+      const out = [];
+      let i = 0;
+      while (i < cssText.length) {
+        const brace = cssText.indexOf("{", i);
+        if (brace < 0) break;
+        const sel = cssText.slice(i, brace).trim();
+        let depth = 1, j = brace + 1;
+        while (j < cssText.length && depth) {
+          if (cssText[j] === "{") depth++;
+          else if (cssText[j] === "}") depth--;
+          j++;
+        }
+        const body = cssText.slice(brace + 1, j - 1);
+        if (sel.indexOf("@media") === 0) out.push.apply(out, parseRules(body, sel));
+        else if (sel && sel[0] !== "@") {
+          const props = {};
+          body.split(";").forEach((d) => {
+            const p = d.indexOf(":");
+            if (p > 0) props[d.slice(0, p).trim().toLowerCase()] = d.slice(p + 1).trim();
+          });
+          if (Object.keys(props).length) out.push({ sel: sel.replace(/\s+/g, " "), props: props, media: media || "" });
+        }
+        i = j;
+      }
+      return out;
+    };
+    const LAYOUT2 = ["display", "flex", "float", "position", "height", "width", "max-width", "min-width",
+                     "grid-template-columns", "align-items", "justify-content", "overflow", "gap"];
+    const BOXY2 = ["margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+                   "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+                   "width", "height", "border-radius", "box-shadow", "background"];
+    const groups2 = {};
+    parseRules(cssRaw2, "").forEach((r) => {
+      const k = r.sel + " @ " + r.media;
+      (groups2[k] = groups2[k] || []).push(r);
+    });
+    const flagged2 = [];
+    Object.keys(groups2).forEach((k) => {
+      const blocks = groups2[k];
+      if (blocks.length < 2) return;
+      const later = {};
+      blocks.slice(1).forEach((b) => Object.keys(b.props).forEach((p) => { later[p] = b.props[p]; }));
+      const first = blocks[0].props;
+      const residue = Object.keys(first).filter((p) => BOXY2.indexOf(p) >= 0 && !(p in later));
+      const laterLayout = Object.keys(later).filter((p) => LAYOUT2.indexOf(p) >= 0);
+      if (residue.length && laterLayout.length) flagged2.push(k.split(" @ ")[0]);
+    });
+    // 已人工复核、确认属「有意保留」的（不要随意扩充这个名单）
+    const ALLOW = [
+      "body",           // 背景/字体是基线样式，后代只是加了布局，并非重新设计
+      ".rail-item",     // 侧栏图标的固定尺寸是本意，后代只加了 position: relative
+      ".code-wrap",     // 块级语境下 8px 纵向间距是本意；flex 行内已由 .tb-row .code-wrap { margin: 0 } 覆盖
+    ];
+    const fresh = flagged2.filter((s) => ALLOW.indexOf(s) < 0);
+    assert(fresh.length === 0, `未新增「旧代残留」样式债（新增：${fresh.join(" | ") || "无"}）`);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
