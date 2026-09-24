@@ -1226,6 +1226,14 @@ kbd {
    注：个别 @media 仍随第 4 段面板分散，U3 一并迁到本段。
    ================================================================== */
 @media (max-width: 720px) {
+  /* 知识库工具栏：搜索框独占一行，排序/清除/范围 chips 折到第二行
+     （此前 5 个控件挤一行，窄窗下搜索框被压到几乎不可用） */
+  .kb-toolbar { flex-wrap: wrap; }
+  .kb-toolbar .kb-search { flex: 1 1 100%; }
+  .kb-toolbar .kb-scope { margin-left: 0; }
+  /* 顶栏副标题让位（与 ≤720 隐藏副驾驶命令条同一处理思路） */
+  .crumb-sub { display: none; }
+
   /* 消息区：留白收紧，气泡占宽提高 */
   .chat-log { padding: 13px; gap: 11px; }
   .msg-row { max-width: 96%; }
@@ -1450,6 +1458,8 @@ kbd {
 .state-block .sb-a { margin-top: 12px; }
 /* 代码块一键复制（v1.5.4 批次 5）：按钮绝对定位在代码块右上角 */
 .code-wrap { position: relative; flex: 1; min-width: 0; }
+/* 长代码行横向滚动，避免撑破气泡/卡片（此前无 overflow 规则，长行会顶宽父容器） */
+.code-wrap pre { overflow-x: auto; }
 /* 工具面板的「输入/操作/输出」是 flex 行：包裹容器带纵向 margin 会把输出框压低、与标签错位 */
 .tb-row .code-wrap { margin: 0; }
 .code-copy {
@@ -1461,6 +1471,10 @@ kbd {
 }
 .code-copy:hover { opacity: 1; color: var(--ink); }
 .code-copy:focus-visible { opacity: 1; outline: 2px solid var(--focus); outline-offset: 1px; }
+/* 卡片/列表标题可能含超长词（CVE 编号、长英文词）：允许断行，避免顶破卡片 */
+.news-card h4, .range-card h4, .gl-card h4, .topic-card h4, .cp-bubble, .msg .suggestions button {
+  overflow-wrap: anywhere;
+}
 /* 搜索命中高亮 */
 /* 智能问答的消息级操作（v1.5.4 批次 6） */
 .msg-tools { display: flex; gap: 6px; margin-top: 8px; }

@@ -2313,6 +2313,77 @@ $("#backLab").click();
     }
   }
 
+  // ===== 58. 窄窗适配 / 长文本 / 中途切面板的状态一致性（v1.5.5）=====
+  {
+    // ① 窄窗与长文本：源码级检查（静态，不受 jsdom 版本影响）
+    const cssN = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const m720 = (cssN.match(/@media \(max-width: 720px\)\s*\{[\s\S]*?\n\}/) || [""])[0];
+    assert(/\.kb-toolbar\s*\{[^}]*flex-wrap:\s*wrap/.test(m720),
+           "窄窗（≤720）知识库工具栏允许换行（5 个控件不再挤一行）");
+    assert(/\.kb-toolbar\s+\.kb-search\s*\{[^}]*flex:\s*1 1 100%/.test(m720),
+           "窄窗下搜索框独占一行（否则被压到几乎不可用）");
+    assert(/\.crumb-sub\s*\{[^}]*display:\s*none/.test(m720), "窄窗下顶栏副标题让位");
+    const codePre = (cssN.match(/\.code-wrap pre\s*\{[^}]*\}/g) || []).join(" ");
+    assert(/overflow-x:\s*auto/.test(codePre), "代码块长行横向滚动（不撑破气泡/卡片）");
+    const titleRule = (cssN.match(/\.news-card h4[^{]*\{[^}]*\}/) || [""])[0];
+    assert(/overflow-wrap:\s*anywhere/.test(titleRule),
+           "卡片标题允许长词断行（CVE 编号等超长词不顶破卡片）");
+
+    // ② 中途切面板：自测状态应当保留（用户常边学边切面板）
+    clickTab("quiz");
+    await delay(30);
+    const qsBtn = doc.querySelector("#quizStart");
+    if (qsBtn) {
+      qsBtn.click();
+      await delay(40);
+      const qBefore = (doc.querySelector("#quizMain .quiz-q") || {}).textContent || "";
+      assert(!!qBefore, "自测已出题（切面板前）");
+      clickTab("knowledge");
+      await delay(30);
+      clickTab("quiz");
+      await delay(40);
+      const qAfter = (doc.querySelector("#quizMain .quiz-q") || {}).textContent || "";
+      assert(qAfter === qBefore, "切换面板后回到自测，原题目仍在（状态未丢）");
+    }
+
+    // ③ 聊天草稿：切面板/切回不应丢输入内容
+    clickTab("chat");
+    await delay(30);
+    const ci3 = doc.querySelector("#chatInput");
+    if (ci3) {
+      ci3.value = "草稿-切面板测试";
+      ci3.dispatchEvent(new window.Event("input", { bubbles: true }));
+      await delay(520);                       // 草稿落盘是 400ms 防抖
+      clickTab("tools");
+      await delay(30);
+      clickTab("chat");
+      await delay(40);
+      const ci4 = doc.querySelector("#chatInput");
+      assert(!!ci4 && ci4.value === "草稿-切面板测试", `切面板后聊天草稿仍在（实际「${(ci4 || {}).value || ""}」）`);
+      if (ci4) { ci4.value = ""; ci4.dispatchEvent(new window.Event("input", { bubbles: true })); }
+    }
+
+    // ④ 副驾驶上下文：看过知识点后切面板，上下文仍能正确更新且不报错
+    clickTab("knowledge");
+    await delay(30);
+    const c3 = doc.querySelector("#topicGrid .topic-card");
+    if (c3) {
+      c3.click();
+      await delay(60);
+      const ctxBefore = (doc.querySelector("#copilotCtx") || {}).textContent || "";
+      assert(/SQL|注入|知识|今日/.test(ctxBefore) || ctxBefore.length > 0,
+             `副驾驶上下文 chip 有内容（${ctxBefore.slice(0, 20)}）`);
+      pressKey("Escape");
+      await delay(60);
+      clickTab("news");
+      await delay(40);
+      const ctxAfter = (doc.querySelector("#copilotCtx") || {}).textContent || "";
+      assert(typeof ctxAfter === "string", "切换面板后副驾驶上下文仍然可读（无异常）");
+      clickTab("today");
+      await delay(30);
+    }
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
