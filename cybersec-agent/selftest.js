@@ -2384,6 +2384,120 @@ $("#backLab").click();
     }
   }
 
+  // ===== 59. 键盘可达第二轮：分类筛选 / 列表导航 / 模态焦点环绕（v1.5.5）=====
+  {
+    const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
+
+    // ① 分类筛选列表此前是鼠标专用（<li> + click，无 role/tabindex）→ 现应可键盘操作
+    const catLists = [["#catList", ".dom"], ["#rangeCats", "li"], ["#labCats", "li"], ["#toolList", "li"]];
+    clickTab("range");
+    await delay(40);
+    clickTab("quiz");
+    await delay(40);
+    clickTab("tools");
+    await delay(40);
+    let checkedAny = 0;
+    for (let ci = 0; ci < catLists.length; ci++) {
+      const host = doc.querySelector(catLists[ci][0]);
+      const items = host ? Array.from(host.querySelectorAll(catLists[ci][1])) : [];
+      if (!items.length) continue;
+      checkedAny++;
+      const bad = items.filter((el) => el.getAttribute("role") !== "button" ||
+        Number(el.getAttribute("tabindex")) < 0 || !(el.getAttribute("aria-label") || "").trim());
+      assert(bad.length === 0, `${catLists[ci][0]} 分类项均可键盘操作（不合格 ${bad.length}/${items.length}）`);
+    }
+    assert(checkedAny >= 3, `至少检查到 3 个分类列表（实际 ${checkedAny}）`);
+
+    // Enter 键真的能切换筛选（工具分类：切到第二个分类后 active 迁移）
+    const toolItems = Array.from(doc.querySelectorAll("#toolList li"));
+    if (toolItems.length >= 2) {
+      toolItems[1].dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await delay(60);
+      const activeIdx = Array.from(doc.querySelectorAll("#toolList li")).findIndex((el) => el.classList.contains("active"));
+      assert(activeIdx === 1, `Enter 键可切换工具分类筛选（当前第 ${activeIdx + 1} 项）`);
+      Array.from(doc.querySelectorAll("#toolList li"))[0].dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await delay(40);
+    }
+
+    // ② 列表 ↑↓ 导航已推广到资讯 / 靶场列表（与知识库一致）
+    clickTab("news");
+    await delay(50);
+    const newsItems = Array.from(doc.querySelectorAll('#newsList [data-clickable="1"]'));
+    assert(newsItems.length >= 2, `资讯列表有可聚焦项（${newsItems.length}）`);
+    if (newsItems.length >= 2) {
+      newsItems[0].focus();
+      newsItems[0].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await delay(40);
+      assert(doc.activeElement === newsItems[1], "资讯列表按 ↓ 移动到下一项");
+      newsItems[1].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+      await delay(40);
+      assert(doc.activeElement === newsItems[0], "资讯列表按 ↑ 移回上一项");
+    }
+    clickTab("range");
+    await delay(50);
+    const rangeItems = Array.from(doc.querySelectorAll('#rangeList [data-clickable="1"]'));
+    assert(rangeItems.length >= 2, `靶场列表有可聚焦项（${rangeItems.length}）`);
+    if (rangeItems.length >= 2) {
+      rangeItems[0].focus();
+      rangeItems[0].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await delay(40);
+      assert(doc.activeElement === rangeItems[1], "靶场列表按 ↓ 移动到下一项");
+    }
+
+    // ③ 模态焦点环绕（实现早已存在，但此前没有断言覆盖）
+    const ovLeft2 = doc.querySelector("#modalOverlay");
+    if (ovLeft2 && !ovLeft2.classList.contains("hidden")) { pressKey("Escape"); await delay(460); }
+    // 用「设置」弹窗来测环绕：快捷键帮助弹窗里只有关闭按钮（无可环绕项）
+    const setBtn2 = doc.querySelector("#btnSettings");
+    if (setBtn2) setBtn2.click();
+    await delay(80);
+    const ov5 = doc.querySelector("#modalOverlay");
+    const modal = ov5 ? ov5.querySelector(".modal") : null;
+    const fItems = modal ? Array.from(modal.querySelectorAll(FOCUSABLE)) : [];
+    assert(fItems.length >= 2, `弹窗内有多个可聚焦项（${fItems.length}）`);
+    if (fItems.length >= 2) {
+      const lastEl = fItems[fItems.length - 1], firstEl = fItems[0];
+      lastEl.focus();
+      lastEl.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      await delay(30);
+      assert(doc.activeElement === firstEl, "末尾按 Tab 环绕到弹窗首个可聚焦项");
+      firstEl.focus();
+      firstEl.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+      await delay(30);
+      assert(doc.activeElement === lastEl, "首个按 Shift+Tab 环绕到弹窗末尾项");
+    }
+    pressKey("Escape");
+    await delay(460);
+    clickTab("today");
+    await delay(30);
+  }
+
+  // ===== 60. 空态/错误文案复盘（v1.5.5）=====
+  {
+    const src4 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    // ① 空态一律走统一三态组件（不得再用裸 <p>）
+    const bareEmpties = [
+      '"<p>当前没有对话内容可导出',
+      '"<p>暂无可复盘的同类题目',
+      '<p class="u-muted empty-state">',
+    ].filter((pat) => src4.indexOf(pat) >= 0);
+    assert(bareEmpties.length === 0, `空态已全部走统一三态（残留裸写法：${bareEmpties.join(" | ") || "无"}）`);
+    const sbCount = (src4.match(/stateBlock\(/g) || []).length;
+    assert(sbCount >= 10, `统一三态组件覆盖面足够（当前 ${sbCount} 处）`);
+
+    // ② 失败提示必须给出「下一步」（可重试 / 可改用替代路径 / 先做什么），不能只说失败
+    const needNext = [
+      ["密钥口令相关失败", /可先「关闭口令保护」/],
+      ["启用口令保护失败", /请改用明文存储继续使用/],
+      ["PNG 导出失败", /可改用「导出 PDF」/],
+      ["语音识别失败", /可直接改用文字输入/],
+      ["图片处理失败", /可用文字描述/],
+    ];
+    needNext.forEach((pair) => {
+      assert(pair[1].test(src4), `${pair[0]} 的提示包含下一步指引`);
+    });
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

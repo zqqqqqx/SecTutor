@@ -1189,37 +1189,58 @@
     openModal("⌨️ 键盘快捷键", html);
   }
 
-  // v1.5.4 B4：知识库键盘导航 —— 搜索框按 ↓ 进结果，结果间 ↑↓ 移动，Esc 回到搜索框。
+  // v1.5.4 B4 / v1.5.5：列表键盘导航 —— 搜索框按 ↓ 进结果，列表内 ↑↓ 移动，Esc 退出。
   // 用事件委托（卡片每次渲染都会重建，直接绑会失效）。
+  // 统一按 [data-clickable="1"] 取可聚焦项：v1.5.4 已把各列表的可点击卡片都标了这个属性，
+  // 所以资讯 / 靶场 / 演练 / 工具列表可以共用同一实现，不必各写一遍。
+  // 配置项：[容器, 配对的输入框（可空）]，输入框用于「↓ 进入列表」与「↑ 到顶 / Esc 回到输入框」。
+  function listNavConfigs() {
+    return [
+      ["#catList", null],        // 知识库领域筛选（12 项）
+      ["#topicGrid", "#kbSearch"],
+      ["#rangeCats", null],      // 靶场分类筛选
+      ["#labCats", null],        // 演练分类筛选
+      ["#toolList", null],       // 工具分类筛选
+      ["#rangeList", null],
+      ["#newsList", null],
+      ["#labList", null],
+    ];
+  }
   function initKbKeyboardNav() {
-    const grid = $("#topicGrid");
-    const inp = $("#kbSearch");
-    if (inp && !inp.dataset.kbnav) {
-      inp.dataset.kbnav = "1";
-      inp.addEventListener("keydown", (e) => {
-        if (e.key !== "ArrowDown" && e.key !== "Down") return;
-        const first = grid && grid.querySelector(".topic-card");
-        if (first) { e.preventDefault(); first.focus(); }
-      });
-    }
-    if (grid && !grid.dataset.kbnav) {
-      grid.dataset.kbnav = "1";
-      grid.addEventListener("keydown", (e) => {
-        const cur = e.target && e.target.closest ? e.target.closest(".topic-card") : null;
+    listNavConfigs().forEach((cfg) => {
+      const host = $(cfg[0]);
+      const inp = cfg[1] ? $(cfg[1]) : null;
+      if (!host || host.dataset.kbnav) return;
+      host.dataset.kbnav = "1";
+      const items = () => Array.prototype.slice.call(host.querySelectorAll('[data-clickable="1"]'));
+      host.addEventListener("keydown", (e) => {
+        const cur = e.target && e.target.closest ? e.target.closest('[data-clickable="1"]') : null;
         if (!cur) return;
-        const cards = Array.prototype.slice.call(grid.querySelectorAll(".topic-card"));
-        const i = cards.indexOf(cur);
+        const all = items();
+        const i = all.indexOf(cur);
         if (e.key === "ArrowDown" || e.key === "Down") {
-          if (i >= 0 && i + 1 < cards.length) { e.preventDefault(); cards[i + 1].focus(); }
+          e.preventDefault();
+          if (i >= 0 && i + 1 < all.length) all[i + 1].focus();
         } else if (e.key === "ArrowUp" || e.key === "Up") {
           e.preventDefault();
-          if (i > 0) cards[i - 1].focus(); else if (inp) inp.focus();
+          if (i > 0) all[i - 1].focus();
+          else if (inp) inp.focus();
+          else if (typeof cur.blur === "function") cur.blur();
         } else if (e.key === "Escape") {
           e.preventDefault();
           if (inp) inp.focus();
+          else if (typeof cur.blur === "function") cur.blur();
         }
       });
-    }
+      if (inp && !inp.dataset.kbnav) {
+        inp.dataset.kbnav = "1";
+        inp.addEventListener("keydown", (e) => {
+          if (e.key !== "ArrowDown" && e.key !== "Down") return;
+          const first = items()[0];
+          if (first) { e.preventDefault(); first.focus(); }
+        });
+      }
+    });
   }
 
   function initHotkeys() {
@@ -2932,7 +2953,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
           addMsg("bot", "🎤 聆听中…（再次点击 🎤 结束）");
           webSpeechTranscribe((interim, final) => { if (inp) inp.value = (final || "") + (interim || ""); })
             .then((text) => { voiceActive = false; bv.classList.remove("recording"); finishVoice(text); })
-            .catch((e) => { voiceActive = false; bv.classList.remove("recording"); addMsg("bot", "⚠️ 语音识别失败：" + escapeHtml(e.message)); });
+            .catch((e) => { voiceActive = false; bv.classList.remove("recording"); addMsg("bot", "⚠️ 语音识别失败：" + escapeHtml(e.message) + "（可直接改用文字输入，不影响其余功能）"); });
         } else if (mediaDevicesAvailable() && state.llm && state.llm.key) {
           addMsg("bot", "🎤 录音中…（再次点击 🎤 结束并转写）");
           voiceCtl = await startVoiceCapture();
@@ -2952,7 +2973,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         const prompt = inp ? inp.value.trim() : "";
         if (inp) inp.value = "";
         send(prompt || "请分析这张图片并解答。", { image: small, modality: "vision" });
-      } catch (e) { addMsg("bot", "⚠️ 图片处理失败：" + escapeHtml(e.message)); }
+      } catch (e) { addMsg("bot", "⚠️ 图片处理失败：" + escapeHtml(e.message) + "（可用文字描述你要问的图，同样能回答）"); }
     }
     if (bvis) bvis.addEventListener("click", async () => {
       try { const du = await pickImage(); await doVision(du); }
@@ -3043,7 +3064,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       li.className = id === rangeActiveCat ? "active" : "";
       const cnt = id === "all" ? SEC_DATA.ranges.length : SEC_DATA.ranges.filter((r) => r.cat === id).length;
       li.innerHTML = `<span>${name}</span><span class="count">${cnt}</span>`;
-      li.addEventListener("click", () => { rangeActiveCat = id; renderRangeCats(); renderRangeList(); });
+      makeClickable(li, () => { rangeActiveCat = id; renderRangeCats(); renderRangeList(); },
+        name + "（靶场分类" + cnt + "）");
       ul.appendChild(li);
     };
     mk("all", "全部");
@@ -3222,8 +3244,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       toast("已导出 sectutor-plan.png", "ok");
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
-      if (st) st.textContent = "PNG 导出失败：" + msg;
-      toast("PNG 导出失败：" + msg, "err");
+      if (st) st.textContent = "PNG 导出失败：" + msg + "（可改用「导出 PDF」，或在浏览器里截图）";
+      toast("PNG 导出失败：" + msg + "；可改用导出 PDF", "err");
     }
   }
   const exportPdfBtn = $("#exportPdf");
@@ -3249,7 +3271,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       li.className = c.id === labActiveCat ? "active" : "";
       const cnt = c.id === "all" ? SEC_DATA.labs.length : SEC_DATA.labs.filter((l) => l.cat === c.id).length;
       li.innerHTML = `<span>${c.name}</span><span class="count">${cnt}</span>`;
-      li.addEventListener("click", () => { labActiveCat = c.id; renderLabCats(); renderLabList(); });
+      makeClickable(li, () => { labActiveCat = c.id; renderLabCats(); renderLabList(); },
+        c.name + "（演练分类" + cnt + "）");
       ul.appendChild(li);
     });
   }
@@ -3837,7 +3860,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       li.className = id === toolActiveCat ? "active" : "";
       const cnt = id === "all" ? SEC_DATA.tools.length : SEC_DATA.tools.filter((t) => t.cat === id).length;
       li.innerHTML = `<span>${name}</span><span class="count">${cnt}</span>`;
-      li.addEventListener("click", () => { toolActiveCat = id; renderToolCats(); renderTools(); });
+      // v1.5.5：分类筛选项此前只有鼠标 click，键盘用户无法切换 → 统一走 makeClickable
+      makeClickable(li, () => { toolActiveCat = id; renderToolCats(); renderTools(); },
+        name + "（工具分类" + cnt + "）");
       ul.appendChild(li);
     };
     mk("all", "全部"); CATS.forEach((c) => mk(c.id, c.icon + " " + c.name));
@@ -3897,7 +3922,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   function exportChat() {
     const log = $("#chatLog"); if (!log) return;
     const text = log.innerText || log.textContent || "";
-    if (!text.trim()) { openModal("提示", "<p>当前没有对话内容可导出。</p>"); return; }
+    if (!text.trim()) {
+      openModal("提示", stateBlock("empty", {
+        title: "当前没有对话内容可导出",
+        hint: "先在「智能问答」里提问，或从知识体系点「AI 辅助」产生一轮对话，再来导出。",
+      }));
+      return;
+    }
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     const filename = "sectutor-chat-" + stamp + ".txt";
     try {
@@ -4986,7 +5017,14 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const t = allTopics().find((x) => x.id === id);
       if (t) { const qs = (SEC_DATA.quizzes || []).filter((q) => q.cat === t.cat); if (qs[0]) items.push(prepareQuestion({ ...qs[0] })); }
     });
-    if (!items.length) { openModal("🔔 复习", "<p>暂无可复盘的同类题目，已为你打开对应知识点。</p>"); ids.forEach((id) => showTopicDetail(id)); return; }
+    if (!items.length) {
+      openModal("🔔 复习", stateBlock("empty", {
+        title: "暂无可复盘的同类题目",
+        hint: "已为你打开对应知识点；先去「随机自测」做几题，之后这里就会攒出可复盘的错题。",
+      }));
+      ids.forEach((id) => showTopicDetail(id));
+      return;
+    }
     let idx = 0, score = 0, picked = -1, answered = false;
     function render() {
       if (idx >= items.length) {
@@ -6146,18 +6184,24 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         if (KeyVault.isLocked()) { await ensureLlmUnlocked(); }
         const np = window.prompt("设置新访问口令（用于加密 API Key）："); if (!np) return;
         try { await KeyVault.changePass(np); openModal("✅ 已修改", "<p>访问口令已更新。</p>"); }
-        catch (e) { openModal("❌ 失败", "<p>" + escapeHtml(e.message) + "</p>"); }
+        catch (e) {
+          openModal("❌ 失败", "<p>" + escapeHtml(e.message) + "</p><p class=\"u-muted u-f12\">可重试一次；若持续失败，可先「关闭口令保护」（密钥将转回明文存储，仅存本机）。</p>");
+        }
       } else {
         const pass = window.prompt("设置访问口令（用于加密 API Key，重启后需输入解锁）："); if (!pass) return;
         try { await KeyVault.enable(pass); openModal("✅ 已启用", "<p>密钥已加密保护，重启后需口令解锁。</p>"); openApiHub(); }
-        catch (e) { openModal("❌ 启用失败", "<p>" + escapeHtml(e.message) + "</p>"); }
+        catch (e) {
+          openModal("❌ 启用失败", "<p>" + escapeHtml(e.message) + "</p><p class=\"u-muted u-f12\">可重试一次；若浏览器不支持 Web Crypto（需 https 或 localhost），请改用明文存储继续使用。</p>");
+        }
       }
     });
     const kvDisable = $("#kvDisable");
     if (kvDisable) kvDisable.addEventListener("click", async () => {
       if (KeyVault.isLocked()) { const ok = await ensureLlmUnlocked(); if (!ok) return; }
       try { await KeyVault.disable(); openModal("✅ 已关闭", "<p>密钥已转回明文存储（仅本机）。</p>"); openApiHub(); }
-      catch (e) { openModal("❌ 失败", "<p>" + escapeHtml(e.message) + "</p>"); }
+      catch (e) {
+        openModal("❌ 失败", "<p>" + escapeHtml(e.message) + "</p><p class=\"u-muted u-f12\">可重试一次；必要时先解锁口令，再执行本操作。</p>");
+      }
     });
     // 增强能力开关（D2 默认关闭）
     const fv = $("#featVoice"), fvi = $("#featVision");

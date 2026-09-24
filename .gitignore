@@ -28,3 +28,6 @@ desktop.ini
 sectutor-app/_asar_staging/
 sectutor-app/app.asar
 *.asar
+
+# ===== 构建产物（由 npm run build 生成，不入库、也不进安装包）=====
+cybersec-agent/sec-tutor.html

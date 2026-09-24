@@ -24,6 +24,25 @@ def blend(fg_hex, alpha, bg_hex):
         out.append(round(f * alpha + bgc * (1 - alpha)))
     return "#%02x%02x%02x" % tuple(out)
 
+def info(title, pairs, need=1.2, note=""):
+    print("\n== " + title + " ==")
+    if note:
+        print("  " + note)
+    for name, fg, bg in pairs:
+        r = ratio(fg, bg)
+        ok = "ℹ️" if r >= need else "❌"
+        print(f"  {ok} {name:<38} {fg} on {bg} = {r:.2f}")
+
+def show3(title, pairs, need=3.0, note=""):
+    """非文本要求：焦点指示器/控件边界按 WCAG 2.4.13 / 1.4.11 需 ≥3:1"""
+    print("\n== " + title + " ==")
+    if note:
+        print("  " + note)
+    for name, fg, bg in pairs:
+        r = ratio(fg, bg)
+        ok = "✅" if r >= need else "❌"
+        print(f"  {ok} {name:<38} {fg} on {bg} = {r:.2f}  (需≥{need}:1)")
+
 def show(title, pairs):
     print("\n== " + title + " ==")
     for name, fg, bg in pairs:
@@ -48,7 +67,7 @@ show("浅色", [
     ("成功 #15803d on panel",        "#15803d", L_PANEL),
     ("警告 #a4530a on panel",        "#a4530a", L_PANEL),
     ("危险 #c2262a on panel",        "#c2262a", L_PANEL),
-    ("描边(line) 可见性 vs bg",       "#c6d2d1", L_BG),
+    ("装饰性描边(line) vs bg（不适用正文阈值）", "#c6d2d1", L_BG),
 ])
 
 # ---------- 深色主题 ----------
@@ -68,5 +87,38 @@ show("深色", [
     ("成功 #4ade80 on panel",       "#4ade80", D_PANEL),
     ("警告 #fbbf24 on panel",       "#fbbf24", D_PANEL),
     ("危险 #f87171 on panel",       "#f87171", D_PANEL),
-    ("描边 rgba白 .10 / 视觉等价",    "#1e2f2d", D_BG),
+    ("装饰性描边 vs bg（不适用正文阈值）", "#1e2f2d", D_BG),
+])
+
+# ---------- 焦点指示器（WCAG 2.4.13 / 1.4.11：非文本 ≥3:1）----------
+# 键盘用户完全依赖它：焦点环必须与相邻背景有足够反差（此前没有被任何检查覆盖）
+show3("焦点指示器（浅色）", [
+    ("焦点环 --focus #0b7a71 on bg",     "#0b7a71", L_BG),
+    ("焦点环 on panel(玻璃)",            "#0b7a71", L_PANEL),
+    ("焦点环 on panel2(白)",             "#0b7a71", L_PANEL2),
+], 3.0, "焦点可见性：键盘操作时唯一的位置线索")
+show3("焦点指示器（深色）", [
+    ("焦点环 --focus #2dd4bf on bg",     "#2dd4bf", D_BG),
+    ("焦点环 on panel(玻璃)",            "#2dd4bf", D_PANEL),
+    ("焦点环 on panel2",                 "#2dd4bf", D_PANEL2),
+], 3.0, "焦点可见性：键盘操作时唯一的位置线索")
+
+# ---------- v1.5.4/v1.5.5 新增组件的配色 ----------
+L_SOFT = "#dff5f2"                                   # 浅色 --brand-soft
+D_SOFT = blend("#2dd4bf", 0.12, D_PANEL)             # 深色 --brand-soft 压在面板上
+show("新增组件（浅色）", [
+    ("搜索高亮 mark.hl 文字",        "#10201f", L_SOFT),
+    ("复制按钮 .code-copy",          "#5b6f6c", L_PANEL2),
+    ("消息操作 .msg-act",            "#5b6f6c", L_PANEL2),
+    ("空态标题 .sb-t",              "#10201f", L_PANEL2),
+    ("空态说明 .sb-h",              "#5b6f6c", L_PANEL2),
+    ("错误态文字 .error-state",      "#c2262a", "#fee2e2"),
+])
+show("新增组件（深色）", [
+    ("搜索高亮 mark.hl 文字",        "#dcedea", D_SOFT),
+    ("复制按钮 .code-copy",          "#8ea8a4", D_PANEL2),
+    ("消息操作 .msg-act",            "#8ea8a4", D_PANEL2),
+    ("空态标题 .sb-t",              "#dcedea", D_PANEL2),
+    ("空态说明 .sb-h",              "#8ea8a4", D_PANEL2),
+    ("错误态文字 .error-state",      "#f87171", blend("#f87171", 0.12, D_PANEL)),
 ])
