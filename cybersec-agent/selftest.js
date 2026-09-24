@@ -2259,6 +2259,60 @@ $("#backLab").click();
     assert(fresh.length === 0, `未新增「旧代残留」样式债（新增：${fresh.join(" | ") || "无"}）`);
   }
 
+  // ===== 57. 死代码与发行内容守护（v1.5.5）=====
+  {
+    // ① 孤儿类选择器：CSS 里定义、运行时源码（index/app/data）里既不出现、也无法由动态拼接产生
+    let cssRaw3 = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    // 只保留「选择器区」：把声明块掏空，避免 url(...woff2)、0.5s 之类被当成类名（实测误报过）
+    cssRaw3 = cssRaw3.replace(/\{[^{}]*\}/g, " {}");
+    const runtimeBlob = ["index.html", "app.js", "data.js"]
+      .map((f) => fs.readFileSync(path.join(__dirname, f), "utf8")).join("\n");
+    // 动态类名识别：类名在任一「以 - 断开的片段」处，紧跟引号/反引号/$ 出现 → 视为拼接生成
+    // （例："toast toast-" + type、`lvl-${x}`、'today-c' + i、class="gs-" + kind）
+    const isDynamic = (cls) => {
+      // 形如 "toast toast-" + type / `lvl-${x}` / 'today-c' + i / class="gs-" + kind
+      // 判定必须严格：要求「前缀 + 引号 + 紧跟 +」或「前缀 + ${」，否则源码里随便一处
+      // 以该前缀结尾的普通字符串（如 zz"）都会误判为动态类名（实测踩过：注入的死类名没被抓住）。
+      for (let i = 2; i < cls.length; i++) {
+        const p = cls.slice(0, i);
+        if (runtimeBlob.indexOf(p + "${") >= 0) return true;
+        for (let qi = 0; qi < 3; qi++) {
+          const q = ['"', "'", "`"][qi];
+          let from = 0;
+          while (true) {
+            const at = runtimeBlob.indexOf(p + q, from);
+            if (at < 0) break;
+            const after = runtimeBlob.substr(at + p.length + 1, 6);
+            if (/^\s*\+/.test(after)) return true;
+            from = at + 1;
+          }
+        }
+      }
+      return false;
+    };
+    const orphanCls = [];
+    (cssRaw3.match(/\.[A-Za-z_\u4e00-\u9fa5][\w\u4e00-\u9fa5-]*/g) || []).forEach((token) => {
+      const cls = token.slice(1);
+      if (runtimeBlob.indexOf(cls) >= 0 || isDynamic(cls)) return;
+      if (orphanCls.indexOf(cls) < 0) orphanCls.push(cls);
+    });
+    assert(orphanCls.length === 0, `无孤儿类选择器（死样式）：${orphanCls.join(" | ") || "无"}`);
+
+    // ② 发行内容：打包必须用白名单，禁止 "**/*" 把开发产物（测试/预览页/构建产物/node_modules）带进安装包
+    const appPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "sectutor-app", "package.json"), "utf8"));
+    const extra = (appPkg.build && appPkg.build.extraResources) || [];
+    const feEntry = extra.filter((e) => e.to === "cybersec-agent")[0];
+    assert(!!feEntry, "打包配置里有 cybersec-agent 资源项");
+    if (feEntry) {
+      const f = feEntry.filter || [];
+      assert(f.indexOf("**/*") < 0, "打包过滤是白名单（不得用 **/* 全量携带开发产物）");
+      ["index.html", "app.js", "styles.css", "data.js"].forEach((need) => {
+        assert(f.indexOf(need) >= 0, `打包白名单包含运行时文件 ${need}`);
+      });
+      assert(f.some((x) => x.indexOf("assets") === 0), "打包白名单包含 assets（字体等静态资源）");
+    }
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

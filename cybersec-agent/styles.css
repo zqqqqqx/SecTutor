@@ -460,7 +460,7 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   background: linear-gradient(90deg, var(--cyan), var(--mag)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .kb-stat .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-.kb-body { display: grid; grid-template-columns: 262px 1fr; gap: 20px; align-items: start; }
+/* （样式债清理）原 .kb-body：知识中枢旧版网格容器，现由 .kb-layout 承担 */
 /* .kb-side 由上方侧栏组规则统一控制（height:100% / overflow-y:auto / overscroll-behavior:contain） */
 .dom-nav { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .dom {
@@ -495,26 +495,14 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
   border-radius: 10px; height: 42px; padding: 0 13px; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .kb-sort svg { width: 15px; height: 15px; stroke: var(--cyan); fill: none; stroke-width: 1.8; }
 
-.path-strip { background: linear-gradient(120deg, var(--mag-soft), var(--cyan-soft)); border: 1px solid color-mix(in srgb, var(--mag) 35%, transparent);
-  border-radius: var(--radius); padding: 14px 18px; margin-bottom: 18px; display: flex; align-items: center; gap: 14px; overflow: auto; overscroll-behavior: contain; }
-.path-strip .ph { font-family: "Orbitron",sans-serif; font-weight: 700; font-size: 12px; color: var(--cyan); letter-spacing: .05em; flex: 0 0 92px; line-height: 1.4; }
-.path-strip .steps { display: flex; align-items: center; gap: 0; flex: 1; }
-.path-strip .step { display: flex; align-items: center; gap: 9px; padding: 0 6px; }
-.path-strip .step .num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: 0 0 26px;
-  font-family: "Orbitron",sans-serif; font-weight: 700; font-size: 12px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--mag) 40%, transparent); color: var(--muted); }
-.path-strip .step.done .num { background: linear-gradient(135deg, var(--accent), #2bbf86); color: #04231a; border: none; }
-.path-strip .step.cur .num { background: linear-gradient(135deg, var(--mag), var(--cyan)); color: #06121a; border: none; box-shadow: var(--glow-mag); }
-.path-strip .step .t { font-size: 13px; font-weight: 600; white-space: nowrap; }
-.path-strip .step.done .t { color: var(--muted); }
-.path-strip .step.cur .t { color: var(--ink); }
-.path-strip .arrow { color: var(--muted); font-size: 14px; padding: 0 4px; }
+/* （样式债清理）原 .path-strip 整组：学习路径的旧版横向步骤条，
+   现由 app.js 的 .path-bar/.path-head/.path-items/.path-group/.path-next/.path-prog 取代。 */
 
 /* ---------- Block2：全库搜索 / 学习路径 / 相关推荐 ---------- */
 .kb-scope { margin-left: auto; }
 .kb-scope .chip { padding: 6px 12px; font-size: 12.5px; border:1px solid var(--line); background:var(--panel); color:var(--muted); }
 .kb-scope .chip.active { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
-.path-filter { margin-top: 16px; }
-.path-filter h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; letter-spacing: .5px; }
+/* （样式债清理）原 .path-filter：旧版学习路径筛选容器，运行时已无此标记 */
 #kbPathBtn.active { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 
 .gl-card {
@@ -727,8 +715,7 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
   .kb-side, .chat-side, .range-side, .tools-side, .plan-controls, .quiz-side { position: static; height: auto; overflow: visible; }
   .kb-main, .range-main, .plan-main, .tools-main, .quiz-main, .chat-main { height: auto; overflow: visible; }
   .panel.active { overflow-y: auto; }
-  .brand { min-width: auto; }
-  .brand-text p { display: none; }
+  /* （样式债清理）原 .brand / .brand-text p：顶栏已改用 .crumb，运行时无此标记 */
   body::before { background-size: 30px 30px; }
 }
 
@@ -1388,7 +1375,7 @@ kbd {
 }
 
 /* —— 顺滑度：交互元素统一过渡（时长与缓动全部走令牌，不写死数值）—— */
-.btn, .chip, .rail-item, .dom-item, .tc-btn,
+.btn, .chip, .rail-item, .tc-btn,
 .topic-card, .news-card, .gl-card, .range-card, .pcard,
 .kb-search input, .field select, .field input, .chat-input input,
 .quiz-main button, .update-ctl button {
@@ -1426,7 +1413,7 @@ kbd {
 .topic-card .tc-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .topic-card .tc-btn.ghost { border-color: color-mix(in srgb, var(--mag) 40%, transparent); color: var(--cyan); }
 .topic-card .tc-btn.ghost:hover { background: var(--cyan-soft); box-shadow: var(--glow-cyan); }
-.topic-card .tc-btn.solid:hover { transform: translateY(-2px); box-shadow: var(--glow-cyan); }
+/* （样式债清理）原 .topic-card .tc-btn.solid:hover：运行时只生成 .tc-btn.ghost 与无变体的 .tc-btn */
 .topic-card .tc-btn:active { transform: scale(.97); }
 
 /* 侧栏整宽按钮（生成学习路径） */

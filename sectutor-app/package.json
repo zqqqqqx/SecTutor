@@ -48,8 +48,11 @@
         "from": "../cybersec-agent",
         "to": "cybersec-agent",
         "filter": [
-          "**/*",
-          "!sec-tutor.html"
+          "index.html",
+          "app.js",
+          "styles.css",
+          "data.js",
+          "assets/**"
         ]
       },
       {
