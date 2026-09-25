@@ -41,7 +41,16 @@
         "to": "sectutor-backend",
         "filter": [
           "**/*",
-          "!**/node_modules/.cache/**"
+          "!**/node_modules/.cache/**",
+          "!**/node_modules/.bin/**",
+          "!**/node_modules/@types/**",
+          "!**/node_modules/**/*.map",
+          "!**/node_modules/**/test/**",
+          "!**/node_modules/**/tests/**",
+          "!**/node_modules/**/docs/**",
+          "!**/node_modules/**/examples/**",
+          "!**/node_modules/**/*.md",
+          "!**/.git/**"
         ]
       },
       {

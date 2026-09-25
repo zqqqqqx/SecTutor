@@ -2344,6 +2344,24 @@ $("#backLab").click();
       });
       assert(f.some((x) => x.indexOf("assets") === 0), "打包白名单包含 assets（字体等静态资源）");
     }
+
+    // ③ 后端资源：node_modules 是运行必需的（express/dockerode），但不能夹带非运行时文件。
+    //    复查发现此前只有一条 "!**/node_modules/.cache/**" 排除 → @types/*.map/test/docs 全被打进包。
+    const beEntry = extra.filter((e) => e.to === "sectutor-backend")[0];
+    assert(!!beEntry, "打包配置里有 sectutor-backend 资源项");
+    if (beEntry) {
+      const bf = beEntry.filter || [];
+      ["@types", ".bin", "*.map"].forEach((bad) => {
+        assert(bf.some((x) => x.indexOf(bad) >= 0), `后端过滤排除非运行时内容：${bad}`);
+      });
+      // 运行时依赖必须还在（express 是后端的心脏）
+      assert(bf.indexOf("**/*") >= 0, "后端以 **/* 为基础（运行时依赖要随包发布）");
+      // 不能出现"整体排除 node_modules"的模式（运行时依赖必须随包发布）。
+      // 注意只看整排除的模式（!**/node_modules 或 !**/node_modules/**），
+      // 子目录排除（如 !**/node_modules/@types/**）是我们要的，不能误伤。
+      const wholeExclude = bf.some((x) => /^!\*\*\/node_modules(\/\*\*)?$/.test(x));
+      assert(!wholeExclude, "后端不得整体排除 node_modules（运行时依赖必需）");
+    }
   }
 
   // ===== 58. 窄窗适配 / 长文本 / 中途切面板的状态一致性（v1.5.5）=====
