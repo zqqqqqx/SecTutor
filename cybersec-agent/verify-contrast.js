@@ -62,17 +62,31 @@ function tokensOf(blockText, inherited) {
   return out;
 }
 function blockBody(selectorPattern) {
-  const re = new RegExp(selectorPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{([\\s\\S]*?)\\n\\}", "m");
-  const m = re.exec(CSS);
-  return m ? m[1] : "";
+  // 收集「同选择器的所有块」并拼接（按文档顺序，后者覆盖前者 —— 与同优先级下的层叠一致）。
+  // 不能只取第一个匹配：同一选择器可能被拆成多块（本项目 [data-theme="light"] 就有
+  // 调色块与 surface-* 块两块），只取第一块会漏掉后来的令牌（实测踩过 → 算出 NaN）。
+  const lit = selectorPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(lit + "\\s*\\{([\\s\\S]*?)\\n\\}", "gm");
+  const parts = [];
+  let m;
+  while ((m = re.exec(CSS)) !== null) parts.push(m[1]);
+  return parts.join("\n");
 }
-const lightBody = blockBody(':root, [data-theme="light"]') + "\n" + blockBody('[data-theme="light"] {'.slice(0, -1));
-const darkBody = blockBody('[data-theme="dark"], :root:not([data-theme])');
+const lightBody = blockBody(':root, [data-theme="light"]') + "\n" + blockBody('[data-theme="light"] {'.slice(0, -1))
+  + "\n" + blockBody('[data-theme="light"]');            // surface-* 令牌在另一块里
+const darkBody = blockBody('[data-theme="dark"], :root:not([data-theme])')
+  + "\n" + blockBody(':root, [data-theme="dark"]');      // surface-* 令牌在另一块里
 
 const THEMES = [
   { id: "light", label: "浅色（data-theme=light）", tokens: tokensOf(lightBody) },
   { id: "dark", label: "深色 / 默认（data-theme=dark 与 :root 无 data-theme）", tokens: tokensOf(darkBody) },
 ];
+
+// 抽屉的不透明度取自 CSS（--cp-tint 令牌，或 var(--cp-tint, NN%) 的兜底值），改透明度自动重算
+const TINT_ALPHA = (function () {
+  const m = /--cp-tint:\s*(\d+(?:\.\d+)?)%/.exec(CSS) || /var\(--cp-tint,\s*(\d+(?:\.\d+)?)%\)/.exec(CSS);
+  return m ? Number(m[1]) / 100 : 1;
+})();
 
 /* ---------- 检查项定义 ---------- */
 // ctx: bg=页面底色  panel=玻璃卡片（半透明已压底）  panel2=实色面板  brand=主色填充
@@ -116,6 +130,16 @@ function buildPairs(tk) {
 
   // 信息级：装饰性分隔线（不适用 4.5/3，只看能否看出边界）
   add("装饰性分隔线 line on bg（信息级）", over(parseColor(tk["--line"]), bg), bg, 1.2);
+
+  // 半透明表面（副驾驶抽屉）：文字压在「虚化后的真实页面」上，
+  // 取值取最不利的两个底（页面底色 / 实色面板），两者都要达标才算过；
+  // 透明度取自 CSS 的 var(--cp-tint, NN%)，改透明度会自动跟着重算。
+  const tint = TINT_ALPHA;
+  const drawerOver = (base) => over(Object.assign({}, parseColor(tk["--surface-1"]), { a: tint }), base);
+  add("抽屉（半透明叠底）ink on 叠在 bg 上", resolve(tk, "--ink"), drawerOver(bg), TEXT);
+  add("抽屉（半透明叠底）ink on 叠在 panel2 上", resolve(tk, "--ink"), drawerOver(panel2), TEXT);
+  add("抽屉（半透明叠底）muted on 叠在 bg 上", resolve(tk, "--muted"), drawerOver(bg), TEXT);
+  add("抽屉（半透明叠底）muted on 叠在 panel2 上", resolve(tk, "--muted"), drawerOver(panel2), TEXT);
   return pairs;
 }
 

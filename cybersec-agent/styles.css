@@ -1769,10 +1769,21 @@ body::before { opacity: 1; }
 .copilot-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); z-index: 90;
   display: flex; flex-direction: column;
-  background: var(--surface-1); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg);
+  /* 半透明（默认 40% 透明 = 60% 实底）+ 毛玻璃虚化：
+     注意透明度必须走「背景 alpha」，不能用 opacity —— opacity 已被显隐动画占用（0 → 1）。
+     纯半透明不虚化会让文字压在杂乱内容上、可读性崩，所以配 backdrop-filter。
+     调透明度只改 --cp-tint 一处：40% = 更透，78% = 更实。 */
+  background: color-mix(in srgb, var(--surface-1) var(--cp-tint, 60%), transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
+  backdrop-filter: blur(14px) saturate(125%);
+  border-left: 1px solid var(--line); box-shadow: var(--shadow-lg);
   /* 从右侧整幅滑入（此前只有 14px 位移，看起来像"淡入"，与主区变形叠在一起就成了"页面抽一下"） */
   transform: translateX(100%); opacity: 0;
   transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+/* 浏览器不支持毛玻璃时：退回更实的底色，保住文字可读性（Electron/Chromium 支持，此处仅兜底） */
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .copilot-drawer { background: color-mix(in srgb, var(--surface-1) 92%, transparent); }
 }
 .copilot-drawer.on { transform: none; opacity: 1; }
 .copilot-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }

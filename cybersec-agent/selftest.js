@@ -1525,6 +1525,16 @@ $("#backLab").click();
     assert(/\.copilot-drawer\s*\{[^}]*transition:\s*none/.test(reduceBlock),
       "减弱动效偏好下抽屉不做滑入（420px 位移对这类用户不友好）");
 
+    // 抽屉半透明（默认 40% 透明）：透明度必须走背景 alpha —— opacity 已被显隐动画占用（0 → 1）
+    assert(/background:\s*color-mix\(in srgb,\s*var\(--surface-1\)\s+var\(--cp-tint/.test(drawerRule),
+      "抽屉底色为半透明（走背景 alpha，不与显隐动画的 opacity 打架）");
+    assert(/backdrop-filter:\s*blur\(/.test(drawerRule),
+      "抽屉配毛玻璃虚化（纯半透明会让文字压在杂乱内容上不可读）");
+    assert(/@supports not \(\(backdrop-filter/.test(cssCp),
+      "不支持毛玻璃时退回更实底色（保住文字可读性）");
+    assert(/opacity:\s*0/.test(drawerRule) && /transition:[^;}]*opacity/.test(drawerRule),
+      "显隐仍由 opacity + transform 负责（与背景透明度互不干扰）");
+
     // 点击抽屉外部可关闭（覆盖式抽屉的必要配套）
     const drawerEl = doc.querySelector("#copilotDrawer");
     if (drawerEl && !drawerEl.hidden) {
