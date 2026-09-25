@@ -636,6 +636,17 @@ input::placeholder, textarea::placeholder { text-overflow: ellipsis; overflow: h
 .news-card h3 { color: var(--ink); text-transform: none; margin: 10px 0; font-size: 16px; letter-spacing: 0; }
 .news-card .date { font-size: 12px; color: var(--muted); }
 .news-card p { font-size: 13.5px; overflow-wrap: anywhere; }
+/* 卡片只呈现核心信息（v1.5.6）：摘要限 2 行、防御限 1 行，超出省略。
+   这样每张卡片高度基本一致（比例稳定），完整内容在点开后的详情弹窗里看。
+   注意：只作用于卡片（.news-card 内），详情里的 .news-detail p 必须保持全文不截断。 */
+.news-card .news-summary {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.news-card .news-defense {
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 /* ---------- 工具 ---------- */
 .tools-main { background: var(--panel); border:1px solid var(--line); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow-sm); }

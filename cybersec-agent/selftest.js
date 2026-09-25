@@ -2809,6 +2809,45 @@ $("#backLab").click();
     }
   }
 
+  // ===== 67. 资讯卡片只放核心信息、详情呈现全文（v1.5.6）=====
+  {
+    const SD = window.eval("SEC_DATA");
+    clickTab("news");
+    await delay(60);
+    const cards = Array.from(doc.querySelectorAll(".news-card"));
+    assert(cards.length > 0, "资讯卡片已渲染（" + cards.length + " 张）");
+
+    // ① 结构：每张卡片都有摘要段与防御段（CSS 按这两个类截断，保证卡片高度齐整）
+    assert(cards.every((c) => !!c.querySelector(".news-summary")), "每张卡片都有摘要段（.news-summary）");
+    assert(cards.every((c) => !!c.querySelector(".news-defense")), "每张卡片都有防御段（.news-defense）");
+
+    // ② 截断只发生在卡片里：摘要 2 行 / 防御 1 行；详情里不许截断
+    const cssN = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const clampOf = (sel) => {
+      const m = cssN.match(new RegExp(sel + "[^{]*\\{[^}]*line-clamp:\\s*(\\d+)"));
+      return m ? Number(m[1]) : null;
+    };
+    assert(clampOf("\\.news-card \\.news-summary") === 2, "卡片摘要限 2 行");
+    assert(clampOf("\\.news-card \\.news-defense") === 1, "卡片防御限 1 行");
+    assert(!/\.news-detail[^{]*\{[^}]*line-clamp/.test(cssN), "详情页不得截断（点开要能看到全文）");
+
+    // ③ 点开后确实是全文：拿第一张卡片对应的数据逐字比对
+    const first = cards[0];
+    const id = first && first.dataset ? first.dataset.id : "";
+    const nw = (SD.news || []).filter((x) => x.id === id)[0];
+    assert(!!nw, "取到卡片对应的资讯数据");
+    if (nw) {
+      first.click();
+      await delay(100);
+      const modal = doc.querySelector("#modalOverlay");
+      const txt = modal ? modal.textContent : "";
+      assert(txt.indexOf(nw.summary) >= 0, "详情呈现完整摘要（未被截断）");
+      assert(txt.indexOf(nw.defense) >= 0, "详情呈现完整防御建议");
+      pressKey("Escape");
+      await delay(320);
+    }
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
