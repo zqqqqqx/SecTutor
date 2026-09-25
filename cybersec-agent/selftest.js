@@ -1507,8 +1507,31 @@ $("#backLab").click();
       assert(saved.indexOf("优化自测用问题") >= 0, "副驾驶对话已持久化到 localStorage");
     }
 
-    // 打开抽屉时主区让位
-    assert(doc.body.classList.contains("copilot-open"), "抽屉打开时主区让位标记生效");
+    // 打开抽屉**不应压缩页面**（v1.5.6 改）：原先点顶部命令条会把主区压窄 420px，
+    // 卡片重排、图表被压，观感是"页面抽了一下"。现在改为覆盖式，主区布局完全不动。
+    // jsdom 没有布局引擎，所以这条走源码级检查（静态、各环境一致）。
+    const cssCp = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    assert(!/\.copilot-open\s+\.app\s*\{[^}]*margin/.test(cssCp),
+      "打开抽屉不再挤压主区（无 margin 让位规则）");
+    assert(!/^\s*\.app\s*\{[^}]*transition:\s*margin/m.test(cssCp), "主区无 margin 过渡（说明让位机制已彻底移除）");
+    // 注意：文件里 .copilot-drawer 有多处（reduced-motion 里还有一条），
+    // 必须按特征取「基础规则」那条，不能拿 match 的第一个（踩过：@media 里的规则排在前面）
+    const drawerRules = cssCp.match(/\.copilot-drawer\s*\{[^}]*\}/g) || [];
+    const drawerRule = drawerRules.filter((r) => /position:\s*fixed/.test(r))[0] || "";
+    assert(/translateX\(100%\)/.test(drawerRule), "抽屉关闭态为整幅右移（进入时是滑入而非淡入）");
+    assert(/position:\s*fixed/.test(drawerRule), "抽屉为 fixed 覆盖层（不参与主区布局）");
+    const reduceBlock = (cssCp.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/) || [""])[0];
+    assert(/\.copilot-drawer\s*\{[^}]*transition:\s*none/.test(reduceBlock),
+      "减弱动效偏好下抽屉不做滑入（420px 位移对这类用户不友好）");
+
+    // 点击抽屉外部可关闭（覆盖式抽屉的必要配套）
+    const drawerEl = doc.querySelector("#copilotDrawer");
+    if (drawerEl && !drawerEl.hidden) {
+      doc.querySelector(".app").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await delay(60);
+      assert(drawerEl.classList.contains("on") === false, "点击抽屉外部即关闭（不必找关闭按钮）");
+    }
   }
 
   // ===== 46. 继续优化：完成态 / 分布可点 / 周对比 / 副驾驶操作条 =====

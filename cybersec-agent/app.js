@@ -6802,7 +6802,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const d = $("#copilotDrawer"); if (!d) return;
     if (d.hidden) { d.hidden = false; }
     requestAnimationFrame(() => d.classList.add("on"));
-    document.body.classList.add("copilot-open");   // 主区让位，不再被抽屉盖住
+    // 抽屉是覆盖式的：不再给 body 加标记去挤压主区（v1.5.6 起），
+    // 因此只需保证抽屉自身可见即可，页面布局完全不受影响。
     renderCopilotCtx();
     restoreCopilot();
     renderCopilotHints();
@@ -6811,7 +6812,6 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   function closeCopilot() {
     const d = $("#copilotDrawer"); if (!d || d.hidden) return;
     d.classList.remove("on");
-    document.body.classList.remove("copilot-open");
     setTimeout(() => { d.hidden = true; }, 180);
   }
 
@@ -6897,6 +6897,20 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         e.preventDefault();
         const v = input.value; input.value = "";
         copilotAsk(v);
+      });
+    }
+    // 点击抽屉外部即关闭。
+    // 抽屉改为覆盖式（不再挤压主区）后，这个"顺手关闭"是必要配套：
+    // 用户点一下别处就回到原页面，不必先找关闭按钮或按 Esc。
+    if (!document.body.dataset.cpOutside) {
+      document.body.dataset.cpOutside = "1";
+      document.addEventListener("click", (e) => {
+        const d = $("#copilotDrawer");
+        if (!d || d.hidden) return;
+        const t = e.target;
+        if (d.contains && t && d.contains(t)) return;                 // 点在抽屉里
+        if (t && t.closest && t.closest("#copilotBar")) return;        // 点在命令条（它自己负责开关）
+        closeCopilot();
       });
     }
     const form = $("#copilotForm");

@@ -1049,6 +1049,8 @@ kbd {
   .panel.active, .toast, .modal, .done-flag, .learn-btn.mastered, #envCountdown.warn { animation: none; }
   .topic-card:hover, .news-card:hover, .gl-card:hover { transform: none; }
   .spinner { animation: spin .7s linear infinite; }
+  /* 抽屉整幅滑入（420px）对"要求减弱动效"的用户是明显位移 → 直接瞬时出现 */
+  .copilot-drawer { transition: none; }
 }
 
 /* —— Phase 3：Agent 角色选择器 —— */
@@ -1768,7 +1770,8 @@ body::before { opacity: 1; }
   position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); z-index: 90;
   display: flex; flex-direction: column;
   background: var(--surface-1); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg);
-  transform: translateX(14px); opacity: 0;
+  /* 从右侧整幅滑入（此前只有 14px 位移，看起来像"淡入"，与主区变形叠在一起就成了"页面抽一下"） */
+  transform: translateX(100%); opacity: 0;
   transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
 }
 .copilot-drawer.on { transform: none; opacity: 1; }
@@ -1844,10 +1847,12 @@ body::before { opacity: 1; }
 }
 .cp-hint:hover { color: var(--link); border-color: var(--brand-hi); }
 
-/* 抽屉打开时主区让位（窄屏仍走覆盖，避免内容被压过窄） */
-.app { transition: margin-right var(--dur-base) var(--ease-out); }
-body.copilot-open .app { margin-right: min(420px, 92vw); }
-@media (max-width: 900px) { body.copilot-open .app { margin-right: 0; } }
+/* 抽屉打开时主区**不再让位**（v1.5.6 改）：
+   原先用 body.copilot-open .app { margin-right: min(420px,92vw) } 挤压主区，
+   结果只要点一下顶部命令条，整页内容就被压窄 420px —— 卡片重排、雷达/热力图被压，
+   加上抽屉本身只有 14px 位移，观感就是"页面抽了一下"。现在改为纯覆盖式：
+   页面布局完全不动，只从右侧滑入抽屉；配 Esc 与「点击抽屉外」关闭。
+   若将来要恢复让位，务必同时给主区元素加过渡，否则重排会先于动画发生。 */
 
 /* 窄屏：命令条让位，上下文 chip 先隐藏 */
 @media (max-width: 1100px) { .copilot-ctx { display: none; } }
