@@ -6594,7 +6594,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
     };
     const poly = (f) => stats.map((_, i) => at(i, f(i)).map((v) => v.toFixed(1)).join(",")).join(" ");
-    let s = '<svg viewBox="0 0 260 252" role="img" aria-label="能力雷达">';
+    // viewBox 四边留白：轴标签要伸到圆外，贴着 0 0 260 252 会把两侧标签裁掉（v1.5.6 修）。
+    let s = '<svg viewBox="-22 -8 304 268" role="img" aria-label="能力雷达">';
     [0.25, 0.5, 0.75, 1].forEach((f) => {
       s += '<polygon points="' + poly(() => f) + '" fill="none" stroke="var(--line)" stroke-width="1"/>';
     });
@@ -6614,8 +6615,11 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const a = (-90 + (360 / n) * i) * Math.PI / 180;
       const x = cx + (R + 17) * Math.cos(a), y = cy + (R + 17) * Math.sin(a);
       const anchor = Math.abs(x - cx) < 10 ? "middle" : (x > cx ? "start" : "end");
+      // 百分比换到第二行：同一行写「名称 + 百分比」太宽，会被 viewBox 裁掉；
+      // 竖直方向还有富余，折行既能显示完整又不缩小雷达本体。
       s += '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="11" fill="var(--muted)" text-anchor="' + anchor + '" dominant-baseline="middle">' +
-        escapeHtml(domainShortName(d)) + ' <tspan fill="var(--link)">' + d.pct + '%</tspan></text>';
+        escapeHtml(domainShortName(d)) +
+        '<tspan x="' + x.toFixed(1) + '" dy="12" fill="var(--link)">' + d.pct + '%</tspan></text>';
     });
     return s + "</svg>";
   }

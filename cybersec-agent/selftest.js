@@ -2769,6 +2769,46 @@ $("#backLab").click();
     assert(!doc.querySelector('#toastHost [data-toast-id="' + tid2 + '"]'), "✕ 关闭后节点被移除");
   }
 
+  // ===== 66. 能力雷达轴标签完整可见（v1.5.6）=====
+  {
+    clickTab("today");
+    await delay(80);
+    const svg = doc.querySelector("#todayRadar svg");
+    assert(!!svg, "今日页渲染出能力雷达");
+    if (svg) {
+      const vb = (svg.getAttribute("viewBox") || "").trim().split(/\s+/).map(Number);
+      assert(vb.length === 4 && vb[2] > 0, "雷达 viewBox 合法（" + (vb.join(" ") || "无") + "）");
+      const minX = vb[0], maxX = vb[0] + vb[2];
+      // 估算文本宽度（font-size 11）：CJK/全角约 11px，ASCII 约 6px
+      const est = (s) => { let t = 0; for (const ch of String(s)) t += (ch.codePointAt(0) > 0x2e80 ? 11 : 6); return t; };
+      const texts = Array.from(svg.querySelectorAll("text"));
+      assert(texts.length >= 3, "雷达有轴标签（" + texts.length + " 条）");
+
+      // 逐条核算：按 text-anchor 还原左右边界，看是否超出 viewBox
+      let worst = { over: -1, label: "" };
+      texts.forEach((t) => {
+        const x = parseFloat(t.getAttribute("x"));
+        const anchor = t.getAttribute("text-anchor") || "start";
+        // 折行后按「每行」算宽度，取最宽的一行
+        const nameNode = t.firstChild;
+        const name = (nameNode && String(nameNode.textContent || "").trim()) || "";
+        const tspan = t.querySelector("tspan");
+        const pct = tspan ? String(tspan.textContent || "").trim() : "";
+        const width = Math.max(est(name), est(pct));
+        const left = anchor === "middle" ? x - width / 2 : (anchor === "end" ? x - width : x);
+        const right = left + width;
+        const over = Math.max(minX - left, right - maxX, 0);
+        if (over > worst.over) worst = { over, label: name + " " + pct };
+      });
+      assert(worst.over <= 1,
+        `所有轴标签都在 viewBox 内（最靠外「${worst.label}」溢出 ${worst.over.toFixed(1)}px）`);
+
+      // 百分比必须换行：同一行写「名称 + 百分比」太宽，会被 viewBox 裁掉
+      const folded = texts.filter((t) => { const s = t.querySelector("tspan"); return s && s.getAttribute("dy"); });
+      assert(folded.length === texts.length, "百分比换到第二行（单行排版会被裁）");
+    }
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

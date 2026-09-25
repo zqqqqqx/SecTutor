@@ -1688,7 +1688,8 @@ body::before { opacity: 1; }
 
 /* —— 能力雷达 —— */
 .today-radar { display: flex; justify-content: center; }
-.today-radar svg { width: 100%; max-width: 330px; height: auto; }
+/* viewBox 已为轴标签留白；overflow:visible 是兜底（个别长标签仍可完整显示而不被裁） */
+.today-radar svg { width: 100%; max-width: 360px; height: auto; overflow: visible; }
 .today-legend { display: flex; gap: 16px; justify-content: center; margin-top: 4px; font-size: 11.5px; color: var(--muted); }
 .today-key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 .today-key-a { background: var(--brand); }
