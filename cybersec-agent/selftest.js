@@ -2825,6 +2825,9 @@ $("#backLab").click();
     //    截断一律走 JS（ellipsisByWidth），与字体度量无关；行高必须是整数像素。
     const cssN = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     assert(!/line-clamp/.test(cssN), "全项目不使用 line-clamp（它会把末行从字形中间切开）");
+    // 卡片不得用 overflow:hidden 硬裁正文：曾导致"字被切掉下半截 / 后面的字看不见"
+    const cardRule = (cssN.match(/\.news-card\s*\{[^}]*\}/) || [""])[0];
+    assert(!/overflow:\s*hidden/.test(cardRule), "资讯卡片不得 overflow:hidden（会把正文硬裁）");
     const lh = (cssN.match(/\.news-card p\s*\{[^}]*line-height:\s*([^;}]+)/) || [, ""])[1].trim();
     assert(/^\d+px$/.test(lh), `资讯卡片行高是整数像素（当前 ${lh || "未设置"}）`);
 

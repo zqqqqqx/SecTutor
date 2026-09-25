@@ -627,7 +627,13 @@ input::placeholder, textarea::placeholder { text-overflow: ellipsis; overflow: h
 
 /* ---------- 资讯 ---------- */
 .news-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(345px,100%),1fr)); gap: 16px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; }
-.news-card { background: var(--panel); border:1px solid var(--line); border-left: 4px solid var(--warn); border-radius: var(--radius); padding: 19px; box-shadow: var(--shadow-sm); transition: transform .2s, border-color .2s; position: relative; overflow: hidden; cursor: pointer; }
+/* ⚠️ 这里**不能**用 overflow:hidden：它会把超出盒子的正文硬裁掉
+   （表现为"字只剩上半截 / 后面的字看不见"）。卡片改为流式布局，内容多高卡片就多高。
+   圆角与左边框不依赖 overflow 裁剪，去掉不会影响外观。 */
+.news-card { background: var(--panel); border:1px solid var(--line); border-left: 4px solid var(--warn); border-radius: var(--radius); padding: 19px; box-shadow: var(--shadow-sm); transition: transform .2s, border-color .2s; position: relative; cursor: pointer;
+  display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.news-card > * { margin: 0; }
+.news-card h3 { margin: 2px 0; }
 .news-card:hover { border-color: var(--accent); transform: translateY(-2px); }
 .news-detail h2 { color: var(--ink); }
 .news-detail .date { color: var(--muted); font-size: 13px; }
