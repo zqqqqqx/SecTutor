@@ -1769,14 +1769,18 @@ body::before { opacity: 1; }
 .copilot-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); z-index: 90;
   display: flex; flex-direction: column;
-  /* 半透明（默认 40% 透明 = 60% 实底）+ 毛玻璃虚化：
+  /* 半透明 + 毛玻璃虚化：
      注意透明度必须走「背景 alpha」，不能用 opacity —— opacity 已被显隐动画占用（0 → 1）。
-     纯半透明不虚化会让文字压在杂乱内容上、可读性崩，所以配 backdrop-filter。
-     调透明度只改 --cp-tint 一处：40% = 更透，78% = 更实。 */
-  background: color-mix(in srgb, var(--surface-1) var(--cp-tint, 60%), transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(125%);
-  backdrop-filter: blur(14px) saturate(125%);
-  border-left: 1px solid var(--line); box-shadow: var(--shadow-lg);
+     ⚠️ v1.5.6 教训：只把抽屉底色做半透明是**看不出效果**的 ——
+       ① --surface-1 与应用自身背景本就几乎同色（实测叠在同色侧栏上色差 ΔRGB=0.0）；
+       ② 抽屉内气泡原本完全不透明，占了大部分可见面积。
+     所以气泡也要半透明，并加大虚化；两个旋钮：--cp-tint（抽屉底）/ --cp-bubble（气泡底）。 */
+  background: color-mix(in srgb, var(--surface-1) var(--cp-tint, 52%), transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
+  border-left: 1px solid var(--line);
+  /* 上沿高光：纯色背景下也能一眼看出这是块"玻璃"，而不是普通面板 */
+  box-shadow: var(--shadow-lg), inset 0 1px 0 var(--hl-top);
   /* 从右侧整幅滑入（此前只有 14px 位移，看起来像"淡入"，与主区变形叠在一起就成了"页面抽一下"） */
   transform: translateX(100%); opacity: 0;
   transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
@@ -1802,9 +1806,11 @@ body::before { opacity: 1; }
 .cp-row.user { justify-content: flex-end; }
 .cp-bubble {
   max-width: 88%; padding: 10px 12px; border-radius: var(--r-md); font-size: 13px; line-height: 1.65;
-  background: var(--surface-3); border: 1px solid var(--line); color: var(--ink); word-break: break-word;
+  /* 气泡也半透明：否则抽屉的"透"只体现在头部/底部的小条上，观感等于没改（v1.5.6 教训） */
+  background: color-mix(in srgb, var(--surface-3) var(--cp-bubble, 66%), transparent);
+  border: 1px solid var(--line); color: var(--ink); word-break: break-word;
 }
-.cp-row.user .cp-bubble { background: var(--brand-soft); border-color: var(--brand-hi); color: var(--link); }
+.cp-row.user .cp-bubble { background: color-mix(in srgb, var(--brand-soft) var(--cp-bubble, 66%), transparent); border-color: var(--brand-hi); color: var(--link); }
 .cp-bubble p { margin: 0 0 8px; }
 .cp-bubble p:last-child { margin-bottom: 0; }
 .cp-bubble ul { margin: 6px 0; padding-left: 18px; }

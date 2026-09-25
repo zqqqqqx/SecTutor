@@ -63,10 +63,13 @@ function tokensOf(blockText, inherited) {
 }
 function blockBody(selectorPattern) {
   // 收集「同选择器的所有块」并拼接（按文档顺序，后者覆盖前者 —— 与同优先级下的层叠一致）。
-  // 不能只取第一个匹配：同一选择器可能被拆成多块（本项目 [data-theme="light"] 就有
-  // 调色块与 surface-* 块两块），只取第一块会漏掉后来的令牌（实测踩过 → 算出 NaN）。
+  // 两个必须注意的点（都实测踩过）：
+  //  ① 同一选择器可能被拆成多块（[data-theme="light"] 就有"调色块"与"surface-* 块"），只取第一块会漏令牌；
+  //  ② 块体必须用 [^{}]* 限定 —— 若写成 [\s\S]*?\n}（要求 } 前有换行）：
+  //     单行规则匹配不到，而且非贪婪匹配会**跨越规则边界**，把下一条规则的内容吞进来
+  //     （实测：深色 surface 块吞到了浅色块的值 → 深色主题算出一堆浅色底）。
   const lit = selectorPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(lit + "\\s*\\{([\\s\\S]*?)\\n\\}", "gm");
+  const re = new RegExp(lit + "\\s*\\{([^{}]*)\\}", "gm");
   const parts = [];
   let m;
   while ((m = re.exec(CSS)) !== null) parts.push(m[1]);
@@ -82,11 +85,14 @@ const THEMES = [
   { id: "dark", label: "深色 / 默认（data-theme=dark 与 :root 无 data-theme）", tokens: tokensOf(darkBody) },
 ];
 
-// 抽屉的不透明度取自 CSS（--cp-tint 令牌，或 var(--cp-tint, NN%) 的兜底值），改透明度自动重算
-const TINT_ALPHA = (function () {
-  const m = /--cp-tint:\s*(\d+(?:\.\d+)?)%/.exec(CSS) || /var\(--cp-tint,\s*(\d+(?:\.\d+)?)%\)/.exec(CSS);
+// 抽屉/气泡的不透明度取自 CSS（--cp-tint / --cp-bubble，或 var(..., NN%) 的兜底值），改透明度自动重算
+function alphaOf(name) {
+  const m = new RegExp("--" + name + ":\\s*(\\d+(?:\\.\\d+)?)%").exec(CSS) ||
+            new RegExp("var\\(--" + name + ",\\s*(\\d+(?:\\.\\d+)?)%\\)").exec(CSS);
   return m ? Number(m[1]) / 100 : 1;
-})();
+}
+const TINT_ALPHA = alphaOf("cp-tint");
+const BUBBLE_ALPHA = alphaOf("cp-bubble");
 
 /* ---------- 检查项定义 ---------- */
 // ctx: bg=页面底色  panel=玻璃卡片（半透明已压底）  panel2=实色面板  brand=主色填充
@@ -140,7 +146,24 @@ function buildPairs(tk) {
   add("抽屉（半透明叠底）ink on 叠在 panel2 上", resolve(tk, "--ink"), drawerOver(panel2), TEXT);
   add("抽屉（半透明叠底）muted on 叠在 bg 上", resolve(tk, "--muted"), drawerOver(bg), TEXT);
   add("抽屉（半透明叠底）muted on 叠在 panel2 上", resolve(tk, "--muted"), drawerOver(panel2), TEXT);
+
+  // 气泡层（对话文字真正的底）：气泡 = --surface-3 × --cp-bubble 叠在「抽屉叠在背后」之上。
+  // 两层半透明叠加时，文字可读性最容易在这里出问题，所以必须单独守住。
+  const bubbleOver = (base) => over(Object.assign({}, parseColor(tk["--surface-3"]), { a: BUBBLE_ALPHA }), drawerOver(base));
+  add("气泡（两层叠底）ink on 叠在 bg 上", resolve(tk, "--ink"), bubbleOver(bg), TEXT);
+  add("气泡（两层叠底）ink on 叠在 panel2 上", resolve(tk, "--ink"), bubbleOver(panel2), TEXT);
+  add("气泡（两层叠底）muted on 叠在 bg 上", resolve(tk, "--muted"), bubbleOver(bg), TEXT);
+  add("气泡（两层叠底）muted on 叠在 panel2 上", resolve(tk, "--muted"), bubbleOver(panel2), TEXT);
   return pairs;
+}
+
+/* ---------- 诊断：--dump 打印解析到的令牌（排查"某个令牌取错/取空"时很有用）---------- */
+if (process.argv.indexOf("--dump") >= 0) {
+  THEMES.forEach((t) => {
+    console.log("\n== " + t.id + " 解析到的令牌 ==");
+    Object.keys(t.tokens).sort().forEach((k) => console.log("  " + k + ": " + t.tokens[k]));
+  });
+  process.exit(0);
 }
 
 /* ---------- 输出与判定 ---------- */
