@@ -3898,9 +3898,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <span class="tag">${escapeHtml(n.cve)}</span>
         <h3>${escapeHtml(n.title)}</h3>
         <div class="date">${escapeHtml(n.date)} ｜ ${catById(n.cat).name}</div>
-        <!-- 卡片只放核心信息（按字数截断，与字体度量无关）；完整内容用 title 与「点开后的详情」承载 -->
-        <p class="news-summary" title="${escapeHtml(n.summary)}">${escapeHtml(ellipsisByWidth(n.summary, 42))}</p>
-        <p class="u-accent news-defense" title="${escapeHtml(n.defense)}"><strong>🛡 防御：</strong>${escapeHtml(ellipsisByWidth(n.defense, 24))}</p>
+        <!-- 卡片直接呈现完整摘要与防御建议：不做任何截断（截断会引发"字被切/看不见"），
+             卡片变高由列表滚动消化。详情里另有分类、来源等完整信息。 -->
+        <p class="news-summary">${escapeHtml(n.summary)}</p>
+        <p class="u-accent news-defense"><strong>🛡 防御：</strong>${escapeHtml(n.defense)}</p>
         <div class="ai-helpers"><button class="btn ghost small news-ai-btn" data-id="${escapeHtml(n.id)}">🤖 AI 辅助（解读/关联/加固）</button></div>
       </div>`).join("");
     list.querySelectorAll(".news-ai-btn").forEach((b) => {

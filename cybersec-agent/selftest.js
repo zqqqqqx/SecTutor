@@ -2828,7 +2828,7 @@ $("#backLab").click();
     const lh = (cssN.match(/\.news-card p\s*\{[^}]*line-height:\s*([^;}]+)/) || [, ""])[1].trim();
     assert(/^\d+px$/.test(lh), `资讯卡片行高是整数像素（当前 ${lh || "未设置"}）`);
 
-    // ③ 卡片文案必须是完整数据的前缀（截断不丢字、不乱字），且带 title 便于悬停看全文
+    // ③ 卡片必须呈现**完整**摘要与防御（不再做任何截断）——截断曾导致"字被切/看不见"
     const firstCard = cards[0];
     const id0 = firstCard && firstCard.dataset ? firstCard.dataset.id : "";
     const nw0 = (SD.news || []).filter((x) => x.id === id0)[0];
@@ -2836,15 +2836,18 @@ $("#backLab").click();
       const sumEl = firstCard.querySelector(".news-summary");
       const defEl = firstCard.querySelector(".news-defense");
       const sumText = (sumEl.textContent || "").trim();
-      const defText = (defEl.textContent || "").trim();
-      assert(nw0.summary.indexOf(sumText.replace(/…$/, "")) === 0, "卡片摘要是原文前缀（未丢字/乱字）");
-      // 防御段带「🛡 防御：」前缀（在 <strong> 里），比对前要先剥掉前缀
       const strongEl = defEl.querySelector("strong");
       const prefix = strongEl ? (strongEl.textContent || "") : "";
-      const defCore = defText.indexOf(prefix) === 0 ? defText.slice(prefix.length) : defText;
-      assert(nw0.defense.indexOf(defCore.trim().replace(/…$/, "")) === 0, "卡片防御是原文前缀");
-      assert((sumEl.getAttribute("title") || "") === nw0.summary, "摘要带 title（悬停可看完整原文）");
-      assert((defEl.getAttribute("title") || "") === nw0.defense, "防御带 title");
+      const defText = (defEl.textContent || "").trim();
+      const defCore = defText.indexOf(prefix) === 0 ? defText.slice(prefix.length).trim() : defText;
+      assert(sumText === nw0.summary, "卡片呈现完整摘要（未截断）");
+      assert(defCore === nw0.defense, "卡片呈现完整防御建议（未截断）");
+      // 全部卡片都不得出现省略号
+      const truncated = cards.filter((c) => {
+        const s = (c.querySelector(".news-summary") || {}).textContent || "";
+        return s.indexOf("…") >= 0;
+      });
+      assert(truncated.length === 0, `没有任何卡片被截断（当前 ${truncated.length} 张带省略号）`);
     }
 
     // ③ 点开后确实是全文：拿第一张卡片对应的数据逐字比对
