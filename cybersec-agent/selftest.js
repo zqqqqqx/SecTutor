@@ -2578,6 +2578,38 @@ $("#backLab").click();
       "placeholder 过长时用省略号收尾（浏览器不允许 placeholder 滚动）");
   }
 
+  // ===== 62. 卡片网格与长文本不被裁切（v1.5.6）=====
+  {
+    const cssG = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+    // ① 响应式网格轨道必须写成 minmax(min(Npx,100%),1fr)：
+    //    裸 minmax(Npx,1fr) 的最小值**不会**随容器缩小 —— 容器窄于该值时轨道仍按 N 宽，
+    //    右侧内容溢出后被祖先的 overflow:hidden 裁掉（用户反馈"资讯内容显示不全"的根因）。
+    const rawTracks = (cssG.match(/minmax\(\s*\d+px\s*,\s*1fr\s*\)/g) || []);
+    assert(rawTracks.length === 0,
+      `网格轨道用 min(Npx,100%) 以免窄容器溢出（残留裸写法：${rawTracks.join(" | ") || "无"}）`);
+    const safeTracks = (cssG.match(/minmax\(\s*min\(/g) || []);
+    assert(safeTracks.length >= 5, `卡片网格均已改为安全轨道（当前 ${safeTracks.length} 处）`);
+
+    // ② 资讯卡片：列表可滚动 + 高度链完整（flex 子项必须 min-height:0，否则内容被裁且滚不到）
+    const newsList = (cssG.match(/\.news-list\s*\{[^}]*\}/) || [""])[0];
+    assert(/overflow-y:\s*auto/.test(newsList), "资讯列表自身可纵向滚动");
+    assert(/min-height:\s*0/.test(newsList), "资讯列表作为 flex 子项带 min-height:0（否则滚动失效）");
+    const panelActive = (cssG.match(/\.panel\.active\s*\{[^}]*\}/) || [""])[0];
+    assert(/min-height:\s*0/.test(panelActive), "面板作为 flex 子项带 min-height:0（高度链完整）");
+
+    // ③ 资讯卡片文本必须能断行：标题标签是 h3（曾误写成 h4，导致长词断行规则对它从未生效）
+    // 注意：同一选择器可能出现在多条规则里（分组规则 + 单条规则），必须"任一命中"而不是取第一条。
+    // 本轮就因此假失败过一次：`.news-card h3` 有两条规则，match() 取到的是上面那条（没有断行声明）。
+    const anyRuleHas = (selPat, propPat) => {
+      const rules = cssG.match(new RegExp(selPat + "[^{]*\\{[^}]*\\}", "g")) || [];
+      return rules.some((r) => propPat.test(r));
+    };
+    assert(anyRuleHas("\\.news-card h3", /overflow-wrap:\s*anywhere/), "资讯标题（h3）允许长词断行");
+    assert(anyRuleHas("\\.news-card p\\s*", /overflow-wrap:\s*anywhere/), "资讯摘要允许长词断行（CVE 号/URL 不顶破卡片）");
+    assert(anyRuleHas("\\.news-card \\.tag", /overflow-wrap:\s*anywhere/), "资讯标签允许长词断行");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
