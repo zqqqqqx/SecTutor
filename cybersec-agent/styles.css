@@ -592,6 +592,12 @@ input::placeholder, textarea::placeholder { text-overflow: ellipsis; overflow: h
 
 .field select, .field input { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; font-size: 13.5px; background: var(--panel); color: var(--ink); transition: border-color var(--dur-micro), box-shadow var(--dur-micro); }
 .field select:focus, .field input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+/* 设置项即时校验（v1.5.6）：填错就地说明，而不是等到提问失败才暴露 */
+.field-hint { margin: 5px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.field-hint:empty { display: none; }
+.field-hint.err { color: var(--bad); }
+.field input.invalid { border-color: var(--bad); }
+.field input.invalid:focus { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent); }
 .llm-config { font-size: 13px; border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 8px; }
 .llm-config summary { cursor: pointer; color: var(--brand); font-weight: 700; }
 .hint { font-size: 12px; color: var(--muted); }

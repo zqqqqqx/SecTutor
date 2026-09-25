@@ -2640,6 +2640,78 @@ $("#backLab").click();
     assert(zModal < zToast, `弹窗在 Toast 之下（${zModal} < ${zToast}）`);
   }
 
+  // ===== 64. 设置项即时校验（v1.5.6）=====
+  {
+    // 动机：地址/密钥填错时此前要等到「提问失败」才暴露，且失败信息不指向格式问题。
+    clickTab("chat");
+    await delay(30);
+    const hubBtn = doc.querySelector("#apiHubBtn");
+    assert(!!hubBtn, "聊天侧有「API 接入中心」入口");
+    if (hubBtn) hubBtn.click();
+    await delay(120);                             // 弹窗（含设置项）
+    const base = doc.querySelector("#llmBase");
+    const key = doc.querySelector("#llmKey");
+    assert(!!base && !!key, "设置面板含 Base URL 与 API Key 输入框");
+
+    const hintOf = (el) => {
+      const f = el && el.closest ? el.closest(".field") : null;
+      return f ? f.querySelector(".field-hint") : null;
+    };
+    const setVal = (el, v) => {
+      el.value = v;
+      el.dispatchEvent(new window.Event("input", { bubbles: true }));
+    };
+
+    // ① 地址格式错误 → 就地提示 + 输入框标红
+    setVal(base, "api.openai.com/v1");
+    await delay(30);
+    let h = hintOf(base);
+    assert(!!h && h.classList.contains("err") && (h.textContent || "").length > 0,
+      `地址缺协议头时给出提示（${((h || {}).textContent || "").slice(0, 18)}…）`);
+    assert(base.classList.contains("invalid"), "格式错误的输入框被标红");
+
+    // ② 改正后 → 提示清除、标红移除
+    setVal(base, "https://api.openai.com/v1");
+    await delay(30);
+    h = hintOf(base);
+    assert(!h || !h.classList.contains("err"), "地址改对后提示自动清除");
+    assert(!base.classList.contains("invalid"), "标红随之移除");
+
+    // ③ 密钥：含空格 / 过短都要提示
+    setVal(key, "sk-abc def");
+    await delay(30);
+    assert((hintOf(key) || {}).classList && hintOf(key).classList.contains("err"), "密钥含空格时提示（粘贴常见问题）");
+    setVal(key, "sk-short");
+    await delay(30);
+    assert((hintOf(key) || {}).textContent.length > 0, "密钥过短时提示");
+    setVal(key, "sk-1234567890abcdef");
+    await delay(30);
+    assert(!(hintOf(key) || { classList: { contains: () => false } }).classList.contains("err"), "密钥正常后提示清除");
+
+    // ④ 保存时格式有误 → 拦下且不写入（持久化里的配置保持不变）
+    //    测试里拿不到应用闭包里的 state → 用 localStorage 里的持久化值做观察对象。
+    const before = window.localStorage.getItem("sectutor_llm");
+    setVal(base, "not-a-url");
+    await delay(20);
+    doc.querySelector("#saveLlm").click();
+    await delay(60);
+    assert(window.localStorage.getItem("sectutor_llm") === before,
+      "格式有误时保存被拦下（持久化配置未被覆盖）");
+    assert(!!doc.querySelector("#toastHost .toast"), "被拦下时给出提示（而不是静默失败）");
+    setVal(base, "https://api.openai.com/v1");
+    await delay(20);
+
+    // ⑤ 提示文案必须走 i18n（中英都要有），否则切语言会出现混搭
+    const srcA = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    ["vh.url", "vh.host", "vh.key", "vh.keySpace", "vh.blocked"].forEach((k) => {
+      const n = (srcA.match(new RegExp('"' + k + '"', "g")) || []).length;
+      assert(n >= 2, `校验提示键 ${k} 有中英两套文案（当前 ${n} 处）`);
+    });
+
+    pressKey("Escape");
+    await delay(300);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

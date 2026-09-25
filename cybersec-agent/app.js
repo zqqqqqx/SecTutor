@@ -923,6 +923,11 @@
       "f.userLevel": "当前难度档位", "f.focusCat": "专注领域", "f.llmBase": "API Base URL", "f.llmKey": "API Key",
       "f.llmModel": "模型名", "f.backendUrl": "后端地址", "f.backendToken": "访问令牌",
       "f.planCat": "目标领域", "f.planHours": "每周可投入", "f.planWeeks": "目标周期",
+      "vh.url": "地址要完整，以 http:// 或 https:// 开头，例如 https://api.openai.com/v1",
+      "vh.host": "地址缺少主机名，例如 http://127.0.0.1:8787",
+      "vh.key": "密钥看起来偏短（一般 ≥16 位），确认没有复制漏",
+      "vh.keySpace": "密钥里含空格或换行，粘贴时可能多带了字符",
+      "vh.blocked": "配置格式有误，未保存（已保留原配置）",
       "ph.kbSearch": "搜索知识点 / CVE / 关键词…",
       "ph.chatInput": "问我任何网安问题…（可粘贴图片）",
       "aria.kbSearch": "搜索知识点",
@@ -973,6 +978,11 @@
       "f.userLevel": "Level", "f.focusCat": "Focus", "f.llmBase": "API Base URL", "f.llmKey": "API Key",
       "f.llmModel": "Model", "f.backendUrl": "Backend URL", "f.backendToken": "Token",
       "f.planCat": "Target domain", "f.planHours": "Weekly hours", "f.planWeeks": "Duration",
+      "vh.url": "Enter a full URL starting with http:// or https://, e.g. https://api.openai.com/v1",
+      "vh.host": "URL is missing a host, e.g. http://127.0.0.1:8787",
+      "vh.key": "Key looks too short (usually ≥16 chars) — check the paste",
+      "vh.keySpace": "Key contains spaces or line breaks from the paste",
+      "vh.blocked": "Config has format errors — not saved (previous kept)",
       "ph.kbSearch": "Search topics / CVE / keywords…",
       "ph.chatInput": "Ask about security… (image OK)",
       "aria.kbSearch": "Search knowledge base",
@@ -1034,6 +1044,8 @@
     document.documentElement.setAttribute("lang", lang === "en" ? "en" : "zh-CN");
     // 更新状态区文案由 JS 生成（不走 data-i18n），切语言后要按新语言重绘一次。
     if (lastUpdateState) renderUpdateState(lastUpdateState);
+    // 设置项的校验提示同样由 JS 生成 → 切语言后重算一次（否则中文界面配英文提示）
+    refreshFieldHints();
   }
 
   /* ---------- 导航（左图标栏） ---------- */
@@ -3010,7 +3022,52 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
 
   // LLM 配置
+  // ===== 设置项即时校验（v1.5.6）=====
+  // 动机：地址/密钥填错时，此前要等到「提问失败」才暴露，而且失败信息不会指向"你地址写错了"。
+  // 做法：输入即校验 → 就地给可读提示（中英随语言切换刷新）→ 保存时若格式有误则拦下并保留原配置。
+  const FIELD_RULES = [
+    { id: "llmBase", err: (v) => (!v ? null : (/^https?:\/\/[^\s/]+/i.test(v) ? null : "vh.url")) },
+    { id: "backendUrl", err: (v) => (!v ? null : (/^https?:\/\/[^\s/]+/i.test(v) ? null : "vh.host")) },
+    { id: "llmKey", err: (v) => (!v ? null : (/\s/.test(v) ? "vh.keySpace" : (v.length < 16 ? "vh.key" : null))) },
+  ];
+  function fieldHintEl(input) {
+    const field = input.closest ? input.closest(".field") : null;
+    if (!field) return null;
+    let el = field.querySelector(".field-hint");
+    if (!el) { el = document.createElement("p"); el.className = "field-hint"; field.appendChild(el); }
+    return el;
+  }
+  function validateField(input) {
+    const rule = FIELD_RULES.filter((r) => r.id === input.id)[0];
+    if (!rule) return true;
+    const key = rule.err(input.value.trim());
+    const hint = fieldHintEl(input);
+    if (hint) {
+      if (key) { hint.dataset.hintKey = key; hint.textContent = t(key); hint.classList.add("err"); }
+      else { delete hint.dataset.hintKey; hint.textContent = ""; hint.classList.remove("err"); }
+    }
+    input.classList.toggle("invalid", !!key);
+    return !key;
+  }
+  function refreshFieldHints() {          // 语言切换时重算提示文案（validateField 会重新 t()）
+    FIELD_RULES.forEach((r) => { const el = $("#" + r.id); if (el) validateField(el); });
+  }
+  function initFieldValidation() {
+    FIELD_RULES.forEach((r) => {
+      const el = $("#" + r.id);
+      if (!el || el.dataset.vbound) return;
+      el.dataset.vbound = "1";
+      el.addEventListener("input", () => validateField(el));
+      el.addEventListener("blur", () => validateField(el));
+    });
+  }
+  function fieldsAllValid() {
+    return FIELD_RULES.every((r) => { const el = $("#" + r.id); return !el || validateField(el); });
+  }
+
   $("#saveLlm").addEventListener("click", () => {
+    // 格式有误就拦下：写进去只会让后续请求莫名失败，不如当场说清楚（原配置保持不变）
+    if (!fieldsAllValid()) { toast(t("vh.blocked"), "err"); return; }
     const keepKey = KeyVault.isProtected() && state.llm && state.llm.key;   // 保护态：保留已解锁的明文 key
     state.llm = {
       base: $("#llmBase").value.trim() || "https://api.openai.com/v1",
@@ -3031,6 +3088,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   if (saveBackendBtn && !saveBackendBtn.dataset.bound) {
     saveBackendBtn.dataset.bound = "1";
     saveBackendBtn.addEventListener("click", () => {
+      if (!fieldsAllValid()) { toast(t("vh.blocked"), "err"); return; }   // 格式有误就不写进去
       state.backend = {
         url: $("#backendUrl").value.trim() || "http://127.0.0.1:8787",
         token: $("#backendToken").value.trim() || "sectutor-dev-token",
@@ -4638,6 +4696,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     renderProgress();
     renderToday();         // 学习驾驶舱：今日主线 + 能力可视化
     bindCopilot();         // 全局副驾驶（方向 C）
+    initFieldValidation(); // 设置项即时校验（v1.5.6）
     renderAgentCenter();   // 方向① 学习中心（能力画像 / 复习 / 周报）
     renderToolbox();       // 方向⑩ 本地工具箱
     restoreDraft();        // P2：恢复上次未发送的输入草稿
