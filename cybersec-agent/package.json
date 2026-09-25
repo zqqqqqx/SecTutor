@@ -4,7 +4,7 @@
   "private": true,
   "description": "SecTutor 前端单页应用：知识体系 / 随机自测 / 能力诊断 / 遗忘曲线复习 / 实战靶场 / 工具箱（纯静态、离线可用）",
   "scripts": {
-    "test": "node selftest.js && node quiz_validate.js",
+    "test": "node selftest.js && node quiz_validate.js && node verify-contrast.js",
     "build": "node build-single.js && node verify-single.js",
     "verify": "node verify-single.js"
   },
