@@ -2610,6 +2610,36 @@ $("#backLab").click();
     assert(anyRuleHas("\\.news-card \\.tag", /overflow-wrap:\s*anywhere/), "资讯标签允许长词断行");
   }
 
+  // ===== 63. UI 一致性守护：动效令牌 / 层级顺序 / 时长统一（v1.5.6）=====
+  {
+    const cssU = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+    // ① 动效令牌必须真的**被定义**：一旦缺失，`transition: x var(--dur-base)` 整条声明失效，
+    //    动效会静默消失（不报错、不崩溃，最难发现的一类 UI 故障）
+    ["--dur-fast", "--dur-micro", "--dur-base", "--dur-slow", "--ease-out", "--ease-spring",
+     "--move-sm", "--move-md", "--scale-press"].forEach((tok) => {
+      assert(new RegExp(tok + "\\s*:").test(cssU), `动效令牌已定义：${tok}`);
+    });
+
+    // ② 时长统一：hover 类微交互常用档已收敛到 --dur-micro（值 = 150ms，与散落的 .15s 等价）
+    const microDef = (cssU.match(/--dur-micro:\s*([^;]+);/) || [, ""])[1].trim();
+    assert(/^150ms$/.test(microDef), `--dur-micro 必须等于 150ms（当前 ${microDef}）`);
+    assert((cssU.match(/\.15s/g) || []).length === 0, "不再有散落的 .15s（统一走 --dur-micro）");
+    assert((cssU.match(/var\(--dur-micro\)/g) || []).length >= 20,
+      `--dur-micro 已被实际使用（当前 ${(cssU.match(/var\(--dur-micro\)/g) || []).length} 处）`);
+
+    // ③ 层级顺序：抽屉 < 弹窗 < Toast —— 反了会出现"弹窗被抽屉盖住""提示看不见"这类问题
+    const zOf = (sel) => {
+      const rules = cssU.match(new RegExp(sel + "[^{]*\\{[^}]*\\}", "g")) || [];
+      for (const r of rules) { const m = /z-index:\s*(-?\d+)/.exec(r); if (m) return Number(m[1]); }
+      return null;
+    };
+    const zDrawer = zOf("\\.copilot-drawer"), zModal = zOf("\\.modal-overlay"), zToast = zOf("\\.toast-host");
+    assert(zDrawer !== null && zModal !== null && zToast !== null, "抽屉/弹窗/Toast 都设置了 z-index");
+    assert(zDrawer < zModal, `抽屉在弹窗之下（${zDrawer} < ${zModal}）`);
+    assert(zModal < zToast, `弹窗在 Toast 之下（${zModal} < ${zToast}）`);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
