@@ -685,24 +685,31 @@ raw_rop = rop.chain()`,
           refs: "《ROP 实战》；CTF wiki ROP 章节"
         },
         {
-          id: "intovf", name: "整数溢出", level: "中级",
-          summary: "整数运算回绕导致长度/索引校验失效。",
-          keywords: ["整数溢出","integer overflow","回绕","wrap","符号错误","截断","size_t","长度校验"],
+          id: "intovf", name: "有符号与无符号比较陷阱", level: "中级",
+          summary: "同一个长度值，用 int 比还是用 size_t 比，结论可能完全相反——这类比较错误是很多越界漏洞的真正入口。",
+          keywords: ["有符号无符号", "比较陷阱", "隐式转换", "CWE-195", "整型提升"],
           levels: {
-            "入门": "数字在电脑里有最大值，超过就「绕回」到很小或负数。如果程序用这个数做长度判断，绕回后可能绕过限制，造成后续缓冲区出问题。",
-            "初级": "场景：size 计算回绕使 malloc 过小、有符号比较误判、截断（32→16 位）。常是「其他漏洞的引信」，而非独立利用。",
-            "中级": "审计：乘法分配前的溢出、无符号回绕、数组索引越界。结合符号分析定位。",
-            "高级": "在编译期/静态分析层面识别，并理解语言差异（C 未定义行为 vs Rust 默认 panic）。"
+            "入门": "C 语言里「负数」和「很大的正数」在底层可能长得一样。如果把读到的长度当成无符号数来比较，一个负数就变成了巨大的正数，检查自然被绕过。",
+            "初级": "典型写法：`if (len > MAX) return -1;` 里 len 是 size_t（无符号），调用方传 -1 实际是 0xFFFFFFFFFFFFFFFF，永远不大于 MAX，于是后面的 `memcpy(dst, src, len)` 直接越界。",
+            "中级": "排查要点：看所有参与比较/运算的变量的真实类型与提升规则；`(unsigned)(a + b)` 这类转换发生在运算之后还是之前；以及返回值 -1 被赋给无符号变量后再做判断。审计时把「上界检查」和「实际使用」两处的类型放在一起对照，最有效。",
+            "高级": "加固：统一用无符号类型表达长度并显式做上界检查；开启 -Wsign-compare / -Wconversion 把隐式转换暴露出来；对长度做饱和运算而不是回绕；关键路径用显式的 `if (len == 0 || len > CAP)` 双重判定。",
           },
           codeLang: "c",
           code:
-`// ❌ 危险：乘法溢出（示意）
-size_t n = count * sizeof(item);  // count 很大时回绕
-buf = malloc(n);
-// ✅ 安全：先检查再分配
-if (count > MAX/sizeof(item)) return ERR;`,
-          tool: "Fuzzer（AFL++）、静态分析（CodeQL）",
-          refs: "CWE-190；Integer Overflow 指南"
+`/* 危险：len 是无符号，-1 会被当成极大值 */
+int copy(char *dst, size_t cap, const char *src, size_t len) {
+  if (len > cap) return -1;      /* len = (size_t)-1 时此判断不成立 */
+  memcpy(dst, src, len);         /* 越界写 */
+  return 0;
+}
+/* 加固：把「边界」与「实际使用」用同一个类型表达，并防 0 与回绕 */
+int copy_safe(char *dst, size_t cap, const char *src, size_t len) {
+  if (len == 0 || len > cap) return -1;
+  memcpy(dst, src, len);
+  return 0;
+}`,
+          tool: "编译器告警（-Wsign-compare / -Wconversion）、CodeQL、Coverity",
+          refs: "CWE-195、CWE-190、CERT C INT02-C"
         },
         {
           id: "race", name: "条件竞争 Race Condition", level: "中级",
@@ -856,25 +863,27 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* d, size_t n){
           refs: "AFL++ 文档；libFuzzer 教程；CWE-908"
         },
         {
-          id: "toctou", name: "条件竞争与 TOCTOU", level: "中级",
-          summary: "在检查与使用时资源状态被并发修改，常见于文件权限、余额、兑换等场景。",
-          keywords: ["条件竞争","race condition","toctou","并发","竞态","余额","兑换","锁"],
+          id: "toctou", name: "符号链接与文件竞态实战", level: "中级",
+          summary: "把 TOCTOU 落到真实场景：临时文件、权限提升、支付扣款，看「检查」与「使用」之间那几毫秒能做什么。",
+          keywords: ["symbolic link", "文件竞态", "临时文件", "权限提升", "安全打开"],
           levels: {
-            "入门": "程序先检查是否允许，再使用允许的结果。如果两个请求同时进来，可能都通过了检查，然后都执行，造成重复或越权。",
-            "初级": "TOCTOU（Time-of-check to time-of-use）：检查文件名存在或权限，使用时已被替换。Web 场景：并发请求兑换、转账、上传覆盖、验证码复用。危害：余额被刷、文件被改、权限被提。",
-            "中级": "实战：并发重放兑换或下单请求（Burp Turbo Intruder）；文件操作中检查后替换（符号链接攻击）；无原子性的库存扣减。防御：加锁或事务、原子操作（compare-and-swap）、服务端幂等。",
-            "高级": "深入：分布式下的乐观锁与悲观锁选择、数据库事务隔离级别对竞态的影响、以及符号链接加权限的本地提权链。强调：凡是先查后做都要考虑并发，优先用数据库约束保证原子性。"
+            "入门": "程序先检查「这个文件我能不能读」，再打开读。检查与打开之间如果被换成另一个文件的链接，程序就会读到本来读不到的东西。这类问题叫 TOCTOU。",
+            "初级": "经典场景：/tmp 下的临时文件——攻击者抢先创建一个同名符号链接指向 /etc/shadow，程序以高权限打开写入，就变成了任意文件写。Web 场景则是「先查余额再扣款」被并发请求打穿。",
+            "中级": "正确的做法不是「检查再打开」，而是把检查和使用合并成一次原子操作：文件用 O_CREAT|O_EXCL|O_NOFOLLOW 打开（拿到 fd 之后再 fstat 校验），临时目录用 mkdtemp 生成私有目录，扣款用带条件的原子更新（`UPDATE ... WHERE balance >= price`）。",
+            "高级": "审计清单：搜索「access/stat 之后再 open」「file_exists 之后再写」的成对调用；检查是否用 fd 而不是路径做后续操作（路径可变、fd 不可变）；并发侧看是否有事务或行锁。防御落地：用 `openat` + 目录 fd 限定根路径，避免路径被替换。",
           },
-          codeLang: "sql",
+          codeLang: "c",
           code:
-`-- ❌ 危险：先查后扣，非原子，并发可超卖
-SELECT balance FROM u WHERE id=1;     -- 假设 100
-UPDATE u SET balance=balance-100 WHERE id=1;  -- 两个并发都通过查
-
--- ✅ 安全：单条原子更新 + 约束
-UPDATE u SET balance=balance-100 WHERE id=1 AND balance>=100;`,
-          tool: "Burp Turbo Intruder、race 测试脚本",
-          refs: "CWE-362；并发安全设计"
+`/* 危险：检查与使用分离 */
+if (access("/tmp/x", R_OK) == 0) {           /* 检查 */
+  int fd = open("/tmp/x", O_RDWR);           /* 这里可能已被换成符号链接 */
+  write(fd, buf, n);
+}
+/* 加固：原子打开 + 拒绝跟随符号链接 + 用 fd 校验 */
+int fd = open("/tmp/x", O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+struct stat st; fstat(fd, &st);                 /* 用 fd 判断，不信路径 */`,
+          tool: "静态审计（Semgrep/CodeQL）、strace 观察调用序列",
+          refs: "CWE-367、OWASP 文件上传与临时文件章节"
         },
         {
           id: "bin-memory", name: "程序的内存长什么样", level: "入门",
@@ -918,65 +927,85 @@ ghidra                                          # 3) 反编译看逻辑（GUI）
           refs: "逆向工程入门"
         },
         {
-          id: "bin-rop", name: "ROP 与绕过保护机制", level: "高级",
-          summary: "当栈不可执行时，攻击者用已有代码片段（gadget）拼出想要的逻辑；防御靠全面缓解与编译加固。",
-          keywords: ["rop","gadget","aslr","nx","保护机制","绕过"],
+          id: "bin-rop", name: "ret2csu 与 SROP：gadget 不够时怎么办", level: "高级",
+          summary: "当找不到理想的 gadget（寄存器传参缺失）时的两条实用出路：借 libc 自带的通用调用序列，或用信号帧一次性铺好所有寄存器。",
+          keywords: ["ret2csu", "SROP", "sigreturn", "gadget 复用", "寄存器控制"],
           levels: {
-            "入门": "程序里本来就有很多小代码片段，攻击者把它们像积木一样拼起来，完成自己想做的事——这就是 ROP。",
-            "初级": "前置：需要控制栈与若干寄存器（通常由栈溢出提供），以及知道代码与库的地址；NX 让注入的 shellcode 无法执行，于是转向复用已有代码。",
-            "中级": "实战：找 gadget（pop rdi; ret 等）→ 泄露地址绕过 ASLR → 拼出调用链；工具如 ROPgadget/pwntools 能加速。",
-            "高级": "深入：现代缓解（PIE、CET、Canary 组合）大幅提高难度；从防守角度要用安全编译选项与持续更新，减少可被利用的漏洞与可用 gadget。",
+            "入门": "ROP 需要「把参数放进寄存器」的小代码片段（gadget）。有时候程序里就是找不到合适的，这个知识点讲两条兜底办法。",
+            "初级": "办法一：程序启动代码里通常有一段固定的调用序列（csu），它能一次设置多个寄存器再间接调用，缺点是有限的、需要凑参数。办法二：利用 sigreturn 系统调用，一次就能把几乎所有寄存器设置成我们想要的值。",
+            "中级": "ret2csu 的关键：__libc_csu_init 里那两段循环会把 rbx/rbp/r12~r15 移到寄存器并间接 call，关注点是「哪些寄存器能控」「call 的目标怎么指」「有没有写侧效应」。SROP 的关键：伪造 sigcontext 结构（几百字节）再触发 rt_sigreturn，内核会按结构恢复寄存器与栈。",
+            "高级": "实战取舍：SROP 需要能控制 rax=15 并触发 syscall（可用静态链接的程序或 syscall gadget），且要能写任意数据到已知地址；ret2csu 不需要写数据但寄存器不全、常和普通 gadget 混用。防御方向：控制流完整性（CFI）、shadow stack（CET），让 gadget 链在返回时失真。",
           },
-          codeLang: "python",
+          codeLang: "asm",
           code:
-`# ROP 链思路（伪代码，教学用）
-# 1) 泄露某函数真实地址 → 计算基址（绕过 ASLR）
-# 2) 用 pop rdi; ret 把参数放进寄存器
-# 3) 跳转到 system/execve 完成目标
-# 防御：PIE + NX + Canary + CET 全开，并及时修补内存漏洞`,
-          tool: "pwntools、ROPgadget、GDB",
-          refs: "ROP 技术；缓解机制综述"
+`; ret2csu 的典型形态（glibc 的 __libc_csu_init 片段，示意）
+; 1) 先跳到「设置寄存器」那一段
+mov  rdx, r14
+mov  rsi, r13
+mov  edi, r12d
+call qword ptr [r15 + rbx*8]
+; 2) 再跳到「pop 一堆寄存器 + ret」那一段，用它把 rbx/rbp/r12~r15 填好
+pop rbx
+pop rbp
+pop r12
+pop r13
+pop r14
+pop r15
+ret`,
+          tool: "ROPgadget、ropper、pwntools（SigreturnFrame）",
+          refs: "CET / Shadow Stack 规范、Linux sigreturn 语义"
         },
         {
-          id: "bin-heap", name: "堆漏洞入门", level: "高级",
-          summary: "堆没有栈那样的固定结构，漏洞利用更依赖分配器行为：UAF、溢出与双重释放是经典三件套。",
-          keywords: ["堆","uaf","double free","堆溢出","分配器"],
+          id: "bin-heap", name: "堆利用原语：任意写与任意读", level: "高级",
+          summary: "漏洞利用的中间目标不是「崩溃」而是拿到任意读写原语——为什么它比直接劫持控制流更值钱。",
+          keywords: ["任意写", "任意读", "利用原语", "堆风水", "unlink"],
           levels: {
-            "入门": "栈是自动管理的，堆是程序自己申请释放的。释放后再用（UAF）或释放两次，就会踩到别人正在用的内存。",
-            "初级": "常见类型：堆溢出（写越界）、UAF（释放后仍使用）、double free（重复释放）；后果可能是数据篡改或控制流劫持。",
-            "中级": "实战：理解分配器（如 glibc 的 tcache/fastbin）的复用行为，才能判断「释放后内存会被谁用」；调试时观察 chunk 头与链表指针。",
-            "高级": "深入：现代缓解（safe-linking、tcache 加固）提高了门槛但仍可组合利用；从防守看，优先用内存安全语言与静态分析减少此类漏洞。",
+            "入门": "把漏洞变成「能改内存里任意一个地址」和「能读内存里任意一个地址」，就等于拿到了程序的部分控制权。这个知识点讲这两把钥匙。",
+            "初级": "从堆漏洞到原语的常见路径：溢出覆盖相邻块的元数据 → 让分配器返回一个我们指定的地址（任意写）；再配合一次泄露把地址泄漏出来（任意读）。",
+            "中级": "为什么要分两步：ASLR 让地址随机，得先泄后写。常见原语来源：篡改 chunk 的 size 造成重叠块（overlapping chunks）、伪造 tcache/fastbin 链表、以及 unlink 的写操作。先泄后写是标准顺序。",
+            "高级": "拿到任意写之后，最省事的做法通常不是直接写代码指针（有校验与保护），而是改保护机制的数据结构（如 hook、vtable、GOT 之外的自定义回调）或写「一次性」结构再触发。防御方向：堆元数据校验（safe-linking）、显式初始化指针、以及减少长生命周期裸指针。",
           },
-          codeLang: "text",
+          codeLang: "c",
           code:
-`堆漏洞三类（记忆）
-· 堆溢出：写超出分配大小 → 破坏相邻 chunk 元数据
-· UAF：free 后继续使用 → 指针指向已被复用的内存
-· Double Free：连续 free 同一指针 → 链表被破坏
-调试观察点：chunk 头、bin 链表、分配/释放顺序`,
-          tool: "GDB + pwndbg、ASAN",
-          refs: "堆利用入门；glibc 分配器"
+`/* 思路示意：伪造 tcache 链表让下一次分配落在目标地址上 */
+/* 1) 溢出覆盖 chunk 的 fd，指向 target-0x10        */
+/* 2) free 掉该 chunk，它进入 tcache 且 fd 指向 target */
+/* 3) 两次 malloc：第二次返回 target                 */
+void *a = malloc(0x20);           /* 漏洞点：越界写在 a 之后 */
+void *b = malloc(0x20);           /* 目标块 */
+/* …越界写 b 的 fd… */
+free(b);
+malloc(0x20);                     /* 消耗伪造头 */
+void *evil = malloc(0x20);        /* evil == target（任意写就位） */`,
+          tool: "pwntools、gdb + pwndbg（heap 命令）、glibc 源码",
+          refs: "how2heap、glibc malloc 内部实现"
         },
         {
-          id: "bin-fuzzing", name: "模糊测试入门", level: "中级",
-          summary: "用大量变异输入找崩溃：覆盖率引导让 fuzzing 成为发现内存漏洞最有效的手段之一。",
-          keywords: ["fuzzing","afl","覆盖率","崩溃","语料","sanitizer"],
+          id: "bin-fuzzing", name: "自己写一个变异引擎", level: "中级",
+          summary: "覆盖率引导的 fuzzer 内部怎么工作：变异策略、种子挑选与语料最小化——自己写一遍才懂为什么它能找到漏洞。",
+          keywords: ["变异引擎", "fuzzer 实现", "语料最小化", "种子调度", "afl"],
           levels: {
-            "入门": "模糊测试就是「自动疯狂喂各种奇怪输入」，看程序会不会崩。崩了往往意味着有漏洞。",
-            "初级": "要素：种子语料（合理输入）、变异策略、覆盖率反馈（往没走过的分支探索）、以及 ASAN 等工具快速定位问题。",
-            "中级": "实战：先跑出覆盖率再谈效率；崩溃要去重（同一根因只报一次）并最小化输入，便于开发复现修复。",
-            "高级": "深入：持续 fuzzing（CI 里跑一段时间）、字典与协议感知变异提升深度、以及把发现的用例固化为回归用例。",
+            "入门": "已有的 fuzz 工具替我们做了三件事：① 挑一个输入 ② 改一改它 ③ 跑起来看崩不崩。这个知识点讲的是「②怎么改」——变异策略。",
+            "初级": "常见变异手法：按位翻转、替换成边界值（0、-1、最大长度）、插入/删除块、把整块复制一份。都是为了让输入看起来还像正常数据，但越过程序假设的边界。",
+            "中级": "工程要点：变异要保留格式骨架（否则全被解析器早退，测不到深处）；语料要挑能覆盖新路径的种子（按执行路径去重）；语料要最小化（删掉不影响覆盖的字节），否则每轮执行变慢、单位时间找到的洞更少。",
+            "高级": "想跑得远还要：把耗时的检查点用 setjmp/longjmp 或 fork 隔离（崩溃不带走主进程）、把新覆盖语料入库、按稀有路径调低权重避免一直挖同一条路。这些就是 AFL 这类工具的核心设计。",
           },
-          codeLang: "text",
+          codeLang: "c",
           code:
-`fuzzing 起步
-1) 准备种子语料（真实样本更有用）
-2) 用 ASAN 编译目标（内存错误即刻暴露）
-3) 跑起来看覆盖率增长，不是只看崩溃数
-4) 崩溃去重 + 输入最小化 → 提 issue
-5) 用例入库 → 回归`,
-          tool: "AFL++、libFuzzer、ASAN",
-          refs: "模糊测试实践"
+`/* 极简变异引擎：只做三种变异，够说明思路 */
+unsigned char *mutate(const unsigned char *seed, size_t n, size_t *out_n) {
+  unsigned char *buf = malloc(n);
+  memcpy(buf, seed, n); *out_n = n;
+  switch (rand() % 3) {
+    case 0: buf[rand() % n] ^= (1 << (rand() % 8)); break;   /* 位翻转 */
+    case 1: buf[rand() % n] = (rand() % 2) ? 0xFF : 0x00;    /* 边界值 */
+    case 2: *out_n = n + 1; buf = realloc(buf, n + 1);       /* 尾部加一字节 */
+            buf[n] = rand() % 256; break;
+  }
+  return buf;
+}`,
+          tool: "AFL++、libFuzzer、自写 harness",
+          refs: "AFL 源码、Google ClusterFuzz 文档"
         },
         {
           id: "bin-static", name: "静态分析与模式识别", level: "中级",
@@ -1019,6 +1048,75 @@ ghidra                                          # 3) 反编译看逻辑（GUI）
 `,
           tool: "Ghidra、内核调试器、驱动签名策略",
           refs: "内核漏洞与提权实践"
+        },
+        {
+          id: "bin-asm", name: "读汇编：调用约定与寄存器", level: "入门",
+          summary: "看懂反汇编的门槛不高：知道参数放哪、返回值放哪、栈怎么动，一大半代码就能读懂。",
+          keywords: ["汇编", "调用约定", "寄存器", "x86-64", "System V"],
+          levels: {
+            "入门": "汇编就是 CPU 能直接执行的指令列表。看懂它只需要先记住三件事：数据放在寄存器里、参数按固定顺序传递、返回值固定放某个寄存器。",
+            "初级": "Linux x86-64 的约定（System V）：前六个整数参数放 rdi、rsi、rdx、rcx、r8、r9，返回值放 rax，栈指针 rsp 指向栈顶。所以看到 `mov edi, 1` 基本就是「第一个参数 = 1」。",
+            "中级": "阅读技巧：先把 call 的目标还原成函数名（导入表/符号表），再顺着参数寄存器反推每个函数在做什么；遇到 `movzx`/`cdqe` 这类指令要留意——它们常在把短整数扩展成长整数，是类型关系的线索；`test rax, rax` 后紧跟条件跳转就是「判断返回值」。",
+            "高级": "不同平台不同：Windows x64 前四个参数用 rcx、rdx、r8、r9（且要留 shadow space）；32 位程序参数走栈；ARM64 用 x0~x7。跨平台分析时先确认 ABI，否则参数会全部对错位。",
+          },
+          codeLang: "asm",
+          code:
+`; int add3(int a, int b, int c) → 参数在 edi/esi/edx，返回值在 eax
+add3:
+  lea  eax, [rdi + rsi]     ; eax = a + b
+  add  eax, edx             ; eax += c
+  ret                       ; 返回 eax
+
+; 调用方（节选）
+  mov  edi, 1
+  mov  esi, 2
+  mov  edx, 3
+  call add3                 ; 返回后 eax = 6`,
+          tool: "objdump、ghidra、IDA Free",
+          refs: "System V ABI、Intel 指令集手册"
+        },
+        {
+          id: "bin-gdb", name: "gdb 动态调试入门", level: "初级",
+          summary: "静态看代码是猜，动态调试是看：断点、单步、看内存、看寄存器，四件事就能定位大多数崩溃原因。",
+          keywords: ["gdb", "断点", "单步", "内存查看", "崩溃定位"],
+          levels: {
+            "入门": "调试器让你「把程序暂停在任意一行」，然后检查当时的变量和内存。相比读代码猜流程，这是最直接的办法。",
+            "初级": "四个常用动作：`b 函数名` 下断点、`run` 跑起来、`n`/`s` 单步（跳过/进入函数）、`p 变量` 看值。崩溃后先看 `bt`（调用栈）确认崩在哪、传了什么参数进来。",
+            "中级": "查内存用 `x/16gx $rsp`（按 8 字节看 16 个），改内存用 `set`，跟数据流用 `watch` 断点（某个地址被写时停下，抓越界写特别有效）。看结构体用 `p *ptr`。",
+            "高级": "配 pwndbg/GEF 插件后能用 `heap`/`vmmap`/`telescope` 直接看堆与内存映射；`catch syscall` 抓系统调用序列；`gcore` 保存现场交给他人分析。定位「检查通过但后面越界」这类问题，`watch` + 硬件断点往往比日志快得多。",
+          },
+          codeLang: "bash",
+          code:
+`# 崩溃定位的固定套路
+gdb ./target core
+  bt                 # 调用栈：崩在哪个函数、谁调用的
+  info registers     # 看寄存器：参数/返回值是否异常
+  x/16gx $rsp        # 看栈内容：是否被越界写覆盖
+  watch *(long*)0x7fffffffe000   # 该地址被写时停下（抓越界）
+  quit`,
+          tool: "gdb + pwndbg / GEF、lldb",
+          refs: "gdb 官方手册、pwndbg 文档"
+        },
+        {
+          id: "bin-format", name: "ELF 与 PE 文件格式", level: "初级",
+          summary: "可执行文件不是一个黑盒：段、节、导入表、入口点决定了程序怎么被加载——分析漏洞前先会看它。",
+          keywords: ["ELF", "PE", "节区", "导入表", "入口点"],
+          levels: {
+            "入门": "可执行文件里有「数据」和「描述数据怎么用」的表格。改一个文件的行为，往往不需要改代码，改表格就够了。",
+            "初级": "ELF 关键结构：文件头（架构、入口点）、程序头（加载时怎么映射到内存，权限在这定）、节头（.text 代码、.data/.bss 数据、.got/.plt 外部函数跳转）、动态段（依赖哪些库）。Windows 的 PE 对应为 .text/.data/.idata（导入表）与可选头。",
+            "中级": "做漏洞分析时关注：入口点与真正的 main 之间发生了什么（启动例程、构造函数）；哪些段可写可执行（W+X 是弱点）；导入函数表决定了能调用什么（ROP 常用 plt 跳转）；重定位信息说明哪些地址在加载时会被改写（与 ASLR 相关）。",
+            "高级": "加固与对抗都体现在这些结构里：PIE 改变加载基址、RELRO 让 .got 只读、Fortify 在导入表里换成 __memcpy_chk、CFG/CET 记录合法跳转目标。看一个目标时先看它的段权限与动态段特征，就能判断哪些利用手法可行。",
+          },
+          codeLang: "bash",
+          code:
+`# 快速看一个 ELF 的结构（分析第一步）
+readelf -h a.out        # 文件头：架构 / 入口点 / 类型（EXEC vs DYN=PIE）
+readelf -l a.out        # 程序头：各段权限（R E / RW）
+readelf -S a.out        # 节头：.text/.got/.plt 的地址与大小
+readelf -d a.out | grep -E 'BIND_NOW|FLAGS'   # 是否 Full RELRO
+objdump -R a.out        # 重定位表：哪些地址加载时被改写`,
+          tool: "readelf、objdump、PE-bear、DIE（查壳与编译特征）",
+          refs: "ELF 规范、PE/COFF 规范"
         },
       ]
     },
@@ -6270,6 +6368,43 @@ tshark -r capture.pcap -Y "ip.addr==10.0.0.5" -T fields -e frame.time -e ip.dst 
   { id:"pc1", cat:"pentest", level:"高级", q:"云环境渗透最常见的突破口是？", options:["暴露在公网的服务与存储，以及泄露的访问密钥","操作系统内核漏洞","物理机房进入","无线信号干扰"], answer:0, explain:"云上问题以「配置与身份」为主，而非传统主机漏洞。" },
   { id:"pc2", cat:"pentest", level:"高级", q:"拿到云上临时凭证后的第一步应是？", options:["枚举「我是谁、能做什么」，搞清权限边界","立即删除资源","对外公开凭证","先扫描全内网"], answer:0, explain:"权限枚举决定后续可行路径，也能避免越界操作。" },
   { id:"pc3", cat:"pentest", level:"中级", q:"SSRF 打云元数据之所以高价值，是因为？", options:["可获取实例临时凭证，进而访问云资源","能让实例重启","可修改 DNS","可提升带宽"], answer:0, explain:"云上 SSRF 常直接升级为凭证窃取与资源控制，应强制 IMDSv2 缓解。" },
+    { id: "bin-asm-q1", cat: "binary", level: "入门", q: "在 Linux x86-64（System V 约定）下，函数调用的第一个整数参数放在哪个寄存器？",
+      options: ["rdi", "rax", "rsp", "rcx"], answer: 0,
+      explain: "前六个整数参数依次放在 rdi、rsi、rdx、rcx、r8、r9；rax 用来放返回值。" },
+    { id: "bin-asm-q2", cat: "binary", level: "初级", q: "指令 `test rax, rax` 后紧跟 `je` 跳转，通常在表达什么？",
+      options: ["判断返回值是否为零（常见于函数失败时返回 0 或 NULL）", "把 rax 清零", "把 rax 与立即数相加", "检查栈指针是否越界"], answer: 0,
+      explain: "test 是「按位与但不写回」，只影响标志位；test rax,rax 判断 rax 是否为零，je 即「为零则跳」——典型用法是检查函数是否返回失败。" },
+    { id: "bin-asm-q3", cat: "binary", level: "中级", q: "分析 Windows x64 程序时按 Linux 约定去找第一个参数，最可能的结果是？",
+      options: ["参数全部错位——Windows 前四个参数用 rcx、rdx、r8、r9", "完全一致，可以照搬", "只有浮点参数会不同", "Windows 参数全部走栈"], answer: 0,
+      explain: "Windows x64 前四个整数参数用 rcx、rdx、r8、r9（且调用方要预留 shadow space）。跨平台分析必须先确认 ABI。" },
+    { id: "bin-gdb-q1", cat: "binary", level: "入门", q: "程序崩溃后想知道「崩在哪个函数、被谁调用」，最直接的命令是？",
+      options: ["bt（打印调用栈）", "run", "quit", "make"], answer: 0,
+      explain: "bt（backtrace）打印调用栈，能立刻看到崩溃点与调用链，是崩溃定位的第一步。" },
+    { id: "bin-gdb-q2", cat: "binary", level: "初级", q: "要抓「某块内存被谁越界写坏」，比翻日志更有效的做法是？",
+      options: ["在目标地址上下 watch 断点（被写时立即停下）", "把程序跑一百遍看结果", "把代码里所有 memcpy 打日志", "用编译器开最高优化再看输出"], answer: 0,
+      explain: "watch 断点在该地址被写入时立即中断，能精准抓到越界写的现场（调用栈 + 寄存器），比事后翻日志快得多。" },
+    { id: "bin-gdb-q3", cat: "binary", level: "中级", q: "`x/16gx $rsp` 这条命令的含义是？",
+      options: ["从栈顶开始，按 8 字节一组看 16 组内存", "把 16 个值压入栈", "查看 16 个寄存器", "执行栈上 16 条指令"], answer: 0,
+      explain: "x 是 examine，格式 gx = 8 字节十六进制，16 是数量，$rsp 是起始地址——即按 8 字节粒度查看栈顶 16 项。" },
+    { id: "bin-format-q1", cat: "binary", level: "入门", q: "同一个程序，为什么「改可执行文件里的表格」也可能改变它的行为？",
+      options: ["因为文件里有描述「数据怎么被使用」的结构（段权限、入口点、导入表等）", "因为文件内容会自动被重新编译", "因为表格就是源代码", "其实不会改变行为"], answer: 0,
+      explain: "可执行文件由数据 + 描述数据的结构组成：入口点、段权限、导入表等决定了如何加载与调用，改这些结构就能改变行为（补丁/加壳/加固都作用在这里）。" },
+    { id: "bin-format-q2", cat: "binary", level: "初级", q: "判断一个 ELF 是否启用了 PIE（地址随机化），看哪一项最快？",
+      options: ["文件头里的类型：DYN 表示 PIE，EXEC 表示固定基址", "节区数量", "字符串表长度", "导入函数个数"], answer: 0,
+      explain: "readelf -h 的 Type 字段最直接：DYN（共享/位置无关）通常是 PIE，EXEC 是固定加载地址。这决定了利用是否需要先泄露地址。" },
+    { id: "bin-format-q3", cat: "binary", level: "中级", q: "程序里某个段的权限是「可写且可执行」（W+X），安全上意味着什么？",
+      options: ["攻击者若能写入该段数据，就可能直接执行自己的代码，绕过 ROP 等间接手法", "只是编译器的默认行为，没有风险", "表示该段是只读的", "说明程序启用了所有加固"], answer: 0,
+      explain: "W+X 让「写数据」与「执行代码」在同一区域成立，是最容易被利用的布局；加固原则是 W^X（写与执行互斥）。" },
+    { id: "bin-prim-q1", cat: "binary", level: "中级", q: "堆利用中常说的「先泄后写」指的是什么顺序？",
+      options: ["先用信息泄露拿到真实地址，再做任意写；因为 ASLR 让地址未知", "先写后读", "先提权再泄露", "先释放再分配"], answer: 0,
+      explain: "ASLR 使地址随机，必须先泄漏一个已知符号/堆地址算出基址，之后的任意写才能算准目标，否则写错地址直接崩溃。" },
+    { id: "bin-prim-q2", cat: "binary", level: "高级", q: "为什么拿到任意写之后，常改「保护机制/回调类数据结构」而不是直接写代码指针？",
+      options: ["代码指针区域常有校验或只读保护，而回调/钩子结构往往可写且后果直接", "因为代码指针不存在", "因为回调结构更容易找到", "写代码指针会触发杀毒软件"], answer: 0,
+      explain: "只读重定位、RELRO、CFI 等让直接改写代码指针变难；而运行时可写的回调/钩子/函数表一旦被改，下一次调用就落到攻击者指定位置。" },
+    { id: "bin-prim-q3", cat: "binary", level: "高级", q: "针对伪造堆链表（如 tcache poisoning）最直接的缓解手段是？",
+      options: ["对空闲链表指针做安全编码（safe-linking）并在分配时校验元数据", "把堆改成只读", "关闭所有动态分配", "提高编译优化等级"], answer: 0,
+      explain: "safe-linking 对链表指针做位置相关的编码，篡改后校验不通过；再配合元数据完整性检查，可显著抬高伪造链表的门槛。" }
+
   ]
 };
 
