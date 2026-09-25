@@ -2821,15 +2821,31 @@ $("#backLab").click();
     assert(cards.every((c) => !!c.querySelector(".news-summary")), "每张卡片都有摘要段（.news-summary）");
     assert(cards.every((c) => !!c.querySelector(".news-defense")), "每张卡片都有防御段（.news-defense）");
 
-    // ② 截断只发生在卡片里：摘要 2 行 / 防御 1 行；详情里不许截断
+    // ② 不能用 CSS line-clamp：行高为小数时它会把末行从字形中间切开（用户反馈"字被遮挡/不显示"）。
+    //    截断一律走 JS（ellipsisByWidth），与字体度量无关；行高必须是整数像素。
     const cssN = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    const clampOf = (sel) => {
-      const m = cssN.match(new RegExp(sel + "[^{]*\\{[^}]*line-clamp:\\s*(\\d+)"));
-      return m ? Number(m[1]) : null;
-    };
-    assert(clampOf("\\.news-card \\.news-summary") === 2, "卡片摘要限 2 行");
-    assert(clampOf("\\.news-card \\.news-defense") === 1, "卡片防御限 1 行");
-    assert(!/\.news-detail[^{]*\{[^}]*line-clamp/.test(cssN), "详情页不得截断（点开要能看到全文）");
+    assert(!/line-clamp/.test(cssN), "全项目不使用 line-clamp（它会把末行从字形中间切开）");
+    const lh = (cssN.match(/\.news-card p\s*\{[^}]*line-height:\s*([^;}]+)/) || [, ""])[1].trim();
+    assert(/^\d+px$/.test(lh), `资讯卡片行高是整数像素（当前 ${lh || "未设置"}）`);
+
+    // ③ 卡片文案必须是完整数据的前缀（截断不丢字、不乱字），且带 title 便于悬停看全文
+    const firstCard = cards[0];
+    const id0 = firstCard && firstCard.dataset ? firstCard.dataset.id : "";
+    const nw0 = (SD.news || []).filter((x) => x.id === id0)[0];
+    if (nw0) {
+      const sumEl = firstCard.querySelector(".news-summary");
+      const defEl = firstCard.querySelector(".news-defense");
+      const sumText = (sumEl.textContent || "").trim();
+      const defText = (defEl.textContent || "").trim();
+      assert(nw0.summary.indexOf(sumText.replace(/…$/, "")) === 0, "卡片摘要是原文前缀（未丢字/乱字）");
+      // 防御段带「🛡 防御：」前缀（在 <strong> 里），比对前要先剥掉前缀
+      const strongEl = defEl.querySelector("strong");
+      const prefix = strongEl ? (strongEl.textContent || "") : "";
+      const defCore = defText.indexOf(prefix) === 0 ? defText.slice(prefix.length) : defText;
+      assert(nw0.defense.indexOf(defCore.trim().replace(/…$/, "")) === 0, "卡片防御是原文前缀");
+      assert((sumEl.getAttribute("title") || "") === nw0.summary, "摘要带 title（悬停可看完整原文）");
+      assert((defEl.getAttribute("title") || "") === nw0.defense, "防御带 title");
+    }
 
     // ③ 点开后确实是全文：拿第一张卡片对应的数据逐字比对
     const first = cards[0];

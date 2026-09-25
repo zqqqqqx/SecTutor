@@ -3876,6 +3876,21 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   /* ============================================================
      安全资讯 & 工具
      ============================================================ */
+  // 按"显示宽度"截字（CJK 记 1、ASCII 记 0.55），超长补省略号。
+  // 为什么不用 CSS line-clamp：行高是小数值（如 1.7×14=23.8px）时，clamp 出的盒子高度也是小数，
+  // 会把最后一行从字形中间切开（下半截不见），超出的整行直接消失 —— 用户反馈"字体被遮挡/不显示"。
+  // 按字数截断与字体度量无关，结果稳定可控。
+  function ellipsisByWidth(text, maxUnits) {
+    const s = String(text || "");
+    let units = 0, out = "";
+    for (const ch of s) {
+      units += ch.codePointAt(0) > 0x2e80 ? 1 : 0.55;
+      if (units > maxUnits) return out.replace(/[\s，。、；：]+$/, "") + "…";
+      out += ch;
+    }
+    return s;
+  }
+
   function renderNews() {
     const list = $("#newsList");
     list.innerHTML = SEC_DATA.news.map((n) => `
@@ -3883,9 +3898,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         <span class="tag">${escapeHtml(n.cve)}</span>
         <h3>${escapeHtml(n.title)}</h3>
         <div class="date">${escapeHtml(n.date)} ｜ ${catById(n.cat).name}</div>
-        <!-- 卡片只放核心信息：摘要 2 行、防御 1 行（CSS 截断），完整内容在点开后的详情里 -->
-        <p class="news-summary">${escapeHtml(n.summary)}</p>
-        <p class="u-accent news-defense"><strong>🛡 防御：</strong>${escapeHtml(n.defense)}</p>
+        <!-- 卡片只放核心信息（按字数截断，与字体度量无关）；完整内容用 title 与「点开后的详情」承载 -->
+        <p class="news-summary" title="${escapeHtml(n.summary)}">${escapeHtml(ellipsisByWidth(n.summary, 42))}</p>
+        <p class="u-accent news-defense" title="${escapeHtml(n.defense)}"><strong>🛡 防御：</strong>${escapeHtml(ellipsisByWidth(n.defense, 24))}</p>
         <div class="ai-helpers"><button class="btn ghost small news-ai-btn" data-id="${escapeHtml(n.id)}">🤖 AI 辅助（解读/关联/加固）</button></div>
       </div>`).join("");
     list.querySelectorAll(".news-ai-btn").forEach((b) => {
