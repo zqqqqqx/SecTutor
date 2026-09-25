@@ -1776,8 +1776,10 @@ body::before { opacity: 1; }
        ② 抽屉内气泡原本完全不透明，占了大部分可见面积。
      所以气泡也要半透明，并加大虚化；两个旋钮：--cp-tint（抽屉底）/ --cp-bubble（气泡底）。 */
   background: color-mix(in srgb, var(--surface-1) var(--cp-tint, 36%), transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
-  backdrop-filter: blur(18px) saturate(125%);
+  /* 虚化强度可调：--cp-blur（默认 6px，偏"轻薄"）。虚化越弱、背后内容越清晰，
+     若显得杂乱可以加大它或把 --cp-tint 调实一点；反之亦然。 */
+  -webkit-backdrop-filter: blur(var(--cp-blur, 6px)) saturate(125%);
+  backdrop-filter: blur(var(--cp-blur, 6px)) saturate(125%);
   border-left: 1px solid var(--line);
   /* 上沿高光：纯色背景下也能一眼看出这是块"玻璃"，而不是普通面板 */
   box-shadow: var(--shadow-lg), inset 0 1px 0 var(--hl-top);
