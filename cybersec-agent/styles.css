@@ -583,6 +583,13 @@ code { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
 
 .field { display: block; margin-bottom: 13px; }
 .field span { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
+/* 输入框文本/占位提示过长时的收尾方式（v1.5.6）：
+   浏览器**不允许 placeholder 滚动** —— 它是静态渲染文本，不是可滚动内容，所以"给提示加滚动"做不到。
+   能做的是：① 把提示写短（见 index.html 与 i18n 字典）；② 过长时用省略号收尾而不是硬切半个字；
+   ③ 完整说明放到 title（hover 可见）与所在面板的说明里。 */
+input, textarea { text-overflow: ellipsis; }
+input::placeholder, textarea::placeholder { text-overflow: ellipsis; overflow: hidden; }
+
 .field select, .field input { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; font-size: 13.5px; background: var(--panel); color: var(--ink); transition: border-color .15s, box-shadow .15s; }
 .field select:focus, .field input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 .llm-config { font-size: 13px; border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 8px; }

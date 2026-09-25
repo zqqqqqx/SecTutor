@@ -78,7 +78,7 @@
       <div class="copilot-bar" id="copilotBar">
         <svg class="copilot-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 4.6L19 9l-4 3.3L16.2 18 12 15.3 7.8 18 9 12.3 5 9l5.1-1.4L12 3Z"/></svg>
         <input id="copilotInput" class="copilot-input" type="text"
-               placeholder="直接问，或按 Ctrl / 唤起（自动带上当前上下文）"
+               placeholder="问点什么…（Ctrl /）" title="直接问，或按 Ctrl / 唤起（自动带上当前上下文）"
                aria-label="副驾驶提问" autocomplete="off" />
         <span class="copilot-ctx" id="copilotCtx">无上下文</span>
         <span class="copilot-kbd" id="copilotKbd">Ctrl /</span>
@@ -166,7 +166,7 @@
           <div class="kb-toolbar">
             <div class="kb-search">
               <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.6-3.6"/></svg>
-              <input id="kbSearch" data-i18n-ph="ph.kbSearch" data-i18n-aria="aria.kbSearch" placeholder="搜索知识点 / OWASP / CVE / 关键词…" />
+              <input id="kbSearch" data-i18n-ph="ph.kbSearch" data-i18n-aria="aria.kbSearch" placeholder="搜索知识点 / CVE / 关键词…" title="搜索知识点（标题 / 简介 / 关键词，跨全部领域）" />
             </div>
             <div class="kb-sort"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h6"/></svg>掌握度 ↓</div>
             <button id="kbSearchClear" class="btn small ghost hidden" data-i18n="btn.clear">清除</button>
@@ -281,7 +281,7 @@
           <div class="chat-input">
             <button id="btnVoice" class="btn icon" title="语音输入（需在设置开启）" disabled>🎤</button>
             <button id="btnVision" class="btn icon" title="发送图片/截图识图（需在设置开启）" disabled>📷</button>
-            <input id="chatInput" data-i18n-ph="ph.chatInput" data-i18n-aria="aria.chatInput" placeholder="问我任何网安问题，例如：什么是 SQL 注入？怎么防御 XSS？（支持粘贴图片）" />
+            <input id="chatInput" data-i18n-ph="ph.chatInput" data-i18n-aria="aria.chatInput" placeholder="问我任何网安问题…（可粘贴图片）" title="例如：什么是 SQL 注入？怎么防御 XSS？支持直接粘贴图片提问" />
             <button id="sendBtn" class="btn" data-i18n="btn.send">发送</button>
             <input id="fileImage" type="file" accept="image/*" style="display:none" />
           </div>

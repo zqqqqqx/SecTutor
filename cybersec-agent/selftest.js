@@ -2531,6 +2531,53 @@ $("#backLab").click();
     });
   }
 
+  // ===== 61. 输入框提示（placeholder）长度预算（v1.5.6）=====
+  {
+    // 背景：placeholder 不能滚动（静态渲染文本），过长只能被硬切 → 必须"写短"。
+    // 这里按「估算显示宽度」卡预算，防止以后又被写长；完整说明由 title 承载。
+    const estWidth = (s) => {
+      let w = 0;
+      for (const ch of String(s)) {
+        const code = ch.codePointAt(0);
+        if (code > 0x2e80) w += 13;                    // CJK / 全角 / 中文标点（13px 字号下约 1:1）
+        else if (code > 0x1f000) w += 16;              // emoji
+        else w += 7;                                   // ASCII / 半角
+      }
+      return w;
+    };
+    const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+    const appSrc = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    const getPh = (id) => {
+      const m = new RegExp('id="' + id + '"[^>]*placeholder="([^"]*)"').exec(html);
+      return m ? m[1] : "";
+    };
+    const getTitle = (id) => {
+      const m = new RegExp('id="' + id + '"[^>]*title="([^"]*)"').exec(html);
+      return m ? m[1] : "";
+    };
+    // 预算是按实际可用宽度定的：命令条内部可用约 250px、知识库搜索框窄窗约 200px、聊天输入框约 240px
+    const BUDGET = [["kbSearch", 200], ["chatInput", 240], ["copilotInput", 150]];
+    BUDGET.forEach(([id, budget]) => {
+      const ph = getPh(id);
+      assert(!!ph, `${id} 有 placeholder`);
+      assert(estWidth(ph) <= budget, `${id} 提示不超过预算（估宽 ${estWidth(ph)}px ≤ ${budget}px）`);
+      assert(!!getTitle(id), `${id} 附 title 承载完整说明（写短了但不能丢信息）`);
+    });
+
+    // i18n 字典里的 placeholder 必须同样短：否则切成英文/中文时又溢出
+    const i18nPh = appSrc.match(/"ph\.[a-zA-Z]+":\s*"[^"]*"/g) || [];
+    const tooLong = i18nPh.filter((line) => {
+      const val = line.slice(line.indexOf(":") + 1).replace(/^[\s"]+|"$/g, "");
+      return estWidth(val) > 240;
+    });
+    assert(tooLong.length === 0, `i18n 的 placeholder 均在预算内（超标：${tooLong.join(" | ") || "无"}）`);
+
+    // 过长时的收尾：省略号（做不到"滚动"，至少不要硬切半个字）
+    const cssE = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert(/input::placeholder[^{]*\{[^}]*text-overflow:\s*ellipsis/.test(cssE),
+      "placeholder 过长时用省略号收尾（浏览器不允许 placeholder 滚动）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
