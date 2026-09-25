@@ -954,6 +954,7 @@ input::placeholder, textarea::placeholder { text-overflow: ellipsis; overflow: h
   background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--brand);
   border-radius: var(--radius); box-shadow: var(--shadow-lg);
   color: var(--ink); font-size: 13.5px; line-height: 1.5;
+  cursor: pointer; /* 点主体任意处可关闭 */
 }
 .toast-ok { border-left-color: var(--ok, #16a34a); }
 .toast-err { border-left-color: var(--bad, #dc2626); }

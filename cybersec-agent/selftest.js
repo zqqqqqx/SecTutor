@@ -2712,6 +2712,45 @@ $("#backLab").click();
     await delay(300);
   }
 
+  // ===== 65. Toast 点主体关闭（v1.5.6）=====
+  {
+    clickTab("chat");
+    await delay(30);
+    window.__ui.toast("测试：点主体关闭", "info");
+    await delay(60);
+    const toastEl = doc.querySelector("#toastHost .toast");
+    assert(!!toastEl, "toast 已创建");
+    assert(toastEl.title === "点击任意处关闭", "toast 有可发现性提示（title）");
+
+    // ① 点主体任意处 → 关闭（closeToast 是先加 .out 淡出、再移除节点 → 两步都要验）
+    const msgEl = toastEl.querySelector(".toast-msg");
+    msgEl.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await delay(40);
+    assert(toastEl.classList.contains("out"), "点击 toast 主体即开始关闭（.out 淡出）");
+    await delay(420);
+    assert(!doc.querySelector('#toastHost [data-toast-id="' + toastEl.getAttribute("data-toast-id") + '"]'),
+      "淡出完成后节点被移除（不必精确点到 ✕）");
+
+    // ② 选中文字时不误关（要复制错误信息）——__ui.toast 返回的是 toastId 字符串（不是元素）
+    const tid2 = window.__ui.toast("报错详情很长的内容", "err");
+    await delay(60);
+    const el2 = doc.querySelector('#toastHost [data-toast-id="' + tid2 + '"]');
+    assert(!!el2, "创建第二条 toast（错误态）");
+    const sel = window.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(el2.querySelector(".toast-msg"));
+    sel.removeAllRanges(); sel.addRange(range);
+    el2.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await delay(60);
+    assert(!el2.classList.contains("out"), "选中文字时点击不会误关（保护复制，未进入关闭流程）");
+    sel.removeAllRanges();
+    el2.querySelector(".toast-x").click();
+    await delay(40);
+    assert(el2.classList.contains("out"), "✕ 关闭按钮仍然有效（开始淡出）");
+    await delay(420);
+    assert(!doc.querySelector('#toastHost [data-toast-id="' + tid2 + '"]'), "✕ 关闭后节点被移除");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

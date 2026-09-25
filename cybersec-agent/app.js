@@ -538,6 +538,15 @@
     const dur = opts.duration || (opts.actionText ? 8000 : TOAST_DUR[type]);
     const start = function () { rec.timer = setTimeout(function () { closeToast(id); }, dur); };
     el.querySelector(".toast-x").addEventListener("click", function () { closeToast(id); });
+    // 点 toast 主体任意处也可关闭（v1.5.6）：✕ 之外少一步操作。
+    // 两个放行：① ✕ 与操作按钮自己处理（避免双触发）② 用户正在选中错误文本时不打扰（要复制）。
+    el.title = t("toast.clickClose");
+    el.addEventListener("click", function (ev) {
+      if (ev.target && ev.target.closest && (ev.target.closest(".toast-x") || ev.target.closest(".toast-act"))) return;
+      const sel = (window.getSelection && String(window.getSelection())) || "";
+      if (sel.length) return;
+      closeToast(id);
+    });
     const actBtn = el.querySelector(".toast-act");
     if (actBtn) {
       actBtn.addEventListener("click", function () {
@@ -928,6 +937,7 @@
       "vh.key": "密钥看起来偏短（一般 ≥16 位），确认没有复制漏",
       "vh.keySpace": "密钥里含空格或换行，粘贴时可能多带了字符",
       "vh.blocked": "配置格式有误，未保存（已保留原配置）",
+      "toast.clickClose": "点击任意处关闭",
       "ph.kbSearch": "搜索知识点 / CVE / 关键词…",
       "ph.chatInput": "问我任何网安问题…（可粘贴图片）",
       "aria.kbSearch": "搜索知识点",
@@ -983,6 +993,7 @@
       "vh.key": "Key looks too short (usually ≥16 chars) — check the paste",
       "vh.keySpace": "Key contains spaces or line breaks from the paste",
       "vh.blocked": "Config has format errors — not saved (previous kept)",
+      "toast.clickClose": "Click anywhere to dismiss",
       "ph.kbSearch": "Search topics / CVE / keywords…",
       "ph.chatInput": "Ask about security… (image OK)",
       "aria.kbSearch": "Search knowledge base",
