@@ -4431,12 +4431,17 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     () => "预热安全工具与靶场数据",
     () => "检测本地后端服务",
   ];
+  // 开启界面的节奏（v1.5.6 按用户要求放慢到约 2s）：5 个步骤 × 400ms ≈ 2s，步骤动画正好铺满停留时间。
+  const SPLASH_STEP_MS = 400;
+  const SPLASH_MIN_MS = SPLASH_STEP_MS * SPLASH_STEPS.length;   // 至少停留这么久（初始化更慢时不额外拖延）
   let splashTimer = null;
+  let splashStartAt = 0;
   function startSplash() {
     const box = $("#spSteps");
     const bar = $("#spBar");
     const splash = $("#splash");
     if (!splash || !box) return;
+    splashStartAt = Date.now();
     box.innerHTML = "";
     SPLASH_STEPS.forEach((fn) => {
       const el = document.createElement("span");
@@ -4451,7 +4456,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         items[i].classList.add("on");
         if (bar) bar.style.width = Math.round(((i + 1) / items.length) * 100) + "%";
         i++;
-        splashTimer = setTimeout(tick, 140);
+        splashTimer = setTimeout(tick, SPLASH_STEP_MS);
       } else if (bar) {
         bar.style.width = "100%";
       }
@@ -4462,7 +4467,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     const splash = $("#splash");
     if (!splash || splash.classList.contains("done")) return;
     if (splashTimer) { clearTimeout(splashTimer); splashTimer = null; }
-    // 等步骤动画播完（约 5×140ms）再淡出，保持开启界面观感
+    // 停留至少 SPLASH_MIN_MS（约 2s）：初始化更快就补足，初始化更慢则不额外拖延。
+    // 步骤动画本身也正好铺满这段时间，所以不会出现"动画没播完就淡出"。
+    const wait = Math.max(0, SPLASH_MIN_MS - (Date.now() - splashStartAt));
     setTimeout(() => {
       splash.classList.add("done");
       setTimeout(() => { splash.style.display = "none"; }, 480);

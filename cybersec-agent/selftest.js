@@ -2870,6 +2870,20 @@ $("#backLab").click();
     }
   }
 
+  // ===== 68. 开启界面停留约 2s（v1.5.6）=====
+  {
+    const srcS = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    // 步骤节奏：每步毫秒 × 步数 = 停留时长（用户要求约 2s）
+    const stepMs = Number((srcS.match(/SPLASH_STEP_MS\s*=\s*(\d+)/) || [, 0])[1]);
+    const steps = (srcS.match(/SPLASH_STEPS\s*=\s*\[([\s\S]*?)\];/) || [, ""])[1].split("() =>").length - 1;
+    assert(stepMs >= 300, `开启界面每步间隔放慢到 ${stepMs}ms（原 140ms 太快）`);
+    const total = stepMs * steps;
+    assert(total >= 1800 && total <= 2500, `开启界面停留约 2s（当前 ${steps} 步 × ${stepMs}ms = ${total}ms）`);
+    // 必须有"保底停留"逻辑，否则初始化太快时一闪而过
+    assert(/SPLASH_MIN_MS\s*-\s*\(Date\.now\(\)\s*-\s*splashStartAt\)/.test(srcS),
+      "开启界面有保底停留（初始化更快时补足，更慢时不额外拖延）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
