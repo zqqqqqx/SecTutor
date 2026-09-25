@@ -1775,7 +1775,7 @@ body::before { opacity: 1; }
        ① --surface-1 与应用自身背景本就几乎同色（实测叠在同色侧栏上色差 ΔRGB=0.0）；
        ② 抽屉内气泡原本完全不透明，占了大部分可见面积。
      所以气泡也要半透明，并加大虚化；两个旋钮：--cp-tint（抽屉底）/ --cp-bubble（气泡底）。 */
-  background: color-mix(in srgb, var(--surface-1) var(--cp-tint, 52%), transparent);
+  background: color-mix(in srgb, var(--surface-1) var(--cp-tint, 36%), transparent);
   -webkit-backdrop-filter: blur(18px) saturate(125%);
   backdrop-filter: blur(18px) saturate(125%);
   border-left: 1px solid var(--line);
@@ -1807,10 +1807,10 @@ body::before { opacity: 1; }
 .cp-bubble {
   max-width: 88%; padding: 10px 12px; border-radius: var(--r-md); font-size: 13px; line-height: 1.65;
   /* 气泡也半透明：否则抽屉的"透"只体现在头部/底部的小条上，观感等于没改（v1.5.6 教训） */
-  background: color-mix(in srgb, var(--surface-3) var(--cp-bubble, 66%), transparent);
+  background: color-mix(in srgb, var(--surface-3) var(--cp-bubble, 48%), transparent);
   border: 1px solid var(--line); color: var(--ink); word-break: break-word;
 }
-.cp-row.user .cp-bubble { background: color-mix(in srgb, var(--brand-soft) var(--cp-bubble, 66%), transparent); border-color: var(--brand-hi); color: var(--link); }
+.cp-row.user .cp-bubble { background: color-mix(in srgb, var(--brand-soft) var(--cp-bubble, 48%), transparent); border-color: var(--brand-hi); color: var(--link); }
 .cp-bubble p { margin: 0 0 8px; }
 .cp-bubble p:last-child { margin-bottom: 0; }
 .cp-bubble ul { margin: 6px 0; padding-left: 18px; }
