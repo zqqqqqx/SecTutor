@@ -2971,6 +2971,20 @@ $("#backLab").click();
     assert(filtered > 0 && filtered < totalRows, `筛选后只剩匹配项（${totalRows} → ${filtered}）`);
     assert((foot.textContent || "").indexOf("命中") >= 0, "底部提示显示命中数量");
 
+    // 工具内容完整性（v1.5.6）：用户反馈"右侧详情区内容少"，根因是 8 个领域一个工具都没有。
+    // 这两条断言把它变成硬约束：领域不许零工具、工具 id 不许重复（撞 id 会出现两个同名工具，
+    // 且按 id 查找会命中错的那个）。
+    const SDT = window.eval("SEC_DATA");
+    const toolIds = (SDT.tools || []).map((t) => t.id);
+    assert(toolIds.length === new Set(toolIds).size,
+      `工具 id 唯一（共 ${toolIds.length} 个，重复 ${toolIds.length - new Set(toolIds).size} 个）`);
+    const noTool = SDT.categories.filter((c) => !(SDT.tools || []).some((t) => t.cat === c.id));
+    assert(noTool.length === 0,
+      `每个领域都有工具（零工具的领域：${noTool.map((c) => c.name).join("、") || "无"}）`);
+    const sw = SDT.tools.find((t) => t.cat === "supply");
+    assert(!!sw && (sw.desc || "").length > 5 && (sw.note || "").length > 5,
+      "新增工具都带 desc 与 note（页面上的用法与合规提示不是空的）");
+
     // 空态：明确说明原因 + 可一键清空
     search.value = "zzzz不存在的工具zzzz";
     search.dispatchEvent(new window.Event("input", { bubbles: true }));
