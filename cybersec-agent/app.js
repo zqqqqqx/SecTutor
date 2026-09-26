@@ -296,6 +296,9 @@
       bump(t.summary || "", 2);
       bump((t.keywords || []).join(" "), 3);
       bump(t.name, 4);
+      // 工具名也进索引（与关键词同权）：此前 tool 字段完全没索引，工具类查询只能靠"名字恰好写在正文里"
+      // 侥幸命中；实测当前 100% 正确，但内容扩容后会出现漏召（保险性修复，v1.5.6）
+      bump(t.tool || "", 3);
       docs.push({
         id: "topic:" + t.id, src: "知识点", cat: c.id, title: t.name, level: t.level, text,
         keywords: (t.keywords || []), tokens: tokenize(text), tf: tfw,

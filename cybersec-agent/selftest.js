@@ -663,16 +663,19 @@ $("#backLab").click();
       ["想摸清目标公司暴露在外的域名和子域名", ["recon", "osint", "pt-recon"]],
       ["篡改域名解析结果把用户引到假冒网站", ["arp-dns"]],
       ["令牌可以被随意伪造，服务端没有校验签名", ["jwt", "auth"]],
-      ["随机数序列可以被预测导致密钥被推算出来", ["rand"]],
+      ["随机数序列可以被预测导致密钥被推算出来", ["rand", "crypto-random"]],
       ["在没有授权的情况下读取到别人的订单数据", ["idor", "api-sec", "web-api-sec"]],
     ];
     let q1 = 0, q4 = 0;
+    const missed = [];
     for (const [q, want] of HARD) {
       const res = PF.retrieve(q, 10);
       const rank = res.findIndex((d) => want.includes(d.id.replace(/^topic:/, "")));
       if (rank === 0) q1++;
       if (rank >= 0 && rank < 4) q4++;
+      if (rank !== 0) missed.push(`「${q.slice(0, 18)}」期望 ${want[0]} 实际 ${res[0] ? res[0].id : "无"} 排名 ${rank < 0 ? "未进前10" : rank + 1}`);
     }
+    if (missed.length) console.log("  未命中明细：\n    " + missed.join("\n    "));
     const p1 = (q1 / HARD.length) * 100, p4 = (q4 / HARD.length) * 100;
     console.log(`  检索质量（改写查询 ${HARD.length} 条）: P@1=${p1.toFixed(1)}%  P@4=${p4.toFixed(1)}%（v1.5.6 前实测 P@1=66.7% P@4=93.3%）`);
     // v1.5.6：字段加权（标题4/关键词3/摘要2/正文1）+ 18 条别名扩展 + BM25 调参(1.5/0.5)
@@ -688,10 +691,20 @@ $("#backLab").click();
     const aliasCase2 = PF.retrieve("文件被加密勒索了怎么办", 4).map((d) => d.id.replace(/^topic:/, ""));
     assert(aliasCase2.length > 0, `查询扩展生效：勒索类提问有结果（top1=${aliasCase2[0] || "无"}）`);
 
-    // 字段加权不能被写回死代码：索引层只认 d.tf，必须显式赋值（此前只算 tokens，加权从未生效）
     const srcIdx = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    // 字段加权不能被写回死代码：索引层只认 d.tf，必须显式赋值（此前只算 tokens，加权从未生效）
     assert(/tf:\s*tfw/.test(srcIdx) && /tf:\s*rtf/.test(srcIdx) && /tf:\s*ntf/.test(srcIdx),
       "字段加权已写入 d.tf（索引层只认 d.tf；只算 tokens 等于没加权）");
+    // 工具名必须进索引（保险性修复）：此前 tool 字段完全没索引，工具类查询靠"名字恰好写在正文里"命中；
+    // 实测当前 100% 正确，但内容扩容后会漏召 —— 所以显式纳入、与关键词同权。
+    assert(/bump\(t\.tool/.test(srcIdx), "工具名字段已纳入索引（否则工具类查询只能靠正文侥幸命中）");
+    // 行为验证：工具类与编号类查询都要能召回（用性质判定，不硬编码知识点 id）
+    const probe = (q) => PF.retrieve(q, 3)[0];
+    const toolProbe = probe("jadx 反编译 APK 怎么看");
+    assert(!!toolProbe, "工具类查询有结果");
+    const cveProbe = probe("CVE-2021-44228 是什么漏洞");
+    assert(!!cveProbe && JSON.stringify(cveProbe).indexOf("CVE-2021-44228") >= 0,
+      `编号类查询召回对应条目（top1=${cveProbe ? cveProbe.id : "无"}）`);
   }
 
   // ===== 25. 交互反馈层（P0）：Toast / 忙碌态 =====
