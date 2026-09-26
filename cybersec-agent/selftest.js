@@ -2947,6 +2947,52 @@ $("#backLab").click();
       "开启界面有保底停留（初始化更快时补足，更慢时不额外拖延）");
   }
 
+  // ===== 68. 工具面板左栏不再是空白（v1.5.6）=====
+  {
+    // 背景：`.tools-side` 被 height:100% 拉满整列，但此前只有一个短分类列表 →
+    // 下方一大片空白（用户反馈"工具和代码栏大幅空白"）。
+    // 现在整列由「筛选框 + 分类列表 + 底部统计/键盘提示」填满，并且筛选是真功能。
+    clickTab("tools");
+    await delay(80);
+    const side = doc.querySelector(".tools-side");
+    assert(!!side, "工具面板有左栏");
+    const search = doc.querySelector("#toolSearch");
+    const foot = doc.querySelector("#toolsSideFoot");
+    assert(!!search, "左栏有工具筛选输入框");
+    assert(!!foot && (foot.textContent || "").trim().length > 0, "左栏底部有统计/键盘提示（不是空块）");
+
+    // 筛选是真的：命中数下降、详情区只剩匹配项
+    const totalRows = doc.querySelectorAll("#toolDetail .tool-row").length;
+    assert(totalRows > 0, `默认展示全部工具（${totalRows} 条）`);
+    search.value = "nmap";
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await delay(60);
+    const filtered = doc.querySelectorAll("#toolDetail .tool-row").length;
+    assert(filtered > 0 && filtered < totalRows, `筛选后只剩匹配项（${totalRows} → ${filtered}）`);
+    assert((foot.textContent || "").indexOf("命中") >= 0, "底部提示显示命中数量");
+
+    // 空态：明确说明原因 + 可一键清空
+    search.value = "zzzz不存在的工具zzzz";
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await delay(60);
+    assert(doc.querySelectorAll("#toolDetail .tool-row").length === 0, "无匹配时详情区为空");
+    assert(/没有匹配的工具/.test(doc.querySelector("#toolDetail").textContent), "给出明确空态文案（不是纯空白）");
+    const clearBtn = doc.querySelector("#toolDetail [data-sb-action]");
+    assert(!!clearBtn, "空态带「清空筛选」按钮");
+    if (clearBtn) clearBtn.click();
+    await delay(60);
+    assert(doc.querySelectorAll("#toolDetail .tool-row").length === totalRows, "点清空后恢复全部工具");
+
+    // Esc 清空
+    search.value = "burp";
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await delay(40);
+    search.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await delay(60);
+    assert(search.value === "" && doc.querySelectorAll("#toolDetail .tool-row").length === totalRows,
+      "Esc 清空筛选并恢复列表");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

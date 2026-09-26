@@ -4006,6 +4006,24 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
 
   let toolActiveCat = "all";
+  let toolQuery = "";                     // 工具筛选词（左栏此前只有分类列表，长列表下很不好找）
+  function toolMatches(t) {
+    if (!toolQuery) return true;
+    const q = toolQuery.toLowerCase();
+    return (t.name + " " + t.desc + " " + t.usage).toLowerCase().indexOf(q) >= 0;
+  }
+  function toolPool() {                   // 当前分类 + 当前筛选词下的工具集合
+    return SEC_DATA.tools.filter((t) => (toolActiveCat === "all" || t.cat === toolActiveCat) && toolMatches(t));
+  }
+  function renderToolsSideFoot() {
+    const el = $("#toolsSideFoot");
+    if (!el) return;
+    const total = SEC_DATA.tools.length;
+    const shown = toolPool().length;
+    el.innerHTML = toolQuery
+      ? `筛选「${escapeHtml(toolQuery)}」命中 <b>${shown}</b> / ${total} 个工具`
+      : `共 <b>${total}</b> 个工具 ｜ ↑↓ 切换分类<br>Enter 打开 ｜ Esc 清空筛选`;
+  }
   function renderToolCats() {
     const ul = $("#toolList");
     ul.innerHTML = "";
@@ -4023,7 +4041,28 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
   function renderTools() {
     const main = $("#toolDetail");
-    const items = SEC_DATA.tools.filter((t) => toolActiveCat === "all" || t.cat === toolActiveCat);
+    const items = toolPool();
+    renderToolsSideFoot();
+    if (!items.length) {                 // 空态：明确说明"为什么没有"并给一键恢复
+      main.innerHTML = stateBlock("empty", {
+        title: "没有匹配的工具",
+        desc: toolQuery
+          ? "当前筛选词「" + toolQuery + "」在" + (toolActiveCat === "all" ? "全部工具" : "该分类") + "里没有命中。"
+          : "该分类下暂无工具。",
+        actionText: toolQuery ? "清空筛选" : null,
+      });
+      // 自己绑定按钮：stateBlock 的按钮绑定依赖传入 host，这里直接绑更稳
+      const clearBtn = main.querySelector("[data-sb-action]");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+          toolQuery = "";
+          const el = $("#toolSearch");
+          if (el) el.value = "";
+          renderTools();
+        });
+      }
+      return;
+    }
     main.innerHTML = items.map((t) => `
       <div class="tool-row u-row-plain">
         <h3 class="u-h-plain">${escapeHtml(t.name)} <span class="u-f12 u-muted">（${catById(t.cat).name}）</span></h3>
@@ -4791,6 +4830,15 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     renderRangeCats();
     renderRangeList();
     renderNews();
+    // 工具筛选：输入即过滤（12 个工具无需防抖），Esc 清空
+    const ts = $("#toolSearch");
+    if (ts && !ts.dataset.bound) {
+      ts.dataset.bound = "1";
+      ts.addEventListener("input", () => { toolQuery = ts.value.trim(); renderTools(); });
+      ts.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && ts.value) { e.stopPropagation(); ts.value = ""; toolQuery = ""; renderTools(); }
+      });
+    }
     renderToolCats();
     renderTools();
     renderLabCats();
