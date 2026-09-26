@@ -3007,6 +3007,25 @@ $("#backLab").click();
       "Esc 清空筛选并恢复列表");
   }
 
+  // ===== 69. 相关推荐质量（v1.5.8）=====
+  {
+    // 检索已饱和（P@1 100%），于是给"还没尺子"的相关推荐建立基准。
+    // 同领域先验此前是"加 0.5"——加法在 BM25 量纲上不随得分缩放，实测改为"乘 1.8"后
+    // top3 中同领域≥2 条的比例从 54.5% 提到 87.0%（系数扫描的拐点，关键词相关性仅掉 2pt）。
+    const all = PF.allTopics();
+    const sample = all.filter((_, i) => i % 2 === 0);   // 隔一个取样，控制耗时
+    let ok = 0;
+    sample.forEach((t) => {
+      const rec = PF.relatedDocs(t).slice(0, 3);
+      if (rec.filter((d) => d.cat === t.cat).length >= 2) ok++;
+    });
+    const pct = ok / sample.length * 100;
+    console.log(`  相关推荐质量（${sample.length} 个知识点）：top3 中同领域≥2 条 ${pct.toFixed(1)}%（改前实测 54.5%）`);
+    assert(pct >= 80, `相关推荐防护：同领域占比 ${pct.toFixed(1)}%（要求 ≥80%，同领域先验被削弱即失败）`);
+    assert(/RELATED_CAT_BOOST/.test(fs.readFileSync(path.join(__dirname, "app.js"), "utf8")),
+      "相关推荐使用显式的领域先验常量（不是散落的魔法数字）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

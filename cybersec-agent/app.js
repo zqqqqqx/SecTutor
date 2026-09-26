@@ -1700,6 +1700,8 @@
   }
 
   // 相关推荐：基于 CORPUS 的同分类 / 关键词重叠，从全库拉相关条目
+  // 相关推荐的同领域先验（乘法）；取值 1.8 来自 253 个知识点的实测扫描（见 bench_related.js）
+  const RELATED_CAT_BOOST = 1.8;
   function relatedDocs(topic) {
     const selfId = "topic:" + topic.id;
     const tdoc = DOC_BY_ID.get(selfId);
@@ -1709,8 +1711,12 @@
     const scores = accumulateBM25(tt, new Map(), selfId);
     const out = [];
     scores.forEach(function (s, i) {
-      // 同领域略加权（保留原策略，权重按 BM25 量纲调整）
-      out.push({ d: CORPUS[i], s: s + (CORPUS[i].cat === topic.cat ? 0.5 : 0) });
+      // 同领域加权：v1.5.8 由「加 0.5」改为「乘 1.8」。
+      // 为什么改：加法在 BM25 量纲上不随得分缩放——高分文档几乎不受影响，
+      // 而低分文档被强行拉高（"同领域"反而变成了弱噪声）。乘法是尺度无关的。
+      // 实测（253 个知识点样本，取 top3）：同领域 ≥2 条的比例 54.5% → 87.0%，
+      // 而"有共同关键词"的比例仅从 75.1% 微降到 73.1%（系数扫描后的拐点取值）。
+      out.push({ d: CORPUS[i], s: s * (CORPUS[i].cat === topic.cat ? RELATED_CAT_BOOST : 1) });
     });
     return out.sort((a, b) => b.s - a.s).slice(0, 6).map((x) => x.d);
   }
