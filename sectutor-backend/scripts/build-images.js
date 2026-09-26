@@ -1,5 +1,5 @@
 /**
- * build-images.js — 依次构建 5 个授权训练靶机镜像。
+ * build-images.js — 依次构建 10 个授权训练靶机镜像。
  *
  * 设计约束（合规必做）：
  *   - 仅使用本地预置的漏洞镜像模板，绝不允许运行时拉取任意镜像。
@@ -10,7 +10,8 @@
 const { execFile } = require('child_process');
 const path = require('path');
 
-const LABS = ['sqli', 'cmdi', 'xss', 'traversal', 'nosql'];
+const LABS = ['sqli', 'cmdi', 'xss', 'traversal', 'nosql',
+  'jwt', 'idor', 'ssti', 'lfi', 'weakpass'];
 
 function run(cmd, args, cwd) {
   return new Promise((resolve, reject) => {

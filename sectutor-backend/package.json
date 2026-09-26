@@ -8,9 +8,10 @@
     "start": "node src/index.js",
     "start:sim": "node -r ./scripts/sim-flag.js src/index.js",
     "dev:fe": "node -r ./scripts/sim-flag.js -r ./scripts/fe-flag.js src/index.js",
-    "test": "node test/smoke.js && node test/quota.test.js && node test/stress.js && node test/redis-fallback.test.js && node test/redis-quota.contract.js && node test/audit.test.js && node test/runtime.contract.js && node test/proxy.integration.js && node test/edgecases.js && node test/cors.test.js && node test/ratelimit.test.js && node test/kbcatalog.test.js",
+    "test": "node test/smoke.js && node test/quota.test.js && node test/stress.js && node test/redis-fallback.test.js && node test/redis-quota.contract.js && node test/audit.test.js && node test/runtime.contract.js && node test/proxy.integration.js && node test/edgecases.js && node test/cors.test.js && node test/ratelimit.test.js && node test/kbcatalog.test.js && node test/labspecs.test.js && node scripts/smoke-labs.js",
     "build:images": "node scripts/build-images.js",
-    "scan:images": "node scripts/scan-images.js"
+    "scan:images": "node scripts/scan-images.js",
+    "smoke:labs": "node scripts/smoke-labs.js"
   },
   "dependencies": {
     "dockerode": "^4.0.2",

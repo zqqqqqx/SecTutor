@@ -1,0 +1,10 @@
+{
+  "name": "sectutor-lab-idor",
+  "private": true,
+  "version": "1.0.0",
+  "description": "SecTutor 授权训练靶机（仅隔离实验用）",
+  "main": "app.js",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
