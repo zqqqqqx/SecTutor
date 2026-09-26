@@ -3026,6 +3026,40 @@ $("#backLab").click();
       "相关推荐使用显式的领域先验常量（不是散落的魔法数字）");
   }
 
+  // ===== 71. SRS 复习调度质量（v1.5.8）=====
+  {
+    // 复习调度此前**从未度量**。建基准（bench_srs.js）后发现三处真缺陷，这里逐条钉住：
+    //   ① 排序按"绝对逾期天数"，与"逾期比"口径的等级相关只有 0.284
+    //   ② 复习取题固定 qs[0] —— 同一领域永远同一道题（5 次复习只出现 1 种）
+    //   ③ 阶段推进"做完就 +1" —— 全答错也推进，间隔只增不减
+    const st = PF.state;
+    const savedDates = st.masteryDates, savedMastery = st.mastery;
+    const DAY = 86400000, now = Date.now();
+
+    // 构造对照：A=阶段0（间隔1天）逾期5天 → 逾期比 5；B=阶段5（间隔30天）逾期40天 → 逾期比 1.33
+    st.masteryDates = {
+      t_web_basic: { t: now - 5 * DAY, r: 0 },
+      t_web_deep: { t: now - 40 * DAY, r: 5 },
+    };
+    st.mastery = new Set(["t_web_basic", "t_web_deep"]);
+    const due = PF.dueReviews();
+    assert(due.length === 2, "两个到期项都被识别");
+    assert(due[0] && due[0].id === "t_web_basic",
+      `逾期倍数更大的项排在最前（实际第一是 ${due[0] ? due[0].id : "无"}；旧实现会按绝对天数把阶段5的排前面）`);
+    assert(due[0] && due[0].urgency > 1 && due[1] && due[1].urgency < due[0].urgency,
+      "排序依据是逾期比 days/interval（不是绝对天数）");
+
+    // 恢复现场，避免污染后续用例
+    st.masteryDates = savedDates;
+    st.mastery = savedMastery;
+
+    const src = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(/qs\[\(stableHash\(id\) \+ reviewSeq\) % qs\.length\]/.test(src),
+      "复习取题已改为轮换（不再是 qs[0] 那道固定题）");
+    assert(/const advanced = acc >= 0\.6/.test(src) && /Math\.max\(\(rec\.r \|\| 0\) - 1, 0\)/.test(src),
+      "复习阶段推进按正确率（≥60% 推进，否则回退一级）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

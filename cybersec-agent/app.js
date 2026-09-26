@@ -4266,6 +4266,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       tokenize: tokenize,
       detectIntent: detectIntent,
       corpusSize: function () { return CORPUS.length; },
+      // ↓ v1.5.8：SRS 调度此前在闭包内无从测试，暴露出来才能写"行为级"断言（仅测试用）
+      dueReviews: function () { return dueReviews(); },
+      state: state,
     };
   }
   // 交互反馈层自测钩子
@@ -5215,6 +5218,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
 
   // —— ①c 遗忘曲线复习 ——
   const REVIEW_INTERVALS = [1, 2, 4, 7, 15, 30]; // 天（艾宾浩斯简化）
+  // 复习取题用的稳定散列（同一 id 每次得到同一个值，保证"不同知识点错开"而不是全体同步换题）
+  function stableHash(str) {
+    let h = 0;
+    for (let i = 0; i < String(str).length; i++) h = (h * 31 + String(str).charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+  let reviewSeq = 0;   // 复习轮次：每发起一次复习 +1，用于轮换题目
   function dueReviews() {
     const now = Date.now(), out = [];
     Object.keys(state.masteryDates).forEach((id) => {
@@ -5223,15 +5233,27 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const stage = rec.r || 0;
       const interval = REVIEW_INTERVALS[Math.min(stage, REVIEW_INTERVALS.length - 1)];
       const days = (now - (rec.t || now)) / 86400000;
-      if (days >= interval) out.push({ id, days, stage });
+      if (days >= interval) out.push({ id, days, stage, interval, urgency: days / interval });
     });
-    return out.sort((a, b) => b.days - a.days).slice(0, 6);
+    // v1.5.8：此前按"绝对逾期天数"降序 —— 这会把"高阶段长期逾期"排在"低阶段严重逾期"之前，
+    // 而真正该先复习的是**逾期倍数**（days/interval）最大的项。
+    // 实测（30 组随机样本）两种口径的等级相关只有 0.284，确实不是一回事。
+    return out.sort((a, b) => b.urgency - a.urgency).slice(0, 6);
   }
   function startReview(ids) {
+    reviewSeq++;
     const items = [];
     ids.forEach((id) => {
       const t = allTopics().find((x) => x.id === id);
-      if (t) { const qs = (SEC_DATA.quizzes || []).filter((q) => q.cat === t.cat); if (qs[0]) items.push(prepareQuestion({ ...qs[0] })); }
+      if (t) {
+        const qs = (SEC_DATA.quizzes || []).filter((q) => q.cat === t.cat);
+        // v1.5.8：此前固定取 qs[0] —— 同一领域**永远同一道题**，复习形同走过场（实测 5 次复习只出现 1 种题）。
+        // 改为按"知识点 id 稳定散列 + 复习轮次"轮换，保证多次复习能换到不同题目。
+        if (qs.length) {
+          const pick = qs[(stableHash(id) + reviewSeq) % qs.length];
+          items.push(prepareQuestion({ ...pick }));
+        }
+      }
     });
     if (!items.length) {
       openModal("🔔 复习", stateBlock("empty", {
@@ -5244,12 +5266,25 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     let idx = 0, score = 0, picked = -1, answered = false;
     function render() {
       if (idx >= items.length) {
-        ids.forEach((id) => { if (state.masteryDates[id]) state.masteryDates[id].r = (state.masteryDates[id].r || 0) + 1; });
+        // v1.5.8：此前"做完就 +1"—— 全答错也推进，间隔只增不减，SRS 失去意义。
+        // 改为按正确率：≥60% 推进一级（封顶到最后一档）；否则回退一级（下限 0），并刷新时间戳。
+        const acc = items.length ? score / items.length : 0;
+        const advanced = acc >= 0.6;
+        ids.forEach((id) => {
+          const rec = state.masteryDates[id];
+          if (!rec) return;
+          rec.t = Date.now();
+          rec.r = advanced
+            ? Math.min((rec.r || 0) + 1, REVIEW_INTERVALS.length - 1)
+            : Math.max((rec.r || 0) - 1, 0);
+        });
         saveMasteryDates(); logEvent("review", ids.length);
         // Phase 2 适配信号：复习正确率按知识点所属领域计入分域升降级
         const revDomain = (() => { const t = allTopics().find((x) => x.id === ids[0]); return t ? t.cat : null; })();
         recordQuizResult(revDomain, items.length ? score / items.length : null, items.length);
-        openModal("🔔 复习完成", `<p>本次复习 ${items.length} 题，答对 <b>${score}</b> 题。</p><p class="u-muted">相关知识点已推进到下一轮复习周期。</p>`);
+        const nextDays = REVIEW_INTERVALS[Math.min((state.masteryDates[ids[0]] || {}).r || 0, REVIEW_INTERVALS.length - 1)];
+        openModal("🔔 复习完成", `<p>本次复习 ${items.length} 题，答对 <b>${score}</b> 题（正确率 ${Math.round(acc * 100)}%）。</p>`
+          + `<p class="u-muted">${advanced ? "掌握良好，已进入下一轮复习周期（约 " + nextDays + " 天后再来）" : "这次不太熟，复习周期已回调（约 " + nextDays + " 天后再练一次）"}。</p>`);
         renderReviewCard();
         return;
       }
