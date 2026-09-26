@@ -11,9 +11,14 @@ const config = require('../config');
 const { createCors } = require('./cors');
 const envs = require('./routes/envs');
 const envManager = require('./envManager');
-const { requireAuth, extractToken, parseCookies } = require('./auth');
+const { requireAuth, extractToken, parseCookies, setAuthFailHook } = require('./auth');
+const { createLimiter, middleware: rateLimit, noteAuthFail } = require('./ratelimit');
+const kbCatalog = require('./kbCatalog');
 const reclaim = require('./reclaim');
 const audit = require('./audit');
+const pkgVersion = (function () {
+  try { return require('../package.json').version; } catch (e) { return 'unknown'; }
+})();
 
 /**
  * 反向代理处理器：把 /api/envs/:id/proxy/* 转发到本环境靶机容器
@@ -90,8 +95,48 @@ function createApp() {
   // CORS 必须最优先挂载：跨域预检(OPTIONS)与凭据校验需在鉴权之前完成，否则浏览器拦截。
   app.use(createCors());
 
-  app.get('/health', (req, res) => {
-    res.json({ ok: true, simulate: config.simulate, time: Date.now() });
+  // 健康与就绪检查：/health 保留（旧客户端兼容，字段不变），/api/health 为增强版。
+  // 增强版面向"自建与排障"：一眼看清 docker 可用性、配额占用、回收器、内容版本。
+  const healthPayload = () => {
+    const q = envManager.quota.snapshot();
+    const r = reclaim.getStats();
+    const kb = kbCatalog.readCatalog();
+    return {
+      ok: true,
+      simulate: config.simulate,
+      time: Date.now(),
+      uptimeSec: Math.round(process.uptime()),
+      version: pkgVersion,
+      node: process.version,
+      envs: { total: q.global, maxPerOwner: q.maxPerOwner, maxConcurrent: q.maxConcurrent },
+      reclaim: { lastRunAt: r.lastRunAt, reclaimed: r.reclaimed, intervalMs: r.intervalMs },
+      // 当前使用的隔离运行时（可插拔：docker / k8s / firecracker；simulate=true 表示走内存仿真）
+      runtime: { name: config.runtime || 'docker', simulate: !!config.simulate },
+      content: kb.ok ? { version: kb.version, counts: kb.counts } : { error: kb.error },
+      rateLimit: { off: process.env.RATE_LIMIT_OFF === '1' },
+    };
+  };
+  app.get('/health', (req, res) => res.json({ ok: true, simulate: config.simulate, time: Date.now() }));
+  app.get('/api/health', (req, res) => res.json(healthPayload()));
+
+  // 速率限制（零依赖令牌桶）：
+  //   · 认证失败（带无效令牌）→ 20 次/分钟，防猜令牌；
+  //   · /api/envs 的写操作（创建/销毁）→ 120 次/分钟，防滥调靶场；
+  //   · 其余 /api 请求 → 600 次/分钟宽松兜底（代理路径不受限：那是正常浏览靶机页面）。
+  const limiter = createLimiter();
+  setAuthFailHook((req) => noteAuthFail(limiter, req).allowed);
+  app.use('/api/envs', rateLimit(limiter, 'write', { methods: ['POST', 'PUT', 'PATCH', 'DELETE'] }));
+  app.use('/api', (req, res, next) => {
+    if (req.path.indexOf('/envs/') === 0 && req.path.indexOf('/proxy') > 0) return next(); // 靶机页面流量不限
+    return rateLimit(limiter, 'global')(req, res, next);
+  });
+
+  // 知识库目录（公开，无鉴权）：内容指纹 + 领域/知识点/题库统计。
+  // 客户端用它校验"本地内容是否为同一版本"，为多端与将来的增量同步铺路。
+  app.get('/api/kb/catalog', (req, res) => {
+    const kb = kbCatalog.readCatalog();
+    if (!kb.ok) return res.status(503).json({ ok: false, code: 'KB_UNAVAILABLE', error: kb.error });
+    return res.json(kb);
   });
 
   // 反向代理必须先于 express.json 挂载，以保留原始请求体用于转发

@@ -53,13 +53,27 @@ function resolveOwner(req) {
   return ownerForToken(extractToken(req));
 }
 
+/**
+ * 认证失败挂钩（由 index.js 注入速率限制器）：
+ * 当请求**带了令牌但无效**（典型的猜令牌特征）时回调；返回 false 表示应直接限流。
+ * 不带令牌的请求不计入（那是正常的未登录探测，由全局兜底限制负责）。
+ */
+let onAuthFail = null;
+function setAuthFailHook(fn) {
+  onAuthFail = typeof fn === 'function' ? fn : null;
+}
+
 function requireAuth(req, res, next) {
-  const owner = resolveOwner(req);
+  const token = extractToken(req);
+  const owner = ownerForToken(token);
   if (!owner) {
+    if (token && onAuthFail && onAuthFail(req) === false) {
+      return res.status(429).json({ ok: false, code: 'RATE_LIMITED', error: '认证失败次数过多，请稍后重试' });
+    }
     return res.status(401).json({ ok: false, error: '缺少或无效 token' });
   }
   req.owner = owner;
   return next();
 }
 
-module.exports = { requireAuth, resolveOwner, ownerForToken, extractToken, parseCookies };
+module.exports = { requireAuth, resolveOwner, ownerForToken, extractToken, parseCookies, setAuthFailHook };
