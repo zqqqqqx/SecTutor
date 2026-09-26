@@ -3026,6 +3026,28 @@ $("#backLab").click();
       "相关推荐使用显式的领域先验常量（不是散落的魔法数字）");
   }
 
+  // ===== 71b. 出题覆盖度（v1.5.8）=====
+  {
+    // 题目此前**没有 topic 字段** → 知识点级覆盖完全不可度量（这是当天审计出的结论）。
+    // 补上后这里把它变成硬指标：标注率、有效引用、知识点覆盖率。
+    const SDT2 = window.eval("SEC_DATA");
+    const topicIds = new Set();
+    SDT2.categories.forEach((c) => (c.topics || []).forEach((t) => topicIds.add(t.id)));
+    const qs = SDT2.quizzes || [];
+    const tagged = qs.filter((q) => q.topic);
+    const invalid = tagged.filter((q) => !topicIds.has(q.topic));
+    const covered = new Set(tagged.map((q) => q.topic));
+    const tagPct = tagged.length / qs.length * 100;
+    const covPct = covered.size / topicIds.size * 100;
+    console.log(`  出题覆盖度：标注 ${tagPct.toFixed(1)}%（${tagged.length}/${qs.length}）｜知识点覆盖 ${covPct.toFixed(1)}%（${covered.size}/${topicIds.size}）`);
+    assert(tagPct >= 85, `出题标注率 ${tagPct.toFixed(1)}%（要求 ≥85%，新增题目应带上 topic）`);
+    assert(covPct >= 85, `知识点出题覆盖 ${covPct.toFixed(1)}%（要求 ≥85%）`);
+    assert(invalid.length === 0, `topic 必须指向存在的知识点（当前 ${invalid.length} 条无效）`);
+    // 复习取题应优先用本知识点的题（而不是领域第一道）
+    const src2 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(/q\.topic === id/.test(src2), "复习取题优先按知识点（topic）而非仅按领域");
+  }
+
   // ===== 71. SRS 复习调度质量（v1.5.8）=====
   {
     // 复习调度此前**从未度量**。建基准（bench_srs.js）后发现三处真缺陷，这里逐条钉住：
@@ -3054,8 +3076,10 @@ $("#backLab").click();
     st.mastery = savedMastery;
 
     const src = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
-    assert(/qs\[\(stableHash\(id\) \+ reviewSeq\) % qs\.length\]/.test(src),
-      "复习取题已改为轮换（不再是 qs[0] 那道固定题）");
+    // 断言"意图"而不是"代码形状"：上一版把变量名写死成 qs[...]，后来变量改名就误报了。
+    // 这里只断言"不再固定取领域题库的第一道"——重构改名也不会失效。
+    assert(!/qs\[0\]|pool\[0\]/.test(src) && /stableHash\(id\) \+ reviewSeq/.test(src),
+      "复习取题已改为轮换（不再是固定的第一道题）");
     assert(/const advanced = acc >= 0\.6/.test(src) && /Math\.max\(\(rec\.r \|\| 0\) - 1, 0\)/.test(src),
       "复习阶段推进按正确率（≥60% 推进，否则回退一级）");
   }

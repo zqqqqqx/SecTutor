@@ -5246,11 +5246,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     ids.forEach((id) => {
       const t = allTopics().find((x) => x.id === id);
       if (t) {
-        const qs = (SEC_DATA.quizzes || []).filter((q) => q.cat === t.cat);
-        // v1.5.8：此前固定取 qs[0] —— 同一领域**永远同一道题**，复习形同走过场（实测 5 次复习只出现 1 种题）。
-        // 改为按"知识点 id 稳定散列 + 复习轮次"轮换，保证多次复习能换到不同题目。
-        if (qs.length) {
-          const pick = qs[(stableHash(id) + reviewSeq) % qs.length];
+        // v1.5.8：题目新增了 topic 字段（标注见 .workbuddy/tmp_tag_quiz.js），
+        // 复习因此可以**精确取该知识点的题**（此前只能在领域题库里打转）。
+        // 取题顺序：本知识点的题 → 同领域题库兜底；并做轮换，避免永远同一道。
+        const byTopic = (SEC_DATA.quizzes || []).filter((q) => q.topic === id);
+        const pool = byTopic.length ? byTopic : (SEC_DATA.quizzes || []).filter((q) => q.cat === t.cat);
+        if (pool.length) {
+          const pick = pool[(stableHash(id) + reviewSeq) % pool.length];
           items.push(prepareQuestion({ ...pick }));
         }
       }
