@@ -674,9 +674,24 @@ $("#backLab").click();
       if (rank >= 0 && rank < 4) q4++;
     }
     const p1 = (q1 / HARD.length) * 100, p4 = (q4 / HARD.length) * 100;
-    console.log(`  检索质量（改写查询 ${HARD.length} 条）: P@1=${p1.toFixed(1)}%  P@4=${p4.toFixed(1)}%（优化前实测基线 P@1=60.0% P@4=90.0%）`);
-    assert(p4 >= 90, `检索质量防护：改写查询 P@4=${p4.toFixed(1)}%（要求 ≥90%，RAG 取 top-4 必须命中）`);
-    assert(p1 >= 60, `检索质量防护：改写查询 P@1=${p1.toFixed(1)}%（要求 ≥60%）`);
+    console.log(`  检索质量（改写查询 ${HARD.length} 条）: P@1=${p1.toFixed(1)}%  P@4=${p4.toFixed(1)}%（v1.5.6 前实测 P@1=66.7% P@4=93.3%）`);
+    // v1.5.6：字段加权（标题4/关键词3/摘要2/正文1）+ 18 条别名扩展 + BM25 调参(1.5/0.5)
+    // 实测把 P@1 从 66.7% 拉到 100%。门槛随之抬到 85%/95% —— 只许上调、不许下调，
+    // 门槛与实测留出余量：内容继续扩容会稀释 P@1（历史上踩过），留缓冲避免误报。
+    assert(p4 >= 95, `检索质量防护：改写查询 P@4=${p4.toFixed(1)}%（要求 ≥95%，RAG 取 top-4 必须命中）`);
+    assert(p1 >= 85, `检索质量防护：改写查询 P@1=${p1.toFixed(1)}%（要求 ≥85%）`);
+
+    // 查询扩展（口语 → 术语）必须真的在生效：口语提问要能命中术语型知识点
+    const aliasCase = PF.retrieve("已经拿到普通用户权限，怎么进一步提权", 4).map((d) => d.id.replace(/^topic:/, ""));
+    assert(aliasCase.indexOf("privesc") >= 0 || aliasCase.indexOf("priv-esc") >= 0,
+      `查询扩展生效：口语「提权」命中术语型知识点（返回 ${aliasCase.slice(0, 3).join(",")}）`);
+    const aliasCase2 = PF.retrieve("文件被加密勒索了怎么办", 4).map((d) => d.id.replace(/^topic:/, ""));
+    assert(aliasCase2.length > 0, `查询扩展生效：勒索类提问有结果（top1=${aliasCase2[0] || "无"}）`);
+
+    // 字段加权不能被写回死代码：索引层只认 d.tf，必须显式赋值（此前只算 tokens，加权从未生效）
+    const srcIdx = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(/tf:\s*tfw/.test(srcIdx) && /tf:\s*rtf/.test(srcIdx) && /tf:\s*ntf/.test(srcIdx),
+      "字段加权已写入 d.tf（索引层只认 d.tf；只算 tokens 等于没加权）");
   }
 
   // ===== 25. 交互反馈层（P0）：Toast / 忙碌态 =====

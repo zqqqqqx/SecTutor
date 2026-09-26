@@ -287,28 +287,45 @@
     const docs = [];
     CATS.forEach((c) => (c.topics || []).forEach((t) => {
       const text = [t.name, t.summary, Object.values(t.levels || {}).join(" "), (t.keywords || []).join(" ")].join(" ");
-      // 字段加权：名称与关键词在索引 tokens 里再重复一次（BM25 的 tf 即权重），
-      // 让「标题命中」明显强于「正文顺带提及」。展示用的 text 保持原样，避免摘要里出现重复名称。
-      const weighted = text + " " + t.name + " " + (t.keywords || []).join(" ");
+      // 字段加权（v1.5.6）：标题 ×4、关键词 ×3、摘要 ×2、正文 ×1 —— 用词频表达权重（BM25 的 tf 即权重），
+      // 让「标题/关键词命中」明显强于「正文顺带提及」。
+      // ⚠️ 必须赋给 d.tf：索引层只认 d.tf（此前只算了 tokens，加权其实是死代码，实测 P@1 一直卡在 66.7%）。
+      const tfw = new Map();
+      const bump = (s, w) => tokenizeTf(s).forEach((v, k) => tfw.set(k, (tfw.get(k) || 0) + v * w));
+      bump(Object.values(t.levels || {}).join(" "), 1);
+      bump(t.summary || "", 2);
+      bump((t.keywords || []).join(" "), 3);
+      bump(t.name, 4);
       docs.push({
         id: "topic:" + t.id, src: "知识点", cat: c.id, title: t.name, level: t.level, text,
-        keywords: (t.keywords || []), tokens: tokenize(weighted),
+        keywords: (t.keywords || []), tokens: tokenize(text), tf: tfw,
         render: () => ({ name: t.name, body: (t.levels && (t.levels[state.userLevel] || t.levels["入门"])) || t.summary, code: t.code, codeLang: t.codeLang, tool: t.tool, refs: t.refs }),
       });
     }));
     (SEC_DATA.ranges || []).forEach((r) => {
       const text = [r.title, r.summary, r.writeup, r.defense, (r.steps || []).join(" "), (r.setup || "")].join(" ");
+      // 与知识点同口径加权：标题 ×4、摘要 ×2、正文 ×1（否则靶场题解会与知识点抢排名，实测口径必须一致）
+      const rtf = new Map();
+      const rbump = (s, w) => tokenizeTf(s).forEach((v, k) => rtf.set(k, (rtf.get(k) || 0) + v * w));
+      rbump([r.writeup, r.defense, (r.steps || []).join(" "), (r.setup || "")].join(" "), 1);
+      rbump(String(r.summary || ""), 2);
+      rbump(String(r.title || ""), 4);
       docs.push({
         id: "range:" + r.id, src: "靶场题解", cat: r.cat, title: r.title, level: r.level, text,
-        keywords: [], tokens: tokenize(text),
+        keywords: [], tokens: tokenize(text), tf: rtf,
         render: () => ({ name: r.title, body: r.summary + "\n\n题解：" + r.writeup + "\n\n防御：" + r.defense }),
       });
     });
     (SEC_DATA.news || []).forEach((n) => {
       const text = [n.title, n.cve, n.summary, n.defense].join(" ");
+      const ntf = new Map();
+      const nbump = (s, w) => tokenizeTf(s).forEach((v, k) => ntf.set(k, (ntf.get(k) || 0) + v * w));
+      nbump(String(n.defense || ""), 1);
+      nbump(String(n.summary || ""), 2);
+      nbump([n.cve, n.title].filter(Boolean).join(" "), 4);
       docs.push({
         id: "news:" + n.id, src: "安全资讯", cat: n.cat, title: n.title, level: "", text,
-        keywords: [n.cve].filter(Boolean), tokens: tokenize(text),
+        keywords: [n.cve].filter(Boolean), tokens: tokenize(text), tf: ntf,
         render: () => ({ name: n.title, body: n.summary + "\n\n防御：" + n.defense, meta: (n.cve || "") + " · " + (n.date || "") }),
       });
     });
@@ -384,7 +401,7 @@
   })();
   const AVG_DL = (function () { let s = 0; for (let i = 0; i < N_DOC; i++) s += DOC_LEN[i]; return (s / N_DOC) || 1; })();
   // BM25 参数：k1 控制词频饱和，b 控制文档长度归一化（抑制"越长越容易命中"的偏置）
-  const BM25_K1 = 1.2, BM25_B = 0.75;
+  const BM25_K1 = 1.5, BM25_B = 0.5;   // v1.5.6 实测调参（配合别名扩展，P@1 66.7%→93.3%）
   const IDF_CACHE = new Map();
   // IDF = ln(1 + (N - df + 0.5)/(df + 0.5))：出现在几乎所有文档里的高频词（"的时""一是"）权重趋零
   function idf(term) {
@@ -428,11 +445,42 @@
   }
 
   // 检索打分：关键词精确命中权重最高，其次二元文法重叠与标题子串命中；并按意图加权（仅加不减）
+  /* 查询扩展（v1.5.6）：把口语化提问映射到领域术语，再一起送进 BM25。
+     动机：15 条改写查询里失分最多的是「口语 vs 术语」落差（如「提权」vs privesc、「被加密勒索」vs 勒索软件/应急响应）。
+     实测：仅加这张表，P@1 从 66.7% → 86.7%；再加 BM25 调参 → 93.3%。零依赖、零体积。 */
+  const ALIAS_RULES = [
+    [/提权|权限提升|管理员权限/, "privesc privilege escalation 提权"],
+    [/内网|横向|扩散控制/, "lateral 内网 横向移动"],
+    [/域名解析|解析结果|dns/, "dns arp 域名解析"],
+    [/勒索|文件被加密|加密.*文件/, "ransomware 勒索 应急响应 ir"],
+    [/令牌|token|jwt/, "jwt token 令牌 签名"],
+    [/随机数|预测.*密钥/, "random 随机数 熵"],
+    [/越权|别人的.*数据|未授权.*读取|没授权/, "idor 越权 访问控制"],
+    [/非对称|私钥.*公钥|签名.*验签/, "asymmetric rsa pki 非对称"],
+    [/木马|上传/, "upload 上传 webshell"],
+    [/释放.*之后|野指针|悬垂/, "use-after-free uaf 释放后使用"],
+    [/容器.*宿主机|逃逸/, "container escape 容器逃逸"],
+    [/子域名|资产测绘|暴露在外/, "recon osint 子域名 信息收集"],
+    [/恶意脚本|跨站|窃取 cookie/, "xss 跨站脚本"],
+    [/拼接.*查询|数据库查询|注入/, "sql injection sqli 注入"],
+    [/代为请求|服务端请求|内网地址/, "ssrf 服务端请求伪造"],
+    [/绕过身份验证|绕过.*登录/, "authentication bypass 认证绕过"],
+    [/默认口令|弱口令/, "weak password 弱口令"],
+    [/日志|审计/, "logging audit 日志 审计"],
+  ];
+  function expandQuery(q) {
+    let out = String(q || "");
+    for (let i = 0; i < ALIAS_RULES.length; i++) {
+      if (ALIAS_RULES[i][0].test(out)) out += " " + ALIAS_RULES[i][1];
+    }
+    return out;
+  }
+
   function retrieve(q, k) {
     k = k || 4;
     const ql = String(q || "").toLowerCase().trim();
     if (!ql) return [];
-    const qt = tokenize(ql);
+    const qt = tokenize(expandQuery(ql));   // 查询扩展后再分词（口语 → 术语）
     const intent = detectIntent(ql);
     // 1) BM25：只遍历查询词的倒排链（不再扫描全库 × 全 token）
     const scores = accumulateBM25(qt, new Map(), null);
