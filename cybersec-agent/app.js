@@ -485,6 +485,8 @@
     [/API 被刷|接口被刷|限流/, "api 限流 接口防护"],
     [/加了 ?WAF|绕过 ?WAF/, "waf 绕过 检测规避"],
     [/等保|合规要求|监管要求/, "compliance 合规 等保"],
+    [/取证|被入侵|入侵之后|事后分析/, "forensics 取证 时间线 应急"],
+    [/外包|第三方|供应商风险/, "thirdparty vendor 第三方 外包 供应商"],
   ];
   function expandQuery(q) {
     let out = String(q || "");

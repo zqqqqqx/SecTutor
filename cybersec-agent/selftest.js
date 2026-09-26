@@ -712,6 +712,11 @@ $("#backLab").click();
       ["怎么防止 API 被刷", ["api-sec", "web-api-sec"]],
       ["JWT 和 Session 有什么区别", ["jwt", "auth"]],
       ["为什么加了 WAF 还是被打穿", ["fw-bypass"]],
+      // 本批补的内容缺口对应的问法（补完立刻纳入门槛，锁住"缺口确实被补上"）
+      ["怎么判断一个文件是不是恶意的", ["blue-sample"]],
+      ["等保要求做哪些事", ["ds-compliance"]],
+      ["主机被入侵后怎么取证", ["soc-forensics", "blue-forensics"]],   // 两个领域都有取证知识点，都算对
+      ["把数据给外包公司有什么风险", ["ds-thirdparty", "sc-vendor"]],  // 供应链的供应商风险也算对
     ];
     let s1 = 0, s4 = 0;
     SPOKEN.forEach(([q, want]) => {
