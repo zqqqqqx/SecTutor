@@ -3046,8 +3046,10 @@ $("#backLab").click();
     const tagPct = tagged.length / qs.length * 100;
     const covPct = covered.size / topicIds.size * 100;
     console.log(`  出题覆盖度：标注 ${tagPct.toFixed(1)}%（${tagged.length}/${qs.length}）｜知识点覆盖 ${covPct.toFixed(1)}%（${covered.size}/${topicIds.size}）`);
-    assert(tagPct >= 85, `出题标注率 ${tagPct.toFixed(1)}%（要求 ≥85%，新增题目应带上 topic）`);
-    assert(covPct >= 85, `知识点出题覆盖 ${covPct.toFixed(1)}%（要求 ≥85%）`);
+    // 标注率同理：新题必须带 topic，否则覆盖率会慢慢退化
+    assert(tagPct >= 90, `出题标注率 ${tagPct.toFixed(1)}%（要求 ≥90%，新增题目应带上 topic）`);
+    // v1.5.9 补了 25 道题把覆盖做到 100% → 门槛随之上调到 98%（只许上调，防止以后掉回去）
+    assert(covPct >= 98, `知识点出题覆盖 ${covPct.toFixed(1)}%（要求 ≥98%）`);
     assert(invalid.length === 0, `topic 必须指向存在的知识点（当前 ${invalid.length} 条无效）`);
     // 复习取题应优先用本知识点的题（而不是领域第一道）
     const src2 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
