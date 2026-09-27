@@ -2533,8 +2533,9 @@
               const ok = await _confirmToolCall(tool, args);
               if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
             }
+            const _t0 = Date.now();
             const res = await callTool(tc.function.name, args);
-            toolTrace.push({ name: tc.function.name, res: res });   // v1.6.0：轨迹用于人看（模型仍拿原文）
+            toolTrace.push({ name: tc.function.name, res: res, ms: Date.now() - _t0 });   // v1.6.0：轨迹含耗时
             executed++;
             if (tc.function.name === "generate_plan") { const b = getBlackboard(); b.plan = { at: Date.now(), category: args.category || "all" }; saveBlackboard(b); }
             messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) });
@@ -2570,7 +2571,16 @@
         state.history.push({ role: "assistant", content: ans }); trimHistory();
         let html2 = (reply.content || "").replace(/</g, "&lt;").replace(/\n/g, "<br>") + roleBadgeHtml;
         if (docs.length && bubble) bubble.innerHTML += srcTitleHtml(docs);
-        if (bubble) bubble.innerHTML += roleBadgeHtml; else addMsg("bot", html2);
+        // v1.6.1：本轮**没调工具**时也按"是否命中知识库"给一个克制动作（此前一个都不给）
+        const fbActions = buildFallbackActions({ hasKnowledge: docs.length > 0 });
+        const fbHtml = renderAgentActions(fbActions);
+        if (bubble) {
+          bubble.innerHTML += roleBadgeHtml + fbHtml;
+          bindAgentActions(bubble, fbActions, (h) => addMsg("bot", h));
+        } else {
+          const el2 = addMsg("bot", html2 + fbHtml);
+          bindAgentActions(el2 || doc, fbActions, (h) => addMsg("bot", h));
+        }
       }
       saveChat();
     } catch (e) {
@@ -2759,6 +2769,22 @@
     teardown_lab_env: "释放靶场",
   };
 
+  /** 解析「键: 值」型结果（如学习进度统计），用于渲染成小格 —— 此前这类结果只能掉进原始文本块 */
+  function parseToolStats(text) {
+    const rows = [];
+    String(text || "").split("\n").forEach((line) => {
+      const m = line.match(/^\s*([^\s:：]{2,14})\s*[:：]\s*([^\n]{1,48})$/);
+      if (m) rows.push({ k: m[1].trim(), v: m[2].trim() });
+    });
+    return rows.slice(0, 8);
+  }
+
+  /** 无工具调用时的兜底动作：只按"是否命中知识库"给一个，保持克制，不硬凑 */
+  function buildFallbackActions(opts) {
+    if (!opts || !opts.hasKnowledge) return [];
+    return [{ label: "🎯 就这块做几道自测", tool: "generate_quiz", args: {}, why: "这个问题命中了知识库，趁热检验一下" }];
+  }
+
   /** 取工具结果的一行摘要（用于轨迹里不展开时显示） */
   /**
    * Agent 主动化（v1.6.0）
@@ -2859,17 +2885,27 @@
     if (!trace || !trace.length) return "";
     const rows = trace.map((t, i) => {
       const items = parseToolItems(t.res);
-      const body = items.length
-        ? '<div class="tt-list">' + items.map((it) =>
+      const stats = items.length ? [] : parseToolStats(t.res);   // 条目型优先，其次键值型，最后原始文本
+      let body;
+      if (items.length) {
+        body = '<div class="tt-list">' + items.map((it) =>
             '<div class="tt-li">' + (it.n ? '<span class="tt-n">' + it.n + "</span>" : "") +
             '<span class="tt-t">' + escapeHtml(it.title) + "</span>" +
-            (it.why ? '<span class="tt-w">' + escapeHtml(it.why) + "</span>" : "") + "</div>").join("") + "</div>"
-        : '<pre class="tt-raw">' + escapeHtml(String(t.res || "").slice(0, 600)) + "</pre>";
+            (it.why ? '<span class="tt-w">' + escapeHtml(it.why) + "</span>" : "") + "</div>").join("") + "</div>";
+      } else if (stats.length >= 2) {
+        body = '<div class="tt-stats">' + stats.map((st) =>
+            '<div class="tt-stat"><span class="tt-k">' + escapeHtml(st.k) + "</span>" +
+            '<span class="tt-v">' + escapeHtml(st.v) + "</span></div>").join("") + "</div>";
+      } else {
+        body = '<pre class="tt-raw">' + escapeHtml(String(t.res || "").slice(0, 600)) + "</pre>";
+      }
+      const ms = (typeof t.ms === "number" && t.ms >= 0)
+        ? '<span class="tt-ms">' + (t.ms < 1000 ? t.ms + "ms" : (t.ms / 1000).toFixed(1) + "s") + "</span>" : "";
       return '<div class="tt-item" data-i="' + i + '">' +
         '<div class="tt-head"><span class="tt-dot"></span>' +
         '<span class="tt-name">' + escapeHtml(t.name) + "</span>" +
         '<span class="tt-sum">' + escapeHtml(toolTraceSummary(t.name, t.res)) + "</span>" +
-        '<span class="tt-more">展开</span></div>' +
+        ms + '<span class="tt-more">展开</span></div>' +
         '<div class="tt-body hidden">' + body + "</div></div>";
     }).join("");
     const label = TOOL_TRACE_SUMMARY[trace[0].name] ? "" : "";
@@ -4454,6 +4490,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     window.__ui = {
       renderToolTrace: renderToolTrace,
       buildProactiveActions: buildProactiveActions,
+      parseToolStats: parseToolStats,
+      buildFallbackActions: buildFallbackActions,
       renderAgentActions: renderAgentActions,
       toolTraceSummary: toolTraceSummary,
       openOnboarding: openOnboarding,

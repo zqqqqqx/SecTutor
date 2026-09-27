@@ -3251,6 +3251,41 @@ $("#backLab").click();
     assert(/🔁/.test(ui.renderAgentActions(a1)), "按钮文案带图标，一眼能看懂");
   }
 
+  // ===== 76. AI 化优化：轨迹解析分级 + 耗时 + 无工具兜底（v1.6.1）=====
+  {
+    const ui = window.__ui;
+
+    // ① 键值型结果（如学习进度）应解析成统计格，而不是掉进原始文本块
+    const kv = "已掌握: 42\n总知识点: 253\n待复习: 3\n本周活动: 18";
+    const stats = ui.parseToolStats(kv);
+    assert(stats.length >= 3, `键值型结果被解析（${stats.length} 行）`);
+    assert(stats[0].k === "已掌握" && stats[0].v === "42", "键值对解析正确（键/值分离）");
+    const kvHtml = ui.renderToolTrace([{ name: "read_progress", res: kv }]);
+    assert(kvHtml.indexOf("tt-stats") >= 0 && kvHtml.indexOf("tt-stat") >= 0, "键值型结果渲染成统计格");
+    assert(kvHtml.indexOf("tt-raw") < 0, "能解析成统计格时不走原始文本兜底");
+    // 中文冒号也要认（工具输出里两种都可能出现）
+    assert(ui.parseToolStats("已掌握：42\n待复习：3").length === 2, "中文冒号同样能解析");
+    // 转义
+    const kvX = ui.renderToolTrace([{ name: "read_progress", res: "x: <img src=x>\ny: b" }]);
+    assert(kvX.indexOf("&lt;img") >= 0 && kvX.indexOf("<img") < 0, "统计格内容做过 HTML 转义");
+
+    // ② 耗时：有时显示、无时不显示
+    const withMs = ui.renderToolTrace([{ name: "search_knowledge", res: "ok", ms: 42 }]);
+    assert(withMs.indexOf("42ms") >= 0, "耗时以 ms 显示");
+    const withSec = ui.renderToolTrace([{ name: "search_knowledge", res: "ok", ms: 1500 }]);
+    assert(withSec.indexOf("1.5s") >= 0, "超过 1 秒换算成秒显示");
+    const noMs = ui.renderToolTrace([{ name: "search_knowledge", res: "ok" }]);
+    assert(noMs.indexOf("tt-ms") < 0, "没有耗时数据时不显示耗时占位");
+
+    // ③ 无工具调用的兜底动作：只在命中知识库时给**一个**，其余不给
+    const fb1 = ui.buildFallbackActions({ hasKnowledge: true });
+    assert(fb1.length === 1 && fb1[0].tool === "generate_quiz", "命中知识库时给一个「就这块做自测」");
+    assert(ui.buildFallbackActions({ hasKnowledge: false }).length === 0, "未命中知识库时不给动作（不硬凑）");
+    assert(ui.buildFallbackActions(null).length === 0, "缺参数时安全返回空数组");
+    const fbRisky = fb1.filter((x) => ["launch_lab_env", "run_scan", "teardown_lab_env"].indexOf(x.tool) >= 0);
+    assert(fbRisky.length === 0, "兜底动作同样不含高风险工具");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
