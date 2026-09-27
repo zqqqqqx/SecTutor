@@ -3210,6 +3210,47 @@ $("#backLab").click();
     assert(ui.renderToolTrace([]) === "" && ui.renderToolTrace(null) === "", "无工具调用时不渲染任何东西");
   }
 
+  // ===== 75. Agent 主动动作（v1.6.0）=====
+  {
+    // 主动化不是"嘴上建议"，而是回答下方给**可点的下一步**，并且点一下真的执行（走同一工具链路）。
+    // 这条验：动作推导是否按本轮调用的工具正确生成、渲染是否可点、空轨迹是否不产生空壳。
+    const ui = window.__ui;
+    assert(typeof ui.buildProactiveActions === "function", "buildProactiveActions 已暴露给自测");
+
+    // ① 看了错题 → 应推「把错的再练一遍」
+    const a1 = ui.buildProactiveActions([{ name: "read_mistakes", res: "错题本共 4 条…" }]);
+    assert(a1.length >= 1 && a1.some((x) => x.tool === "quiz_from_mistakes"),
+      `读了错题后给出「错题重练」动作（实际：${a1.map((x) => x.tool).join(",")}）`);
+
+    // ② 给了学习建议 → 应能一键排计划；且涉及检索时应能出题自测
+    const a2 = ui.buildProactiveActions([{ name: "suggest_next", res: "建议下一步：" }]);
+    assert(a2.some((x) => x.tool === "generate_plan"), "给了建议后能一键生成计划");
+    const a3 = ui.buildProactiveActions([{ name: "search_knowledge", res: "…" }]);
+    assert(a3.some((x) => x.tool === "generate_quiz"), "知识库检索后能就这块出题自测");
+
+    // ③ 动作必须都是**低风险**工具（主动推荐不能诱导用户点出高风险操作）
+    const all = ui.buildProactiveActions([
+      { name: "read_mistakes", res: "" }, { name: "suggest_next", res: "" },
+      { name: "search_knowledge", res: "" }, { name: "run_scan", res: "" },
+    ]);
+    const risky = all.filter((x) => ["launch_lab_env", "run_scan", "teardown_lab_env"].indexOf(x.tool) >= 0);
+    assert(risky.length === 0, `主动动作不含高风险工具（含：${risky.map((x) => x.tool).join(",") || "无"}）`);
+
+    // ④ 数量克制 + 去重 + 空轨迹不产生动作
+    assert(all.length <= 3, `动作数量克制（实际 ${all.length} 个，上限 3）`);
+    const tools = all.map((x) => x.tool);
+    assert(new Set(tools).size === tools.length, "同一工具不会重复推荐");
+    assert(ui.buildProactiveActions([]).length === 0, "未调用任何工具时不产生动作（不硬凑）");
+    assert(ui.buildProactiveActions(null).length === 0, "空轨迹（null）安全返回空数组");
+    assert(ui.renderAgentActions([]) === "", "无动作时不渲染空壳节点");
+
+    // ⑤ 渲染出的是**可点按钮**（不是纯文字），且带 why 提示
+    const html = ui.renderAgentActions(a1);
+    assert(html.indexOf("agent-actions") >= 0 && html.indexOf("<button") >= 0, "动作渲染为可点按钮");
+    assert(html.indexOf("quiz_from_mistakes") < 0 || html.indexOf("data-aa=") >= 0, "按钮带 data-aa 索引（供绑定执行）");
+    assert(/🔁/.test(ui.renderAgentActions(a1)), "按钮文案带图标，一眼能看懂");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

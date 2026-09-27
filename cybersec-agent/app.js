@@ -2554,12 +2554,16 @@
         html += roleBadgeHtml;
         // v1.6.0：把工具调用轨迹放在回答**上方** —— 先给依据，再给结论
         const traceHtml = renderToolTrace(toolTrace);
+        const actions = buildProactiveActions(toolTrace, { category: (docs[0] && docs[0].cat) || null });
+        const actHtml = renderAgentActions(actions);
         if (bubble) {
-          bubble.innerHTML = traceHtml + html;
+          bubble.innerHTML = traceHtml + html + actHtml;
           bindToolTrace(bubble);
+          bindAgentActions(bubble, actions, (h) => addMsg("bot", h));
         } else {
-          const el = addMsg("bot", traceHtml + html);
+          const el = addMsg("bot", traceHtml + html + actHtml);
           bindToolTrace(el || doc);
+          bindAgentActions(el || doc, actions, (h) => addMsg("bot", h));
         }
       } else {
         const ans = reply.content || "（模型返回为空）";
@@ -2756,6 +2760,76 @@
   };
 
   /** 取工具结果的一行摘要（用于轨迹里不展开时显示） */
+  /**
+   * Agent 主动化（v1.6.0）
+   * 背景：答完只会给"你可以……"这类纯文字建议，用户还得自己找入口点。
+   * 现在根据**本轮实际调用了哪些工具**，生成 1~3 个可点的下一步动作：
+   * 点击即以同样的工具调用链路执行，结果沿用工具轨迹卡片呈现（先依据后结论）。
+   * 设计原则：只推荐"由已有信息自然导出的动作"，不硬凑；动作一律是低风险只读/本地工具。
+   */
+  function buildProactiveActions(trace, opts) {
+    const names = (trace || []).map((t) => t.name);
+    const has = (n) => names.indexOf(n) >= 0;
+    const acts = [];
+    const push = (label, tool, args, why) => {
+      if (acts.some((x) => x.tool === tool)) return;      // 同一工具只推一次
+      acts.push({ label: label, tool: tool, args: args || {}, why: why || "" });
+    };
+
+    // 涉及错题 → 直接把错的再练一遍（最高价值，且与今天做的错题本闭环）
+    if (has("read_mistakes") || has("quiz_from_mistakes") || has("read_progress")) {
+      push("🔁 把错的再练一遍", "quiz_from_mistakes", {}, "基于错题本里错得最多的知识点");
+    }
+    // 涉及建议/学情 → 排个可执行计划
+    if (has("suggest_next") || has("read_progress") || has("read_metrics")) {
+      push("🗺️ 生成学习计划", "generate_plan", { category: (opts && opts.category) || "all", hours_per_week: 5, weeks: 2 }, "把建议落成排期");
+    }
+    // 涉及检索/相关 → 就这块做几道题
+    if (has("search_knowledge") || has("related_topics") || has("prereq_check")) {
+      push("🎯 就这块做几道自测", "generate_quiz", {}, "趁热检验是否真学会");
+    }
+    // 涉及靶场 → 顺手看报告
+    if (has("run_scan") || has("launch_lab_env") || has("read_scan_reports")) {
+      push("📄 查看扫描报告", "read_scan_reports", {}, "回顾本次自检结论");
+    }
+    // 什么都没命中，但确实用了工具 → 给出"看整体进度"这一个通用入口
+    if (!acts.length && names.length) {
+      push("📊 看我的学习进度", "read_progress", {}, "了解整体掌握情况");
+    }
+    return acts.slice(0, 3);
+  }
+
+  /** 渲染主动动作条（人点的那部分） */
+  function renderAgentActions(actions) {
+    if (!actions || !actions.length) return "";
+    return '<div class="agent-actions"><span class="aa-label">下一步：</span>' +
+      actions.map((a, i) =>
+        '<button type="button" class="btn small ghost aa-btn" data-aa="' + i + '" title="' + escapeAttr(a.why || "") + '">' +
+        escapeHtml(a.label) + "</button>").join("") + "</div>";
+  }
+
+  /**
+   * 绑定动作条：点击后走与 Agent 相同的工具链路执行，并把结果以"轨迹 + 结论"形式追加为一条新消息。
+   * 这样主动动作不是装饰按钮，而是真的能干活，且执行过程同样看得见。
+   */
+  function bindAgentActions(root, actions, pushMsg) {
+    if (!root || !actions || !actions.length) return;
+    root.querySelectorAll("[data-aa]").forEach((btn) => {
+      const a = actions[parseInt(btn.getAttribute("data-aa"), 10)];
+      if (!a) return;
+      btn.addEventListener("click", async () => {
+        const old = btn.textContent;
+        btn.disabled = true; btn.textContent = "执行中…";
+        let res = "";
+        try { res = await callTool(a.tool, a.args || {}); }
+        catch (e) { res = "工具执行错误：" + e.message; }
+        btn.disabled = false; btn.textContent = old;
+        const traceHtml = renderToolTrace([{ name: a.tool, res: res }]);
+        pushMsg(traceHtml + '<div class="aa-result">已执行 <b>' + escapeHtml(a.tool) + "</b>，结果见上方。</div>");
+      });
+    });
+  }
+
   function toolTraceSummary(name, res) {
     const text = String(res == null ? "" : res).replace(/\s+/g, " ").trim();
     if (!text) return "（无输出）";
@@ -4379,6 +4453,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   if (typeof window !== "undefined") {
     window.__ui = {
       renderToolTrace: renderToolTrace,
+      buildProactiveActions: buildProactiveActions,
+      renderAgentActions: renderAgentActions,
       toolTraceSummary: toolTraceSummary,
       openOnboarding: openOnboarding,
       openHotkeyHelp: openHotkeyHelp,
