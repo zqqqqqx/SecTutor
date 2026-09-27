@@ -2515,6 +2515,7 @@
         if (bubble) bubble.innerHTML = ""; streamed = "";
         let rounds = 0;
         const seenCalls = new Set();            // 19.3 防循环：相同 (tool,args) 只执行一次
+        const toolTrace = [];                   // v1.6.0：本次回答调用过的工具与结果（仅用于渲染给人看）
         while (reply.toolCalls && reply.toolCalls.length && rounds < 4) {
           rounds++; messages.push(reply.message);
           let executed = 0;
@@ -2533,6 +2534,7 @@
               if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
             }
             const res = await callTool(tc.function.name, args);
+            toolTrace.push({ name: tc.function.name, res: res });   // v1.6.0：轨迹用于人看（模型仍拿原文）
             executed++;
             if (tc.function.name === "generate_plan") { const b = getBlackboard(); b.plan = { at: Date.now(), category: args.category || "all" }; saveBlackboard(b); }
             messages.push({ role: "tool", tool_call_id: tc.id, content: String(res) });
@@ -2550,7 +2552,15 @@
         let html = ans.replace(/</g, "&lt;").replace(/\n/g, "<br>");
         if (docs.length) html += srcTitleHtml(docs);
         html += roleBadgeHtml;
-        if (bubble) bubble.innerHTML = html; else addMsg("bot", html);
+        // v1.6.0：把工具调用轨迹放在回答**上方** —— 先给依据，再给结论
+        const traceHtml = renderToolTrace(toolTrace);
+        if (bubble) {
+          bubble.innerHTML = traceHtml + html;
+          bindToolTrace(bubble);
+        } else {
+          const el = addMsg("bot", traceHtml + html);
+          bindToolTrace(el || doc);
+        }
       } else {
         const ans = reply.content || "（模型返回为空）";
         state.history.push({ role: "assistant", content: ans }); trimHistory();
@@ -2721,6 +2731,95 @@
   // 从根上消除 TDZ，内部也不再需要 get x() 散点防御。
   // 已核实：脚本求值期间无任何代码读取 window.__agent（setAgentEnabled 仅由运行期交互触发）。
   let _agentApi = null;
+  /**
+   * 工具调用轨迹（v1.6.0）
+   * 背景：此前工具结果只塞进 messages 给模型，气泡还会被清空 —— 用户**完全看不到 Agent 调过什么工具**，
+   * 只拿到一句最终回答。回答里说的"根据你的错题本……"没有任何可见依据，信任成本很高。
+   * 现在把轨迹渲染在回答上方：一行一个工具 + 一行摘要，点开可看完整结果。
+   * 注意：**渲染只给人看，喂给模型的内容不变**（仍是原文），保证回答依然有据可依。
+   */
+  const TOOL_TRACE_SUMMARY = {
+    read_mistakes: "错题本",
+    read_progress: "学习进度",
+    read_metrics: "运行指标",
+    suggest_next: "下一步建议",
+    related_topics: "相关知识点",
+    search_knowledge: "知识库检索",
+    prereq_check: "前置依赖",
+    generate_quiz: "出题",
+    quiz_from_mistakes: "错题重练",
+    generate_plan: "学习计划",
+    read_scan_reports: "扫描报告",
+    launch_lab_env: "申请靶场",
+    run_scan: "靶机自检",
+    teardown_lab_env: "释放靶场",
+  };
+
+  /** 取工具结果的一行摘要（用于轨迹里不展开时显示） */
+  function toolTraceSummary(name, res) {
+    const text = String(res == null ? "" : res).replace(/\s+/g, " ").trim();
+    if (!text) return "（无输出）";
+    if (text.indexOf("工具执行错误") === 0) return text.slice(0, 60);
+    // 常见形态「错题本共 4 条（…）。按知识点排行：[1] 名 —— 理由」→ 摘出总数与第一条
+    const total = text.match(/共\s*(\d+)\s*条/) || text.match(/(\d+)\s*\/\s*(\d+)/);
+    const first = text.match(/\[1\]\s*([^—\-]{2,24})/);
+    if (total && first) return total[0].replace(/\s+/g, "") + "，首条：" + first[1].trim().slice(0, 18);
+    if (total) return total[0].replace(/\s+/g, "");
+    return text.slice(0, 60) + (text.length > 60 ? "…" : "");
+  }
+
+  /** 把学习类工具的结果解析成条目（形如 `[1] 名称 —— 理由`），解析不到就返回空数组 */
+  function parseToolItems(text) {
+    const items = [];
+    String(text || "").split("\n").forEach((line) => {
+      const m = line.match(/^\s*\[(\d+)\]\s*(.+?)\s*(?:—+|-{2,})\s*(.+)$/);
+      if (m) { items.push({ n: parseInt(m[1], 10), title: m[2].trim(), why: m[3].trim() }); return; }
+      const m2 = line.match(/^\s*[·\-]\s*(.+)$/);
+      if (m2) items.push({ n: 0, title: m2[1].trim(), why: "" });
+    });
+    return items;
+  }
+
+  /** 渲染工具调用轨迹（人看的部分）；text 为原始工具输出，只用于摘要与展开 */
+  function renderToolTrace(trace) {
+    if (!trace || !trace.length) return "";
+    const rows = trace.map((t, i) => {
+      const items = parseToolItems(t.res);
+      const body = items.length
+        ? '<div class="tt-list">' + items.map((it) =>
+            '<div class="tt-li">' + (it.n ? '<span class="tt-n">' + it.n + "</span>" : "") +
+            '<span class="tt-t">' + escapeHtml(it.title) + "</span>" +
+            (it.why ? '<span class="tt-w">' + escapeHtml(it.why) + "</span>" : "") + "</div>").join("") + "</div>"
+        : '<pre class="tt-raw">' + escapeHtml(String(t.res || "").slice(0, 600)) + "</pre>";
+      return '<div class="tt-item" data-i="' + i + '">' +
+        '<div class="tt-head"><span class="tt-dot"></span>' +
+        '<span class="tt-name">' + escapeHtml(t.name) + "</span>" +
+        '<span class="tt-sum">' + escapeHtml(toolTraceSummary(t.name, t.res)) + "</span>" +
+        '<span class="tt-more">展开</span></div>' +
+        '<div class="tt-body hidden">' + body + "</div></div>";
+    }).join("");
+    const label = TOOL_TRACE_SUMMARY[trace[0].name] ? "" : "";
+    return '<div class="tool-trace">' +
+      '<div class="tt-title">🔧 Agent 调用了 ' + trace.length + " 个工具" + label + "</div>" +
+      rows + "</div>";
+  }
+
+  /** 绑定轨迹的展开/收起（渲染后调用） */
+  function bindToolTrace(root) {
+    if (!root) return;
+    root.querySelectorAll(".tt-item").forEach((it) => {
+      const head = it.querySelector(".tt-head");
+      const body = it.querySelector(".tt-body");
+      if (!head || !body) return;
+      makeClickable(head, () => {
+        const open = !body.classList.contains("hidden");
+        body.classList.toggle("hidden", open);
+        const more = head.querySelector(".tt-more");
+        if (more) more.textContent = open ? "展开" : "收起";
+      }, "工具结果详情（" + (it.querySelector(".tt-name") || {}).textContent + "）");
+    });
+  }
+
   function buildAgentApi() {
     if (_agentApi) return _agentApi;
     _agentApi = {
@@ -4279,6 +4378,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   // 交互反馈层自测钩子
   if (typeof window !== "undefined") {
     window.__ui = {
+      renderToolTrace: renderToolTrace,
+      toolTraceSummary: toolTraceSummary,
       openOnboarding: openOnboarding,
       openHotkeyHelp: openHotkeyHelp,
       toast: toast,

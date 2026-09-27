@@ -3181,6 +3181,35 @@ $("#backLab").click();
     st3.mastery = savedMastery;
   }
 
+  // ===== 74. 工具调用轨迹（v1.6.0）=====
+  {
+    // 背景：此前工具结果只塞进 messages 给模型，气泡还会被清空 —— 用户**完全看不到 Agent 调过什么工具**。
+    // 这条验的是"轨迹能被正确渲染成结构化卡片"，而不是只断言函数存在。
+    const ui = window.__ui;
+    assert(typeof ui.renderToolTrace === "function", "renderToolTrace 已暴露给自测");
+
+    const sample =
+      "错题本共 4 条（保留最近 200 条）。\n按知识点排行：\n" +
+      "[1] SQL 注入 —— 错题本里错了 3 次\n[2] XSS 跨站脚本 —— 错题本里错了 1 次\n最近答错：\n· 测试题干（SQL 注入）";
+    const html = ui.renderToolTrace([{ name: "read_mistakes", res: sample }]);
+    assert(html.indexOf("tool-trace") >= 0, "轨迹外层结构已渲染");
+    assert(html.indexOf("read_mistakes") >= 0, "工具名出现在轨迹里");
+    assert(html.indexOf("tt-item") >= 0 && html.indexOf("tt-sum") >= 0, "每条工具都有摘要行");
+    assert(/SQL 注入/.test(html) && /错题本里错了 3 次/.test(html), "结果被解析成「条目 + 理由」两个字段");
+    assert(html.indexOf("tt-raw") < 0, "能解析成条目的结果不走原始文本兜底");
+
+    // 解析不出条目时（如编码类工具）应回退到原始文本，且必须转义
+    const html2 = ui.renderToolTrace([{ name: "base64_encode", res: "aGVsbG8=" }]);
+    assert(html2.indexOf("tt-raw") >= 0 && html2.indexOf("aGVsbG8=") >= 0, "解析不出条目时回退展示原始结果");
+    const html3 = ui.renderToolTrace([{ name: "search_knowledge", res: "<img src=x onerror=alert(1)>" }]);
+    assert(html3.indexOf("&lt;img") >= 0 && html3.indexOf("<img") < 0, "轨迹内容做过 HTML 转义（防 XSS）");
+
+    // 摘要行也应当可读
+    const sum = ui.toolTraceSummary("read_mistakes", sample);
+    assert(sum.length > 0 && sum.length <= 80, `摘要行长度合理（${sum.length} 字）`);
+    assert(ui.renderToolTrace([]) === "" && ui.renderToolTrace(null) === "", "无工具调用时不渲染任何东西");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

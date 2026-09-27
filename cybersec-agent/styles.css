@@ -379,6 +379,24 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 }
 .tools-side-foot b { color: var(--ink); }
 
+/* 工具调用轨迹（v1.6.0）：把 Agent 调过的工具与结果渲染在回答上方，先给依据再给结论。
+   全部走主题令牌，保证三套主题分支（默认/light/dark）与对比度达标。 */
+.tool-trace { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); padding: 10px 12px; }
+.tt-title { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.tt-item + .tt-item { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 6px; }
+.tt-head { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.tt-head:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+.tt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); flex: none; }
+.tt-name { font-family: ui-monospace, ui-monospace, monospace; color: var(--brand); flex: none; }
+.tt-sum { color: var(--muted); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-more { font-size: 11px; color: var(--muted); flex: none; }
+.tt-body { margin-top: 8px; }
+.tt-li { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 3px 0; }
+.tt-n { flex: none; width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 6px; background: var(--brand-soft); color: var(--brand); font-size: 11px; font-weight: 700; }
+.tt-t { color: var(--ink); }
+.tt-w { color: var(--muted); font-size: 12px; }
+.tt-raw { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 12px; line-height: 1.6; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+
 .cat-list { list-style: none; margin: 0 0 18px; padding: 0; }
 .cat-list li {
   padding: 10px 12px; border-radius: 10px; cursor: pointer; font-size: 14px;
