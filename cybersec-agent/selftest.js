@@ -3133,6 +3133,52 @@ $("#backLab").click();
       "自测与复习两条路径都在答错时写入错题本");
   }
 
+  // ===== 73. suggest_next 端到端（v1.5.9）=====
+  {
+    // 单测只能验函数，这条验的是**整条链**：做错题 → 记录 → Agent 工具读出来 → 给出建议。
+    // 注意：不用 __agent.blackboard()（_agentApi 是惰性缓存，个别字段在缓存构建时可能尚未就绪），
+    // 改用 localStorage 直接播种，再用 callTool 走真实的工具调用路径。
+    const ag3 = window.__agent;
+    const st3 = PF.state;
+    const BB_KEY = "sectutor_blackboard";
+    const savedBB = window.localStorage.getItem(BB_KEY);
+    const savedDates = st3.masteryDates, savedMastery = st3.mastery;
+
+    // 播种错题本：sqli 错 3 次、xss 错 1 次
+    const seed = { diagnosis: null, plan: null, weak_points: [], last_quiz: null, last_role: "auto", mistakes: [] };
+    [["sqli", 3], ["xss", 1]].forEach(([tid, n]) => {
+      for (let i = 0; i < n; i++) {
+        seed.mistakes.push({ t: Date.now(), tid: tid, qid: "q_test_" + tid, cat: "web", level: "初级", q: "测试题干" });
+      }
+    });
+    window.localStorage.setItem(BB_KEY, JSON.stringify(seed));
+
+    // 让 sqli 处于"未掌握"，避免被过滤
+    st3.mastery = new Set(Array.from(st3.mastery).filter((x) => x !== "sqli"));
+    st3.masteryDates = {};
+
+    assert(typeof ag3.callTool === "function", "callTool 已暴露给自测（端到端链路可用）");
+
+    const out2 = await ag3.callTool("read_mistakes", { limit: 3 });
+    assert(typeof out2 === "string" && out2.indexOf("错题本共 4 条") >= 0,
+      `read_mistakes 读出总数（实际输出：${String(out2).slice(0, 40)}…）`);
+    assert(String(out2).indexOf("错 3 次") >= 0, "read_mistakes 给出按知识点的次数排行");
+
+    const out = await ag3.callTool("suggest_next", { limit: 5 });
+    assert(typeof out === "string" && out.indexOf("建议下一步") >= 0, "suggest_next 返回可读的建议列表");
+    assert(String(out).indexOf("错题本里错了 3 次") >= 0, "建议里说明了理由（错题本里错了 3 次）");
+    const lines = String(out).split("\n");
+    const firstItem = lines.find((l) => l.indexOf("[1]") === 0) || "";
+    assert(/sqli|SQL 注入/i.test(firstItem) && firstItem.indexOf("错题本") >= 0,
+      `错得最多的知识点排在第一条（实际：${firstItem.trim().slice(0, 50)}）`);
+    console.log("  suggest_next 首条建议：" + firstItem.trim().slice(0, 60));
+
+    // 现场恢复
+    if (savedBB == null) window.localStorage.removeItem(BB_KEY); else window.localStorage.setItem(BB_KEY, savedBB);
+    st3.masteryDates = savedDates;
+    st3.mastery = savedMastery;
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

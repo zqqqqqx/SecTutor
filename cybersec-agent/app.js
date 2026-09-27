@@ -2725,6 +2725,11 @@
     if (_agentApi) return _agentApi;
     _agentApi = {
       enabled: AGENT_ENABLED,
+      // ↓ v1.5.9：把工具调用与错题记录暴露给自测，用于写"端到端"断言
+      //   （单测只能验函数，端到端才能验"错题 → 建议"这条链真的通）
+      callTool: callTool,
+      recordMistake: recordMistake,
+      blackboard: getBlackboard,
       setEnabled: (v) => { setAgentEnabled(v); },
       gateway: { complete: agentGatewayComplete },
       adapt: buildAdaptationContext,
@@ -5644,6 +5649,54 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       startReview(ids);
       return "已按错题知识点发起重练，共 " + ids.length + " 个知识点：" + ids.map((i) => topicName(i)).join("、") + "。请在弹窗中作答。";
     } },
+    { name: "suggest_next", description: "基于用户真实学情给出「下一步学什么」的排序建议，每条都带理由。综合三类信号：① 错得最多的知识点（错题本）② 已到期该复习的项（按逾期倍数）③ 知识图谱里前置已满足但尚未掌握的知识点。用于回答「我接下来该学什么/复习什么」「给我排个顺序」。", parameters: { type: "object", properties: { domain: { type: "string", description: "可选，限定领域 id（如 web/binary）；不填则跨领域" }, limit: { type: "integer", description: "返回条数，默认 5，最多 8" } }, required: [] }, run: (a) => {
+      const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 5, 1), 8);
+      const dom = (a && a.domain) || null;
+      const inDom = (id) => {
+        if (!dom || dom === "all") return true;
+        const c = (SEC_DATA.categories || []).find((x) => (x.topics || []).some((t) => t.id === id));
+        return !!c && c.id === dom;
+      };
+      const rows = [];
+      const seen = new Set();
+
+      // ① 错题最多（还没掌握）——最该补的坑
+      mistakesByTopic(12).forEach((x) => {
+        if (!x.tid || seen.has(x.tid) || !inDom(x.tid)) return;
+        if (state.mastery.has(x.tid)) return;              // 已掌握的就不必再顶上来
+        seen.add(x.tid);
+        rows.push({ id: x.tid, why: "错题本里错了 " + x.n + " 次", w: 100 + x.n });
+      });
+
+      // ② 已到期复习项（按逾期倍数，与 dueReviews 同一口径）
+      dueReviews().forEach((d) => {
+        if (seen.has(d.id) || !inDom(d.id)) return;
+        seen.add(d.id);
+        rows.push({ id: d.id, why: "已到期复习（逾期 " + d.days.toFixed(1) + " 天 ≈ 该周期 " + d.urgency.toFixed(1) + " 倍）", w: 80 + d.urgency * 5 });
+      });
+
+      // ③ 前置已满足、但自己还没掌握的知识点（入门/初级优先）
+      allTopics().forEach((t) => {
+        if (seen.has(t.id) || !inDom(t.id) || state.mastery.has(t.id)) return;
+        const pre = (KG.prereq && KG.prereq[t.id]) || [];
+        if (!pre.length) return;                            // 没前置信息的先不推，避免噪声
+        if (!pre.every((p) => state.mastery.has(p))) return;// 前置没学完 → 还没到它
+        seen.add(t.id);
+        const base = (t.level === "入门" ? 30 : t.level === "初级" ? 26 : t.level === "中级" ? 18 : 10);
+        rows.push({ id: t.id, why: "前置已满足（" + pre.length + " 项已掌握），可进入", w: base });
+      });
+
+      if (!rows.length) {
+        return "暂时没有可建议的项：错题本为空、没有到期复习、也没有「前置已满足但未掌握」的知识点。可以先做几道自测建立学情。";
+      }
+      rows.sort((x, y) => y.w - x.w);
+      const top = rows.slice(0, limit);
+      const lines = ["建议下一步（按优先级）："];
+      top.forEach((r, i) => lines.push("[" + (i + 1) + "] " + topicName(r.id) + " —— " + r.why));
+      const learned = state.mastery.size, total = allTopics().length;
+      lines.push("（当前已掌握 " + learned + "/" + total + " 个知识点" + (dom ? "，范围限定领域 " + dom : "") + "）");
+      return lines.join("\n");
+    } },
     { name: "generate_plan", description: "依据指定领域/每周时长/周数生成个性化学习计划（写入学习计划面板）。非破坏性、本地执行。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id，如 web/binary/crypto/pentest 或 all" }, hours_per_week: { type: "integer", description: "每周学习时长（小时）" }, weeks: { type: "integer", description: "总周数" } }, required: [] }, run: (a) => {
       const cat = a.category || "all";
       const hours = Math.max(1, parseInt(a.hours_per_week, 10) || 5);
@@ -5722,6 +5775,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     search_knowledge: { level: "low", confirm: false },
     jwt_decode: { level: "low", confirm: false },
     related_topics: { level: "low", confirm: false },
+    suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
     generate_plan: { level: "low", confirm: false },
@@ -5759,7 +5813,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -5769,7 +5823,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {
