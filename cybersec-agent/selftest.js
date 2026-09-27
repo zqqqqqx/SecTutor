@@ -1230,7 +1230,13 @@ $("#backLab").click();
     assert(t1 === t2, "toolSchemasForRole 同角色复用缓存（同一引用）");
     const aAll = ag2.toolSchemasForRole("auto"), eEx = ag2.toolSchemasForRole("examiner");
     assert(Array.isArray(aAll) && aAll.length >= eEx.length, "auto 全量工具 ≥ examiner 白名单数量");
-    assert(eEx.every((s) => ["search_knowledge", "generate_quiz"].indexOf(s.function.name) >= 0), "examiner schema 仅含白名单工具");
+    // 断言"意图"而不是"恰好这两个"：考官角色**不应拿到高风险工具**（最小权限），
+    // 但允许它配低风险的新工具（如错题本）——否则每加一个工具就要改这行，迟早忘记。
+    const HIGH_RISK = ["launch_lab_env", "run_scan", "teardown_lab_env"];
+    assert(eEx.every((s) => HIGH_RISK.indexOf(s.function.name) < 0),
+      "examiner schema 不含高风险工具（角色最小权限）");
+    assert(eEx.every((s) => /^[a-z_]+$/.test(s.function.name)) && eEx.length >= 2,
+      "examiner schema 名合法且非空");
 
     // auto 角色徽标：mock 网关，auto 模式提问 → 回答末尾应带「自动编排 → 由「…」角色应答」
     const lastBotText = () => {
@@ -3082,6 +3088,49 @@ $("#backLab").click();
       "复习取题已改为轮换（不再是固定的第一道题）");
     assert(/const advanced = acc >= 0\.6/.test(src) && /Math\.max\(\(rec\.r \|\| 0\) - 1, 0\)/.test(src),
       "复习阶段推进按正确率（≥60% 推进，否则回退一级）");
+  }
+
+  // ===== 72. Agent 工具完整性（v1.5.9）=====
+  {
+    // 背景：审计时我一度以为"角色白名单里 8 个工具没实现"（实为 grep 截断误判）。
+    // 但这类风险是真的：**声明与实现可能悄悄脱节**。这里扫描源码把它钉死。
+    const srcA = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+
+    // 用函数作用域放循环变量，避免与外层作用域的名字冲突（selftest 是一整个大函数）
+    const collect = (re, str, pick) => {
+      const out = [];
+      let mm;
+      while ((mm = re.exec(str))) out.push(pick(mm));
+      return out;
+    };
+
+    const impl = new Set(collect(/\{\s*name:\s*"([a-z_]+)"\s*,\s*description:/g, srcA, (x) => x[1]));
+    assert(impl.size >= 20, `Agent 工具数合理（当前 ${impl.size} 个）`);
+
+    // ① 角色白名单里的每个工具都必须真实存在
+    const roleTuples = collect(/id:\s*"([a-z]+)",\s*label:\s*"[^"]+"[\s\S]{0,400}?tools:\s*(\[[^\]]*\]|null)/g,
+      srcA, (x) => [x[1], x[2]]);
+    const missing = [];
+    roleTuples.forEach((pair) => {
+      if (pair[1] === "null") return;
+      collect(/"([a-z_]+)"/g, pair[1], (x) => x[1]).forEach((n) => {
+        if (!impl.has(n)) missing.push(pair[0] + ":" + n);
+      });
+    });
+    assert(missing.length === 0, `角色白名单里的工具都已实现（缺失：${missing.join(", ") || "无"}）`);
+
+    // ② 每个工具都要有风险分级（决定是否弹确认框；漏登记会退化成"无风险提示"）
+    const riskBlock = srcA.slice(srcA.indexOf("const TOOL_RISK = {"));
+    const noRisk = Array.from(impl).filter((n) => riskBlock.indexOf(n + ":") < 0);
+    assert(noRisk.length === 0, `每个工具都有风险分级（未登记：${noRisk.join(", ") || "无"}）`);
+
+    // ③ 错题本：记录函数存在、有上限、两个工具在位、两条答题路径都埋点
+    assert(/function recordMistake/.test(srcA) && /MISTAKES_MAX/.test(srcA),
+      "错题记录函数存在且有条数上限（避免 localStorage 无限膨胀）");
+    assert(impl.has("read_mistakes") && impl.has("quiz_from_mistakes"),
+      "错题本两个工具（read_mistakes / quiz_from_mistakes）已实现");
+    assert(/if \(!correct\) recordMistake/.test(srcA) && /else recordMistake/.test(srcA),
+      "自测与复习两条路径都在答错时写入错题本");
   }
 
   console.log("\n==== 自测结果 ====");

@@ -4450,6 +4450,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       const fb = $("#quizFeedback");
       fb.classList.remove("hidden");
       const correct = st.picked === q.answer;
+      if (!correct) recordMistake(q, q.cat);      // v1.5.9：答错写入错题本（供 Agent 复盘与重练）
       fb.className = "quiz-feedback " + (correct ? "ok" : "fail");
       fb.innerHTML = `<b>${correct ? "✅ 回答正确" : "❌ 回答错误"}</b><p>${escapeHtml(q.explain)}</p>
         <button class="btn small" id="quizNext">${st.idx + 1 >= st.items.length ? "查看成绩" : "下一题 →"}</button>`;
@@ -5305,7 +5306,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       }));
       $("#quizSubmit").addEventListener("click", () => {
         if (picked < 0) { $("#quizSubmit").textContent = "请先选择"; return; }
-        answered = true; const correct = picked === q.answer; if (correct) score++;
+        answered = true; const correct = picked === q.answer; if (correct) score++; else recordMistake(q, q.cat);   // v1.5.9：复习答错同样入错题本
         const fb = $("#quizFeedback"); fb.classList.remove("hidden"); fb.className = "quiz-feedback " + (correct ? "ok" : "fail");
         fb.innerHTML = `<b>${correct ? "✅ 正确" : "❌ 错误"}</b><p>${escapeHtml(q.explain)}</p><button class="btn small" id="quizNext">${idx + 1 >= items.length ? "完成" : "下一题 →"}</button>`;
         $("#quizNext").addEventListener("click", () => { idx++; answered = false; picked = -1; render(); });
@@ -5619,6 +5620,30 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       if (!rel.length) return "该知识点暂无强关联条目。";
       return rel.map((d, i) => "[" + (i + 1) + "] " + d.title + "（" + (d.src || "") + "）").join("\n");
     } },
+    { name: "read_mistakes", description: "读取用户的错题本（做错的题会自动记录）：返回错题总数、按知识点聚合的错题排行、以及最近的错题摘要。用于回答「我哪里薄弱」「我总错什么」这类复盘问题。", parameters: { type: "object", properties: { limit: { type: "integer", description: "排行榜条目数，默认 8，最多 20" } }, required: [] }, run: (a) => {
+      const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 8, 1), 20);
+      const bb = getBlackboard();
+      const list = Array.isArray(bb.mistakes) ? bb.mistakes : [];
+      if (!list.length) return "错题本还是空的（做题答错会自动记进来）。建议先做几道自测。";
+      const agg = mistakesByTopic(limit);
+      const lines = ["错题本共 " + list.length + " 条（保留最近 " + MISTAKES_MAX + " 条）。", "按知识点排行："];
+      agg.forEach((x, i) => {
+        const name = x.tid ? topicName(x.tid) : "(未标注知识点 · " + (x.cat || "未知领域") + ")";
+        lines.push("[" + (i + 1) + "] " + name + " —— 错 " + x.n + " 次");
+      });
+      const recent = list.slice(-5).reverse().map((m) => "· " + (m.q || "(无题干)") + "（" + (m.tid ? topicName(m.tid) : m.cat || "?") + "）");
+      lines.push("最近答错：");
+      lines.push(recent.join("\n"));
+      return lines.join("\n");
+    } },
+    { name: "quiz_from_mistakes", description: "用错题本里的知识点发起一次针对性重练（复用复习流程，按知识点取题）。用于「把错的再练一遍」这类诉求。会打开答题窗口。", parameters: { type: "object", properties: { limit: { type: "integer", description: "取错得最多的前 N 个知识点，默认 5，最多 8" } }, required: [] }, run: (a) => {
+      const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 5, 1), 8);
+      const top = mistakesByTopic(limit).filter((x) => x.tid);
+      if (!top.length) return "错题本里还没有带知识点的错题（跨知识点的题不参与重练）。先去做几道自测，答错会自动记进来。";
+      const ids = top.map((x) => x.tid);
+      startReview(ids);
+      return "已按错题知识点发起重练，共 " + ids.length + " 个知识点：" + ids.map((i) => topicName(i)).join("、") + "。请在弹窗中作答。";
+    } },
     { name: "generate_plan", description: "依据指定领域/每周时长/周数生成个性化学习计划（写入学习计划面板）。非破坏性、本地执行。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id，如 web/binary/crypto/pentest 或 all" }, hours_per_week: { type: "integer", description: "每周学习时长（小时）" }, weeks: { type: "integer", description: "总周数" } }, required: [] }, run: (a) => {
       const cat = a.category || "all";
       const hours = Math.max(1, parseInt(a.hours_per_week, 10) || 5);
@@ -5697,6 +5722,8 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     search_knowledge: { level: "low", confirm: false },
     jwt_decode: { level: "low", confirm: false },
     related_topics: { level: "low", confirm: false },
+    read_mistakes: { level: "low", confirm: false },
+    quiz_from_mistakes: { level: "low", confirm: false },
     generate_plan: { level: "low", confirm: false },
     launch_lab_env: { level: "high", confirm: true },
     run_scan: { level: "high", confirm: true },
@@ -5737,12 +5764,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     examiner: {
       id: "examiner", label: "考官 Examiner", emoji: "🎯",
-      tools: ["search_knowledge", "generate_quiz"],
+      tools: ["search_knowledge", "generate_quiz", "read_mistakes", "quiz_from_mistakes"],
       persona: "你是 SecTutor 的考官(Examiner)。针对薄弱点或指定领域/水平出题（调用 generate_quiz），用户作答后判分、解释正确项，并把错因归类为：概念不清/审题不清/粗心。出题紧扣防御视角，不提供武器化攻击步骤。",
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {
@@ -5764,6 +5791,45 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
   }
   function saveBlackboard(b) {
     try { localStorage.setItem(BLACKBOARD_KEY, JSON.stringify(b)); } catch (e) {}
+  }
+
+  /**
+   * 错题记录（v1.5.9）。
+   * 背景：黑板里早就设计了 mistakes: [] 字段，但**全项目零使用** —— 设计了没用。
+   * 现在把答错的题记进去（带知识点 id，因为 v1.5.8 起题目有 topic 字段），
+   * 于是 Agent 能回答"我总在哪类题上栽跟头"，并能按错题知识点直接重练。
+   */
+  const MISTAKES_MAX = 200;
+  function recordMistake(q, domain) {
+    if (!q) return;
+    try {
+      const bb = getBlackboard();
+      const list = Array.isArray(bb.mistakes) ? bb.mistakes : [];
+      list.push({
+        t: Date.now(),
+        tid: q.topic || null,           // 知识点（可能为空：跨知识点题）
+        qid: q.id || null,
+        cat: domain || q.cat || null,
+        level: q.level || null,
+        q: String(q.q || "").slice(0, 60),
+      });
+      bb.mistakes = list.slice(-MISTAKES_MAX);   // 只留最近 200 条，避免 localStorage 无限膨胀
+      saveBlackboard(bb);
+      logEvent("mistake", { tid: q.topic || null, cat: domain || q.cat || null });
+    } catch (e) { /* 记录失败不影响答题 */ }
+  }
+  // 错题按知识点聚合：次数降序（Agent 据此说"你最容易错的是 X"）
+  function mistakesByTopic(limit) {
+    const bb = getBlackboard();
+    const list = Array.isArray(bb.mistakes) ? bb.mistakes : [];
+    const agg = new Map();
+    list.forEach((m) => {
+      const k = m.tid || ("(未标注) " + (m.cat || "未知领域"));
+      const cur = agg.get(k) || { tid: m.tid || null, cat: m.cat || null, n: 0, last: 0 };
+      cur.n++; cur.last = Math.max(cur.last, m.t || 0);
+      agg.set(k, cur);
+    });
+    return Array.from(agg.values()).sort((a, b) => b.n - a.n || b.last - a.last).slice(0, limit || 8);
   }
 
   // —— 意图路由（spec 19.1 PERCEIVE）：显式模式优先，否则按措辞分类 ——
