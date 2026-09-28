@@ -1623,6 +1623,162 @@
          "至少一个可验证的具体事实"+"至少一处常见误解或反例"，不确定要说不确定
        · 质量不按字数考核（字数不是理解深度），改由"是否给出可验证事实与反例"来约束
      ========================================================================== */
+/* ==========================================================================
+   知识图谱的「外部依据」—— v1.8.0
+   为什么需要它：此前 learning_path 的 violations=0 是**自证** —— 拿我自己生成的图，
+   验我自己生成的路径。要判断"前置依赖本身对不对"，必须有**外部**的、可反驳的顺序来源。
+
+   本文件编码的是若干个**公开框架的官方顺序**（不是我编的）：
+     1. CompTIA Security+ SY0-701 的五大域顺序（官方考纲编号 1.0→5.0）
+     2. MITRE ATT&CK 的战术链顺序（官方定义的 14 个战术次序）
+     3. NIST CSF 2.0 的六大功能顺序（Govern→Identify→Protect→Detect→Respond→Recover）
+     4. OWASP ASVS 的章节顺序（V1→V14）
+     5. 密码学通行教学顺序（Katz & Lindell《Introduction to Modern Cryptography》章节次序：
+        对称原语 → 消息认证/哈希 → 实际构造 → 数论 → 公钥）
+     6. 网络分层顺序（链路 → 网络 → 传输 → 应用）
+
+   用法：给知识点打上"它在哪个框架的第几单元"→ 若一条前置边 from→to 在**同一框架内**
+   满足 idx(from) < idx(to)，则这条边**有外部依据**；否则标为"无外部依据"。
+   没有映射到任何框架的知识点 = **无依据可查**（诚实标注，而不是假装有）。
+   ========================================================================== */
+  const KG_FRAMEWORKS = [
+    {
+      id: "secplus", name: "CompTIA Security+ SY0-701（官方域顺序）",
+      units: ["1.0 通用安全概念", "2.0 威胁、漏洞与缓解", "3.0 安全架构", "4.0 安全运营", "5.0 安全项目管理"],
+    },
+    {
+      id: "attack", name: "MITRE ATT&CK（官方战术链顺序）",
+      units: ["侦察", "资源开发", "初始访问", "执行", "持久化", "权限提升", "防御规避", "凭证访问",
+        "发现", "横向移动", "收集", "命令与控制", "数据外泄", "影响"],
+    },
+    {
+      id: "csf", name: "NIST CSF 2.0（六大功能顺序）",
+      units: ["治理", "识别", "保护", "检测", "响应", "恢复"],
+    },
+    {
+      id: "asvs", name: "OWASP ASVS（章节顺序）",
+      units: ["V2 认证", "V3 会话", "V4 访问控制", "V5 验证", "V6 存储", "V7 错误处理",
+        "V8 数据保护", "V9 通信", "V10 恶意代码", "V11 业务逻辑", "V12 文件", "V13 API", "V14 配置"],
+    },
+    {
+      id: "crypto", name: "密码学教学顺序（Katz & Lindell 章节次序）",
+      units: ["对称原语", "消息认证与哈希", "实际构造", "数论", "公钥"],
+    },
+    {
+      id: "net", name: "网络分层顺序（链路→网络→传输→应用）",
+      units: ["链路层", "网络层", "传输层", "应用层"],
+    },
+  ];
+
+  /* 知识点 → 外部框架单元 的映射。
+     只映射我能给出依据的部分；没映射的 = 无依据可查（诚实标注）。 */
+  const KG_TOPIC_UNIT = {
+    // —— Security+ 域顺序 ——
+    "net-proto": ["secplus:0"], "port-scan": ["secplus:1"],
+    "auth": ["secplus:2"], "iam": ["secplus:2"], "sym": ["secplus:0"], "asym": ["secplus:0"],
+    "siem": ["secplus:3"], "ids": ["secplus:3"], "edr": ["secplus:3"], "traffic": ["secplus:3"],
+    "threat-intel": ["secplus:3"], "incident": ["secplus:3"],
+    // —— MITRE ATT&CK 战术链 ——
+    "recon": ["attack:0"], "scan": ["attack:2"], "privesc": ["attack:5"], "lateral": ["attack:9"],
+    "net-lateral": ["attack:9"], "persistence": ["attack:4"], "exfil": ["attack:12"],
+    // —— NIST CSF ——
+    "soc-basics": ["csf:1"], "soc-soc-ops": ["csf:3"], "soc-detection": ["csf:3"],
+    // —— OWASP ASVS 章节顺序 ——
+    "jwt": ["asvs:0", "asvs:1"], "oauth": ["asvs:0"], "access-control": ["asvs:2"],
+    "ssrf": ["asvs:4"], "sqli": ["asvs:3"], "xss": ["asvs:3"], "cmdinj": ["asvs:3"],
+    "lfi": ["asvs:11"], "api-sec": ["asvs:12"], "csrf": ["asvs:2"],
+    // —— 密码学顺序 ——
+    "hash": ["crypto:1"], "mac": ["crypto:1"], "blockcipher": ["crypto:2"],
+    "rsa-math": ["crypto:3"], "tls": ["crypto:2", "net:3"], "ecc": ["crypto:4"],
+    "pki": ["crypto:4"], "rand": ["crypto:1"], "misuse": ["crypto:2"],
+    // —— 网络分层 ——
+    "arp-dns": ["net:0"], "firewall": ["net:1"], "tcpudp": ["net:2"], "http2": ["net:3"],
+  };
+
+  /** 取某知识点在指定框架下的单元序号（无则 null） */
+  function kgUnitIndex(topicId, fwId) {
+    const m = KG_TOPIC_UNIT[topicId] || [];
+    for (let i = 0; i < m.length; i++) {
+      const parts = m[i].split(":");
+      if (parts[0] === fwId) return { idx: parseInt(parts[1], 10), fw: fwId };
+    }
+    return null;
+  }
+
+  /**
+   * 判断一条前置边 from→to 是否有外部依据。
+   * 有依据 = 存在某个框架，两个知识点都映射到它，且 idx(from) < idx(to)。
+   * 返回 { support: "yes"|"no"|"unmapped", by: 框架名 }
+   */
+  function edgeSupport(from, to) {
+    let sawBoth = false, sawAny = false;
+    for (let i = 0; i < KG_FRAMEWORKS.length; i++) {
+      const fw = KG_FRAMEWORKS[i];
+      const a = kgUnitIndex(from, fw.id), b = kgUnitIndex(to, fw.id);
+      if (!a && !b) continue;
+      sawAny = true;
+      if (!a || !b) continue;
+      sawBoth = true;
+      if (a.idx < b.idx) return { support: "yes", by: fw.name };
+      // 同一单元内：视为"并列"，不构成先后依赖 → 无依据
+    }
+    if (!sawBoth) return { support: sawAny ? "no" : "unmapped", by: "" };
+    return { support: "no", by: "" };
+  }
+
+  /**
+   * 全图外部依据体检：这是**替换 violations=0 的自证指标**的新指标。
+   * 外部依据支持率 = 有依据的边 / 全部边（分母含无依据与无映射，不做美化）
+   */
+  function auditKgSupport() {
+    const edges = [];
+    Object.keys(KG.prereq).forEach(function (from) {
+      (KG.prereq[from] || []).forEach(function (to) {
+        const s = edgeSupport(from, to);
+        edges.push({ from: from, to: to, support: s.support, by: s.by });
+      });
+    });
+    const yes = edges.filter(function (e) { return e.support === "yes"; });
+    const no = edges.filter(function (e) { return e.support === "no"; });
+    const unmapped = edges.filter(function (e) { return e.support === "unmapped"; });
+    // 按领域统计"同领域有无依赖"
+    const domStat = {};
+    CATS.forEach(function (c) {
+      const ids = (c.topics || []).map(function (t) { return t.id; });
+      let inDom = 0;
+      edges.forEach(function (e) { if (ids.indexOf(e.from) >= 0 && ids.indexOf(e.to) >= 0) inDom++; });
+      domStat[c.name] = { topics: ids.length, inDomEdges: inDom, supported: yes.filter(function (e) {
+        return ids.indexOf(e.from) >= 0 && ids.indexOf(e.to) >= 0; }).length };
+    });
+    return {
+      total: edges.length, yes: yes.length, no: no.length, unmapped: unmapped.length,
+      rate: edges.length ? yes.length / edges.length : 0,
+      unsupported: no.concat(unmapped), domStat: domStat,
+      coveredTopics: Object.keys(KG_TOPIC_UNIT).length,
+    };
+  }
+
+  /** 给外部依据体检结果渲染一段人话（用于工具输出与界面提示） */
+  function renderKgSupport(a) {
+    const lines = [];
+    lines.push("知识图谱外部依据体检");
+    lines.push("· 前置边 " + a.total + " 条：有外部依据 " + a.yes + " 条（" + (a.rate * 100).toFixed(1) + "%）"
+      + "，无依据 " + a.no + " 条，知识库内无从映射 " + a.unmapped + " 条");
+    lines.push("· 依据来自：" + KG_FRAMEWORKS.map(function (f) { return f.name; }).join("；"));
+    lines.push("· 已映射到外部框架的知识点：" + a.coveredTopics + " / " + allTopics().length
+      + "（未映射的部分**没有可比对的依据**，不代表对，也不代表错）");
+    lines.push("");
+    lines.push("各领域依赖情况：");
+    Object.keys(a.domStat).forEach(function (k) {
+      const v = a.domStat[k];
+      const note = v.inDomEdges === 0
+        ? "⚠ 该领域内没有任何依赖关系 → 路径只能按档位排，**没有真正的拓扑顺序**（本工具不会假装它有）"
+        : "领域内 " + v.inDomEdges + " 条边，其中有外部依据 " + v.supported + " 条";
+      lines.push("· " + k + "（" + v.topics + " 个知识点）：" + note);
+    });
+    return lines.join("\n");
+  }
+
   const DEEP_CACHE_KEY = "sectutor_deep_cache";
   const DEEP_PROMPT_VERSION = 1;      // 提示词改版时递增，旧缓存自动失效
 
@@ -3545,6 +3701,21 @@
         + "），建议先补上再进入。");
     }
     if (res.violations) lines.push("⚠ 注意：有 " + res.violations + " 处前置顺序异常，请以知识图谱为准。");
+    // v1.8.0：不再只报"我自己图上的 violations"——补上**外部依据**的真实情况
+    const sup = auditKgSupport();
+    lines.push("");
+    lines.push("关于这个顺序的可靠性（重要）：");
+    lines.push("· 前置边的**外部依据支持率** " + (sup.rate * 100).toFixed(1) + "%（" + sup.yes + "/" + sup.total
+      + " 条能对上公开框架的官方顺序；依据：" + KG_FRAMEWORKS.map(function (f) { return f.name; }).join("、") + "）");
+    if (res.domain && res.domain !== "all") {
+      const st = sup.domStat[domName];
+      if (st && st.inDomEdges === 0) {
+        lines.push("· ⚠ 本领域内**没有任何依赖关系**：下面这个顺序只是按难度档位排的，"
+          + "**不是**有依据的知识依赖顺序，请勿当作学习路线图使用。");
+      } else if (st) {
+        lines.push("· 本领域内 " + st.inDomEdges + " 条依赖，其中 " + st.supported + " 条有外部依据；其余为经验性安排。");
+      }
+    }
     return lines.join("\n");
   }
 
@@ -3807,7 +3978,12 @@
         load: loadFlowState,
       },
       // —— v1.1.0 知识图谱 + 质量度量暴露 ——
-      kg: { check: prereqCheck, graph: () => KG },
+      kg: {
+        check: prereqCheck, graph: () => KG,
+        // v1.8.0：外部依据体检（与图谱 API 同一命名空间，不要再另起一个 kg 键——会被覆盖）
+        audit: auditKgSupport, render: renderKgSupport, support: edgeSupport,
+        frameworks: KG_FRAMEWORKS, mapping: KG_TOPIC_UNIT,
+      },
       metrics: {
         snapshot: metricsSnapshot,
         reset: resetMetrics,
@@ -6690,6 +6866,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       startReview(ids);
       return "已按错题知识点发起重练，共 " + ids.length + " 个知识点：" + ids.map((i) => topicName(i)).join("、") + "。请在弹窗中作答。";
     } },
+    { name: "kg_audit", description: "体检知识图谱的**外部依据**：统计前置依赖里有多少条能对上公开框架（Security+ 考纲 / MITRE ATT&CK 战术链 / NIST CSF / OWASP ASVS / 密码学教材章节 / 网络分层）的官方顺序，并列出哪些领域其实**没有**可验证的依赖顺序。用于回答「这个学习路径靠谱吗」「顺序有依据吗」这类问题。", parameters: { type: "object", properties: {}, required: [] }, run: () => renderKgSupport(auditKgSupport()) },
     { name: "plan_task", description: "把复合目标拆成多步并**立即逐步执行**（Plan→Act→Verify 闭环）。每步执行后会按工具映射跑可编程验证器；若某步失败，会返回失败原因，请据此修正计划后再次调用（同一 goal 会被识别为重规划，最多 2 次）。适用于需要多步协作的复合诉求，例如「先看我哪里弱→再排学习路径→再出题练」。注意：高风险操作（建靶/扫描/销毁）不允许放进计划，必须回对话中逐次确认。", parameters: { type: "object", properties: { goal: { type: "string", description: "任务目标（一句话）" }, steps: { type: "array", items: { type: "object", properties: { desc: { type: "string", description: "这一步做什么" }, tool: { type: "string", description: "要调用的工具名（必须是已注册工具）" }, args: { type: "object", description: "传给该工具的参数" } }, required: ["desc", "tool"] }, description: "有序步骤列表" } }, required: ["goal", "steps"] }, run: (a) => planAndRunTask(a) },
     { name: "learning_path", description: "按知识图谱的前置关系生成一条学习路径（拓扑排序，保证前置在前），可选限定领域。用于「我想系统学 Web 安全」「给我排个学习顺序」这类诉求。默认**跳过已掌握**的知识点（给的是接下来要学什么），并会提示跨领域的前置依赖。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id（如 web/binary）；不填或 all 表示全部领域" }, limit: { type: "integer", description: "返回条数，默认 20，最多 60" }, include_mastered: { type: "boolean", description: "为 true 时连已掌握的也排出（用于复盘全貌），默认 false" } }, required: [] }, run: (a) => {
       const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 20, 1), 60);
@@ -6828,6 +7005,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     related_topics: { level: "low", confirm: false },
     learning_path: { level: "low", confirm: false },
     plan_task: { level: "low", confirm: false },
+    kg_audit: { level: "low", confirm: false },
     suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
@@ -6866,7 +7044,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -6876,7 +7054,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {

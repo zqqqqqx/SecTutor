@@ -3836,6 +3836,66 @@ $("#backLab").click();
       "复习卡按钮带明确上间距（避免紧贴上方 chips 造成视觉重合）");
   }
 
+  // ===== 89. 知识图谱的外部依据（v1.8.0）=====
+  {
+    // 这一组替换掉"violations=0"式的自证：前置依赖对不对，要看**外部框架**怎么说，而不是我说。
+    const agK = window.__agent;
+    const ui = window.__ui;                    // 新守护块必须自取引用（今天第五次踩）
+    const SD4 = window.eval("SEC_DATA");
+    const SD4topics = () => { let n = 0; window.eval("SEC_DATA").categories.forEach((c) => { n += (c.topics || []).length; }); return n; };
+    const K = agK.kg;
+    assert(K && typeof K.audit === "function", "外部依据体检能力已暴露（kg.audit）");
+    assert(K.frameworks.length >= 5, "编码了多个公开框架的官方顺序（当前 " + K.frameworks.length + " 个）");
+
+    const a = K.audit();
+    console.log("  前置边 " + a.total + " 条 ｜ **有外部依据 " + a.yes + " 条（" + (a.rate * 100).toFixed(1) + "%）**"
+      + " ｜ 无依据 " + a.no + " ｜ 无从映射 " + a.unmapped + " ｜ 已映射知识点 " + a.coveredTopics + "/" + SD4topics());
+    assert(a.total > 0 && a.yes + a.no + a.unmapped === a.total, "三条计数相加等于总数（统计口径自洽）");
+
+    // ① 关键：**不美化**。支持率不应该接近 100%（否则说明我在给"有依据"放水）
+    assert(a.rate < 0.9, "外部依据支持率未被美化（当前 " + (a.rate * 100).toFixed(1) + "%，不应接近 100%）");
+    console.log("  各领域：");
+    Object.keys(a.domStat).forEach((k) => {
+      const v = a.domStat[k];
+      if (v.inDomEdges === 0) console.log("    " + k + "：" + v.topics + " 个知识点，**领域内零依赖**");
+    });
+
+    // ② 零依赖领域必须被如实标注（不允许假装它有拓扑顺序）
+    const zeroDoms = Object.keys(a.domStat).filter((k) => a.domStat[k].inDomEdges === 0);
+    assert(zeroDoms.length >= 3, "识别出多个「领域内零依赖」的领域（当前 " + zeroDoms.length + " 个：" + zeroDoms.join("、") + "）");
+
+    // ③ 抽样验证判定逻辑：一条有依据的、一条跨框架无依据的
+    const e1 = K.support("recon", "scan");        // ATT&CK 侦察(0) → 初始访问(2)
+    assert(e1.support === "yes" && /ATT&CK/.test(e1.by), "ATT&CK 战术链内的先后被判为「有依据」（" + e1.by + "）");
+    const e2 = K.support("sqli", "sym");          // Web 注入 → 密码学：跨框架，无依据
+    assert(e2.support === "no", "跨框架、无同一依据的依赖被判为「无依据」（不硬凑）");
+    const e3 = K.support("soc-basics", "sqli");
+    assert(e3.support === "no" || e3.support === "unmapped", "无法对上依据的判为 no/unmapped（当前 " + e3.support + "）");
+
+    // ④ learning_path 的输出里必须**带上依据说明**（不能再只报自洽的 violations=0）
+    const txt = ui.renderLearningPath(ui.buildLearningPath("web", 5, { skipMastered: false }), { inPath: [] });
+    assert(/外部依据支持率/.test(txt), "学习路径输出附带外部依据支持率");
+    assert(/公开框架的官方顺序/.test(txt), "说明依据来自公开框架（而不是我自己）");
+    const txtAll = ui.renderLearningPath(ui.buildLearningPath("all", 3, { skipMastered: false }), { inPath: [] });
+    assert(/外部依据支持率/.test(txtAll), "全领域路径同样附带依据说明");
+
+    // ⑤ 零依赖领域的路径必须**明确劝阻**（诚实 > 假装有路线图）
+    const zeroDom = zeroDoms[0];
+    let domId = null;
+    SD4.categories.forEach((c) => { if (c.name === zeroDom) domId = c.id; });
+    if (domId) {
+      const t2 = ui.renderLearningPath(ui.buildLearningPath(domId, 5, { skipMastered: false }), { inPath: [] });
+      assert(/没有任何依赖关系/.test(t2), "零依赖领域的路径明确标注「没有任何依赖关系」并劝阻当作路线图（" + zeroDom + "）");
+    }
+
+    // ⑥ 工具层：新增 kg_audit，且渲染文本包含各领域真实情况
+    const tools = agK.tools().map((t) => t.name);
+    assert(tools.indexOf("kg_audit") >= 0, "新增 kg_audit 工具（可直接问「图谱靠不靠谱」）");
+    const rep = K.render(a);
+    assert(/各领域依赖情况/.test(rep) && /零依赖|没有任何依赖关系/.test(rep), "体检报告列出了各领域真实依赖情况");
+    assert(/未映射的部分/.test(rep), "报告说明「未映射不等于对或错」（避免读者过度解读）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
