@@ -1192,7 +1192,7 @@
     } catch (e) { /* 忽略 */ }
   }
 
-  function maybeShowDailyBrief() {
+  async function maybeShowDailyBrief() {
     try {
       const log = $("#chatLog");
       if (!log || log.querySelector(".msg-row")) return;            // 已有对话就不插
@@ -1200,13 +1200,22 @@
       let last = "";
       try { last = localStorage.getItem("sectutor_brief_day") || ""; } catch (e) {}
       if (last === today) return;                                    // 今天已展示过
+
+      // v1.7.0（P2）：自主等级允许时，**先自己查一遍**再把结论摆出来 —— 这是 L1 与 L0 的实质差别
+      let sweepHtml = "";
+      if (autonomyDue()) {
+        const sweep = await autonomySweep({});
+        sweepHtml = renderSweepReport(sweep);
+      }
+
       const brief = buildDailyBrief();
-      if (!brief) return;                                            // 全新用户不打扰
+      if (!brief && !sweepHtml) return;                              // 全新用户且无可报告 → 不打扰
       try { localStorage.setItem("sectutor_brief_day", today); } catch (e) {}
-      const html = '<b>今天从哪继续？</b><div class="daily-brief">' + brief.html + "</div>"
-        + renderAgentActions(brief.actions);
+      const html = (sweepHtml ? sweepHtml + "<hr class=\"u-sep\">" : "")
+        + (brief ? '<b>今天从哪继续？</b><div class="daily-brief">' + brief.html + "</div>" : "")
+        + renderAgentActions(brief ? brief.actions : []);
       const row = addMsg("bot", html);
-      bindAgentActions(row, brief.actions, (h) => addMsg("bot", h));
+      if (brief) bindAgentActions(row, brief.actions, (h) => addMsg("bot", h));
     } catch (e) { /* 开场建议失败不影响正常使用 */ }
   }
 
@@ -1384,6 +1393,114 @@
     lines.push("");
     lines.push("✅ 全部 " + rawSteps.length + " 步完成并通过验证（用掉工具调用 " + b2.callsUsed + "/" + task.budget.maxToolCalls + "）。");
     return lines.join("\n");
+  }
+
+  /* ==========================================================================
+     自主性分级 —— v1.7.0 / P2
+     四级：L0 只建议（用户提问才动）｜ L1 只读自主（可自己查，无需确认，默认）
+           L2 高风险需确认（建靶/扫描/销毁）｜ L3 定时/事件触发（需显式开启）
+     三条硬边界（**由代码强制，不是文档约定**）：
+       ① L1 只允许低风险工具：高风险工具在自主流程里一律拒绝（防绕过确认门）
+       ② 自主执行同样走**配额**与**审计**（可追溯、可熔断）
+       ③ L3 默认关闭；未显式开启时不得自动触发
+     折中说明：应用没有后台常驻，所谓"定时"用「上次巡检时间 + 打开应用时按间隔补跑」等效实现（零后台成本）。
+     ========================================================================== */
+  const AUTONOMY_KEY = "sectutor_autonomy";
+  const AUTONOMY_LEVELS = ["L0", "L1", "L2", "L3"];
+  const AUTONOMY_DEFAULTS = { level: "L1", intervalHours: 12, lastSweep: 0, enabledL3: false };
+
+  function getAutonomy() {
+    try {
+      const raw = localStorage.getItem(AUTONOMY_KEY);
+      const o = raw ? JSON.parse(raw) : {};
+      return Object.assign({}, AUTONOMY_DEFAULTS, o);
+    } catch (e) { return Object.assign({}, AUTONOMY_DEFAULTS); }
+  }
+  function setAutonomy(patch) {
+    const cur = getAutonomy();
+    const next = Object.assign({}, cur, patch || {});
+    if (AUTONOMY_LEVELS.indexOf(next.level) < 0) next.level = AUTONOMY_DEFAULTS.level;
+    // 安全约束：只有显式打开 enabledL3 才允许 L3
+    if (next.level === "L3" && !next.enabledL3) next.level = "L2";
+    try { localStorage.setItem(AUTONOMY_KEY, JSON.stringify(next)); } catch (e) { /* 存储不可用时静默降级 */ }
+    return next;
+  }
+  /** 当前等级是否允许"自主执行只读动作" */
+  function autonomyCanRun() {
+    const a = getAutonomy();
+    return a.level === "L1" || a.level === "L3";
+  }
+
+  /**
+   * 自主巡检：**只读**地把该看的东西看一遍，直接给结论（不是给按钮让用户自己点）。
+   * 这是 L1 与 L0 的实质差别：L0 是"建议你去做"，L1 是"我已经查完了，结论如下"。
+   * 巡检内容全部来自低风险工具与本地计算，且结果写入审计。
+   */
+  async function autonomySweep(opts) {
+    const o = opts || {};
+    const a = getAutonomy();
+    if (!autonomyCanRun() && !o.force) {
+      return { skipped: true, reason: "当前自主等级为 " + a.level + "（不允许自主执行）", findings: [] };
+    }
+    const t0 = Date.now();
+    const findings = [];
+    // 巡检项：全部只读，且逐项记录（失败不中断整体）
+    const checks = [
+      { key: "due", desc: "到期复习" },
+      { key: "mistakes", desc: "错题集中度" },
+      { key: "progress", desc: "掌握进度" },
+      { key: "path", desc: "学习路径完整性" },
+    ];
+    const results = {};
+    for (const c of checks) {
+      // 硬边界①：自主流程只允许低风险工具
+      if (c.tool && toolRequiresConfirm(c.tool)) { findings.push({ key: c.key, blocked: true }); continue; }
+      try {
+        if (c.key === "due") {
+          const due = dueReviews();
+          results.due = due.length;
+          if (due.length) findings.push({ key: "due", level: "warn", text: "有 " + due.length + " 个知识点到期该复习（最久逾期 " + due[0].days.toFixed(1) + " 天）" });
+        } else if (c.key === "mistakes") {
+          const mis = mistakesByTopic(3).filter((x) => x.tid);
+          results.mistakes = mis.length;
+          if (mis.length) findings.push({ key: "mistakes", level: "warn", text: "错得最多的是《" + topicName(mis[0].tid) + "》（" + mis[0].n + " 次）" });
+        } else if (c.key === "progress") {
+          const learned = state.mastery.size, total = allTopics().length;
+          results.progress = Math.round(learned / total * 100);
+          findings.push({ key: "progress", level: "info", text: "已掌握 " + learned + "/" + total + " 个知识点（" + results.progress + "%）" });
+        } else if (c.key === "path") {
+          const r = buildLearningPath("all", 0, { skipMastered: true });
+          results.pathViolations = r.violations;
+          if (r.violations !== 0) findings.push({ key: "path", level: "error", text: "学习路径有 " + r.violations + " 处前置顺序异常" });
+        }
+      } catch (e) {
+        findings.push({ key: c.key, level: "error", text: (c.desc || c.key) + " 巡检失败：" + String(e && e.message).slice(0, 60) });
+      }
+    }
+    const ms = Date.now() - t0;
+    auditTool("autonomy_sweep", { level: a.level }, findings.every((f) => f.level !== "error"), ms,
+      "自主巡检 " + findings.length + " 条发现");
+    setAutonomy({ lastSweep: Date.now() });
+    return { skipped: false, level: a.level, ms: ms, findings: findings, results: results };
+  }
+
+  /** 是否需要现在补跑一次巡检（等效"定时"：按间隔判断，打开应用时调用） */
+  function autonomyDue() {
+    const a = getAutonomy();
+    if (!autonomyCanRun()) return false;
+    return (Date.now() - (a.lastSweep || 0)) >= a.intervalHours * 3600000;
+  }
+
+  /** 把巡检结论渲染成给人看的一段话（自主性要可见、可控，否则用户不信任它） */
+  function renderSweepReport(sweep) {
+    if (!sweep || sweep.skipped) return "";
+    const head = "🔎 <b>自主巡检</b>（等级 " + sweep.level + "，用时 " + sweep.ms + "ms）";
+    if (!sweep.findings.length) return head + '<div class="daily-brief">没有发现需要处理的问题。</div>';
+    const rows = sweep.findings.map(function (f) {
+      const icon = f.level === "error" ? "❌" : f.level === "warn" ? "⚠️" : "ℹ️";
+      return "<div>" + icon + " " + escapeHtml(f.text) + "</div>";
+    }).join("");
+    return head + '<div class="daily-brief">' + rows + "</div>";
   }
 
   const TASKS_KEY = "sectutor_tasks";
@@ -3417,6 +3534,11 @@
         budgetOf: taskBudgetState, load: loadTasks,
         auditTail: auditTail, budget: AGENT_BUDGET, turnLimit: AGENT_TURN_TOOL_LIMIT,
         planAndRun: planAndRunTask, verifiers: VERIFIER_BY_TOOL, runVerifier: verifyStep,
+      },
+      // ↓ v1.7.0 自主性分级（仅测试与调试用）
+      autonomy: {
+        get: getAutonomy, set: setAutonomy, sweep: autonomySweep, due: autonomyDue,
+        render: renderSweepReport, levels: AUTONOMY_LEVELS,
       },
       blackboard: getBlackboard,
       setEnabled: (v) => { setAgentEnabled(v); },

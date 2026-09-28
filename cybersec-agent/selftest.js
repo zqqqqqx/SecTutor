@@ -3667,6 +3667,64 @@ $("#backLab").click();
     assert(tail.length > 0 && tail.some((x) => x.tool === "learning_path"), "计划执行产生的调用同样进入审计");
   }
 
+  // ===== 85. 自主性分级（v1.7.0 / P2）=====
+  {
+    const ag9 = window.__agent;
+    const A = ag9.autonomy;
+    assert(A && typeof A.sweep === "function" && A.levels.length === 4, "自主性分级已暴露（4 级）");
+
+    // ① 默认 L1（只读自主），且等级可切换
+    A.set({ level: "L1" });
+    assert(A.get().level === "L1", "默认可设为 L1（只读自主）");
+
+    // ② 硬边界：L0 不允许自主执行（回到"只建议"）
+    A.set({ level: "L0" });
+    const s0 = await A.sweep({});
+    assert(s0.skipped === true && /L0/.test(s0.reason), "L0 下不允许自主执行（返回 skipped 并说明原因）");
+    assert(A.due() === false, "L0 下不认为「该巡检」");
+
+    // ③ 硬边界：L3 必须显式开启，否则自动降级到 L2（不能让定时任务偷偷跑起来）
+    A.set({ level: "L3", enabledL3: false });
+    assert(A.get().level === "L2", "未显式开启时 L3 自动降级为 L2（安全约束）");
+    A.set({ level: "L3", enabledL3: true });
+    assert(A.get().level === "L3", "显式开启后才允许 L3");
+
+    // ④ L1 巡检：**只读**地查一遍并直接给结论（这是 L1 与 L0 的实质差别）
+    A.set({ level: "L1", intervalHours: 12, lastSweep: 0 });
+    assert(A.due() === true, "按间隔判断该巡检（等效'定时'，无后台成本）");
+    const sweepStart = Date.now();
+    const sweep = await A.sweep({});
+    assert(sweep.skipped === false && sweep.level === "L1", "L1 下巡检真的执行了");
+    assert(Array.isArray(sweep.findings) && sweep.findings.length >= 1, "巡检给出结论（findings 非空）");
+    assert(typeof sweep.ms === "number" && sweep.ms < 3000, "巡检耗时合理（" + sweep.ms + "ms）");
+
+    // ⑤ 硬边界：巡检**绝不能**调用高风险工具（检出即失败）
+    const auditAfter = ag9.tasks.auditTail(200);
+    const HIGH = ["launch_lab_env", "run_scan", "teardown_lab_env"];
+    // 只看**本次巡检期间**的调用（否则会读到场内其他用例的历史审计，属误报）
+    const inWindow = auditAfter.filter((a) => a.t >= sweepStart);
+    const risky = inWindow.filter((a) => HIGH.indexOf(a.tool) >= 0);
+    assert(risky.length === 0, "自主巡检期间没有任何高风险工具被调用（本次窗口内 " + risky.length + " 次）");
+
+    // ⑥ 自主执行同样进审计（可追溯）
+    const hasSweepAudit = inWindow.some((a) => a.tool === "autonomy_sweep");
+    assert(hasSweepAudit, "自主巡检本身写入审计（可追溯、可熔断）");
+    assert(inWindow.length >= 1, "巡检窗口内确有审计记录");
+
+    // ⑦ 巡检后 lastSweep 被刷新 → 同一次会话内不会重复跑
+    assert(A.due() === false, "巡检后刷新时间戳，间隔未到不会重复执行");
+
+    // ⑧ 结论渲染可读（自主性要可见，用户才敢信任它）
+    const html = A.render(sweep);
+    assert(/自主巡检/.test(html) && /L1/.test(html), "巡检结论可渲染且标明等级");
+    assert(/autonomy/i.test(html) === false, "渲染结果不暴露内部工具名（给用户看的是人话）");
+    const htmlEmpty = A.render({ skipped: false, level: "L1", ms: 5, findings: [] });
+    assert(/没有发现需要处理的问题/.test(htmlEmpty), "无发现时给出明确结论（而不是空白）");
+    assert(A.render({ skipped: true }) === "", "未执行时渲染为空（零占位）");
+
+    function T5AuditLen() { return ag9.tasks.auditTail(500).length; }
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
