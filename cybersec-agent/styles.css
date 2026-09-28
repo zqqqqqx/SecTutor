@@ -588,6 +588,11 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .done-flag { position: absolute; top: 12px; right: 14px; color: var(--brand); font-weight: 800; font-size: 15px; }
 
 .rel-box { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 复习卡里「开始复习」按钮与上方知识点 chips 之间的间距（v1.7.0）
+   实测：两者原本间隙 0px —— 按钮紧贴 chips，加上按钮自身阴影，视觉上像"压在上面/重合"。
+   间距取 9px 与今日面板同类按钮（.today-go 的 margin-top）保持一致。
+   作用域限定在 #reviewCard，避免影响知识库详情里同样使用 .rel-box 的位置。 */
+#reviewCard > .btn { margin-top: 9px; }
 .rel-chip {
   background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 14px;
   padding: 6px 12px; font-size: 12.5px; cursor: pointer; transition: background var(--dur-micro), color var(--dur-micro), border-color var(--dur-micro), transform var(--dur-micro);
