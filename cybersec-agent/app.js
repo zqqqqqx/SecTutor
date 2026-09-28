@@ -1752,6 +1752,22 @@
     return out.sort((a, b) => b.s - a.s).slice(0, 6).map((x) => x.d);
   }
 
+  const DEEP = (SEC_DATA.deep || {});
+  /** 深度讲解（v1.6.4）：why / how / pitfalls / cases / further —— 只在有内容时渲染，无内容时零占位 */
+  function renderDeepSection(topic) {
+    const d = DEEP[topic && topic.id];
+    if (!d) return "";
+    const fmt = (x) => escapeHtml(String(x == null ? "" : x)).replace(/`([^`]+)`/g, "<code>$1</code>");
+    const ul = (arr) => (arr || []).map((x) => "<li>" + fmt(x) + "</li>").join("");
+    return '<div class="kb-section deep"><h4>🎯 深入一步</h4>'
+      + '<div class="deep-why"><b>为什么需要它</b><p>' + fmt(d.why) + "</p></div>"
+      + '<div class="deep-how"><b>工程上怎么做</b><p>' + fmt(d.how) + "</p></div>"
+      + (d.pitfalls && d.pitfalls.length ? '<div class="deep-pit"><b>常见误解与坑</b><ul>' + ul(d.pitfalls) + "</ul></div>" : "")
+      + (d.cases && d.cases.length ? '<div class="deep-case"><b>真实案例</b><ul>' + ul(d.cases) + "</ul></div>" : "")
+      + (d.further ? '<div class="deep-more"><b>想深入</b><p class="u-muted">' + fmt(d.further) + "</p></div>" : "")
+      + "</div>";
+  }
+
   function showTopicDetail(topicId) {
     const topic = allTopics().find((x) => x.id === topicId);
     if (!topic) return;
@@ -1777,6 +1793,7 @@
       <h2>${topic.name} <span class="lvl-tag lvl-${topic.level}">${topic.level}</span></h2>
       <p class="u-muted">所属领域：${catById(topic.cat).name} ｜ 当前以【${lvl}】档位讲解</p>
       <div class="kb-section"><h4>📘 ${lvl} 讲解</h4><div>${renderInline(body)}</div></div>
+      ${renderDeepSection(topic)}
       <div class="kb-section"><h4>💡 代码示例（安全/修复视角）</h4>
         <pre><code class="language-${topic.codeLang}">${escapeHtml(topic.code)}</code></pre></div>
       <div class="kb-section"><h4>🛠 推荐工具</h4><p>${escapeHtml(topic.tool)}</p></div>
@@ -4662,6 +4679,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       buildLearningPath: buildLearningPath,
       buildDailyBrief: buildDailyBrief,
       renderLearningPath: renderLearningPath,
+      renderDeepSection: renderDeepSection,
       parseToolStats: parseToolStats,
       buildFallbackActions: buildFallbackActions,
       renderAgentActions: renderAgentActions,

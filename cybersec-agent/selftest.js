@@ -3391,6 +3391,73 @@ $("#backLab").click();
     st5.mastery = savedM5;
   }
 
+  // ===== 79. 内容深度与去 AI 味（v1.6.4）=====
+  {
+    const ui = window.__ui;
+    // 用真实指标守住"深度"与"AI 味"这两个此前**从没有尺子**的维度。
+    const SD = window.eval("SEC_DATA");
+    const DEEP = SD.deep || {};
+    const ids = Object.keys(DEEP);
+    const allTopics = [];
+    SD.categories.forEach((c) => (c.topics || []).forEach((t) => allTopics.push(t)));
+    const idSet = new Set(allTopics.map((t) => t.id));
+
+    // ① 结构完整性：五项齐 + 案例/坑有下限 + 正文够长
+    const CLICHES = ["有效地", "有助于提升", "从根本上解决", "值得注意的是", "需要注意的是"];
+    const noFact = [], tooShort = [], cliche = [], badRef = [];
+    ids.forEach((id) => {
+      if (!idSet.has(id)) badRef.push(id);
+      const d = DEEP[id];
+      if (!d.why || !d.how || !d.further) tooShort.push(id + "(缺 why/how/further)");
+      if (!Array.isArray(d.pitfalls) || d.pitfalls.length < 2) tooShort.push(id + "(坑<2)");
+      if (!Array.isArray(d.cases) || d.cases.length < 1) tooShort.push(id + "(无案例)");
+      if (String(d.why).length < 100 || String(d.how).length < 100) tooShort.push(id + "(why/how<100字)");
+      const text = [d.why, d.how, (d.pitfalls || []).join(""), (d.cases || []).join(""), d.further].join("");
+      // 细节密度：至少一个具体事实（数字/版本/CVE/命令/端口）
+      if (!/\d|CVE-|`|SHA-?1|GCM|arp|ARP/.test(text)) noFact.push(id);
+      CLICHES.forEach((c) => { if (text.indexOf(c) >= 0) cliche.push(id + ":" + c); });
+    });
+    assert(badRef.length === 0, `deep 的 key 必须都是存在的知识点 id（异常：${badRef.join(",") || "无"}）`);
+    assert(tooShort.length === 0, `deep 结构完整且够长（问题：${tooShort.join("；") || "无"}）`);
+    assert(noFact.length === 0, `每条 deep 至少一个具体事实（数字/版本/命令）：${noFact.join(",") || "无"}`);
+    assert(cliche.length === 0, `deep 不含空话套话：${cliche.join("；") || "无"}`);
+
+    // ② 深度指标：把"薄"的比例当成可上抬的门槛（基线 90.1% 未加-depth 时）
+    const thinBefore = allTopics.filter((t) => Object.values(t.levels || {}).join("").length < 400).length;
+    const covered = allTopics.filter((t) => ids.indexOf(t.id) >= 0).length;
+    const thinAfter = allTopics.filter((t) => {
+      if (ids.indexOf(t.id) >= 0) return false;      // 已补深度的不再算薄
+      return Object.values(t.levels || {}).join("").length < 400;
+    }).length;
+    const before = thinBefore / allTopics.length * 100, after = thinAfter / allTopics.length * 100;
+    console.log(`  内容深度：已补深度 ${covered}/${allTopics.length} 个 ｜ 「薄」占比 ${before.toFixed(1)}% → ${after.toFixed(1)}%`);
+    assert(covered >= 8, `本批至少补 8 个枢纽知识点（当前 ${covered}）`);
+    assert(after <= before - 3, `「薄」占比应随补写下降（${before.toFixed(1)}% → ${after.toFixed(1)}%）`);
+
+    // ③ 去 AI 味：deep 集合上的长度变异系数（人写内容长度天然不均）
+    const lens = ids.map((id) => {
+      const d = DEEP[id];
+      return [d.why, d.how, (d.pitfalls || []).join(""), (d.cases || []).join(""), d.further].join("").length;
+    });
+    const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
+    const sd = Math.sqrt(lens.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lens.length);
+    const cv = sd / mean;
+    console.log(`  深度正文长度变异系数 ${cv.toFixed(2)}（摘要基线仅 0.22，越"不齐"越不像模板）`);
+    assert(cv >= 0.25, `深度内容长度不应整齐划一（变异系数 ${cv.toFixed(2)} ≥ 0.25）`);
+    assert(lens.every((l) => l >= 500), `每条 deep 合计 ≥500 字（最短 ${Math.min.apply(null, lens)}）`);
+
+    // ④ 渲染：有内容才渲染，无内容零占位；且做转义与行内代码
+    const t0 = allTopics.find((t) => t.id === ids[0]);
+    const html = ui.renderDeepSection(t0);
+    assert(html.indexOf("kb-section deep") >= 0 && html.indexOf("为什么需要它") >= 0, "深度区块渲染出结构");
+    assert(html.indexOf("常见误解与坑") >= 0 && html.indexOf("真实案例") >= 0, "坑与案例都渲染");
+    assert(html.indexOf("<code>") >= 0, "反引号内容渲染为行内代码");
+    assert(ui.renderDeepSection({ id: "__not_exist__" }) === "", "没有 deep 的知识点零占位（不产生空区块）");
+    assert(ui.renderDeepSection(null) === "", "空参数安全返回");
+    const xss = ui.renderDeepSection({ id: ids[0] });
+    assert(xss.indexOf("<script") < 0, "深度内容经过转义（不注入脚本）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
