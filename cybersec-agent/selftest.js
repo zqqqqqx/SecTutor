@@ -3795,6 +3795,35 @@ $("#backLab").click();
     assert(tk4.steps.every((x) => x.status === "done"), "每步都标记 done（含角色信息 " + tk4.steps[0].role + "）");
   }
 
+  // ===== 87. 同排按钮尺寸一致性（v1.7.0）=====
+  {
+    // 起因：用户反馈"学习计划里复习提醒的两个按钮有轻微错位"。
+    // 根因不是多代样式残留，而是**同排两个按钮的盒模型不一致**：
+    //   .today-go  font-size:12.5px / font-weight:700 / padding:7px 14px
+    //   .today-alt font-size:12px   / 未设字重      / padding:7px 12px
+    //   → 粗体内容盒略高（差 1px）+ 字号不同导致基线不同 → 视觉上"一个高一点"
+    // 规则：**同一行并排的按钮，字号 / 字重 / 内距 / 垂直对齐必须完全一致**，只允许配色差异。
+    const cssA = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
+    const ruleOf = (sel) => {
+      const m = cssA.match(new RegExp("\\n\\" + sel + "\\s*\\{([\\s\\S]*?)\\n\\}", "m"));
+      if (!m) return null;
+      const body = m[1].replace(/\/\*[\s\S]*?\*\//g, "");     // 去注释再取值
+      const get = (prop) => {
+        const p = body.match(new RegExp("(?:^|[;{])\\s*" + prop + "\\s*:\\s*([^;]+)", "m"));
+        return p ? p[1].trim() : "";
+      };
+      return { size: get("font-size"), weight: get("font-weight"), pad: get("padding"), valign: get("vertical-align") };
+    };
+    const go = ruleOf(".today-go"), alt = ruleOf(".today-alt");
+    assert(go && alt, "两个按钮的样式规则都存在（.today-go / .today-alt）");
+    assert(go.size === alt.size, `同排按钮字号一致（${go.size} vs ${alt.size}）`);
+    assert(go.weight === alt.weight, `同排按钮字重一致（${go.weight} vs ${alt.weight}）`);
+    assert(go.pad === alt.pad, `同排按钮内距一致（${go.pad} vs ${alt.pad}）`);
+    assert(go.valign === alt.valign && go.valign === "middle", `同排按钮垂直对齐一致（${go.valign} vs ${alt.valign}）`);
+    // 允许的差异只有配色（.today-alt 是次要按钮）
+    assert(/color:\s*var\(--muted\)/.test(cssA.slice(cssA.indexOf(".today-alt"))), "次要按钮保留配色差异（这是有意的）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

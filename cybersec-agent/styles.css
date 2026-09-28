@@ -1743,8 +1743,12 @@ body::before { opacity: 1; }
 .today-step-m { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
 .today-why { color: var(--link); }
 .today-go {
-  margin-top: 9px; font-size: 12.5px; font-weight: 700; padding: 7px 14px;
+  /* 与 .today-alt 同排：字号/字重/内距/垂直对齐必须完全一致，否则会出现"轻微错位"
+     （根因：原先这里 font-weight:700 而 .today-alt 未设字重，粗体内容盒略高 → 差 1px；
+      且两者字号 12.5/12 不同 → 基线不同，视觉上"一个高一点"）。取值统一向 .btn.small 看齐。 */
+  margin-top: 9px; font-size: 12.5px; font-weight: 600; padding: 7px 13px;
   border-radius: var(--r-sm); border: 1px solid var(--line); background: transparent; color: var(--ink);
+  vertical-align: middle;
   cursor: pointer;
   transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
               border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
@@ -1802,7 +1806,9 @@ body::before { opacity: 1; }
 
 /* 「换一个」与诊断入口 */
 .today-alt {
-  margin: 9px 0 0 8px; font-size: 12px; padding: 7px 12px; border-radius: var(--r-sm);
+  /* 与 .today-go 同排，尺寸必须一致（见上条注释）；这里只保留"次要按钮"的配色差异 */
+  margin: 9px 0 0 8px; font-size: 12.5px; font-weight: 600; padding: 7px 13px; border-radius: var(--r-sm);
+  vertical-align: middle;
   border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
