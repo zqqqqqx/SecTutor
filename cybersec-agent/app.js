@@ -288,7 +288,13 @@
       : "无";
     const lines = [];
     lines.push("📘 " + t.name + "（" + topicId + " · " + (catById(t.cat).name || t.cat) + "）");
-    lines.push("① 前置（学它之前建议先补）：" + nm(KG.prereq[topicId]));
+    // v1.8.0：前置分档 —— 有外部依据的才叫"前置"，其余只能叫"建议先看"（经验性）
+    const preAll = KG.prereq[topicId] || [];
+    const preEvd = preAll.filter(function (x) { return edgeSupport(x, topicId).support === "yes"; });
+    const preAdv = preAll.filter(function (x) { return edgeSupport(x, topicId).support !== "yes"; });
+    if (preEvd.length) lines.push("① 前置（有外部依据）：" + nm(preEvd));
+    if (preAdv.length) lines.push("①' 建议先看（经验性，无外部依据，非课纲要求）：" + nm(preAdv));
+    if (!preAll.length) lines.push("① 前置：该知识点在知识图谱里没有登记前置（不代表不需要基础，只是没有可查依据）");
     lines.push("② 进阶（学完可深入）：" + nm(KG.advanced[topicId]));
     lines.push("③ 并列（同类可替代/组合学）：" + nm(KG.peer[topicId]));
     lines.push("④ 反向依赖（后续会用到它的知识点）：" + nm(KG.reverse.prereq_of[topicId]));
@@ -3686,12 +3692,24 @@
     lines.push("学习路径（" + domName + "）：范围内共 " + res.total + " 个知识点"
       + (res.skippedMastered ? "，已掌握 " + res.masteredCount + " 个已跳过" : "")
       + "，接下来要学 " + res.remaining + " 个");
+    let evdN = 0, advN = 0;
     res.path.forEach((t, i) => {
       const pre = (KG.prereq[t.id] || []);
       const inPathPre = pre.filter((p) => inPath.has(p));
       const outPre = pre.filter((p) => !inPath.has(p) && TOPIC_BY_ID.has(p));
+      // v1.8.0：把先后关系拆成两档，措辞必须不同 ——
+      // 有外部依据的才敢叫「前置」（那是有课纲/框架背书的"必须先会"）；
+      // 没有依据的只能叫「建议先看」（经验性安排，我无权替公开课纲拍板）。
+      const evd = [], adv = [];
+      if (o.showPrereq !== false) {
+        inPathPre.forEach(function (pp) {
+          const sup2 = edgeSupport(pp, t.id);
+          if (sup2.support === "yes") { evd.push(pp); evdN++; } else { adv.push(pp); advN++; }
+        });
+      }
       const bits = [];
-      if (o.showPrereq !== false && inPathPre.length) bits.push("前置：" + inPathPre.slice(0, 3).map(topicName).join("、"));
+      if (evd.length) bits.push("前置（有依据）：" + evd.slice(0, 3).map(topicName).join("、"));
+      if (adv.length) bits.push("建议先看（经验性，无外部依据）：" + adv.slice(0, 3).map(topicName).join("、"));
       if (outPre.length) bits.push("⚠ 需先了解（不在本路径内）：" + outPre.slice(0, 3).map(topicName).join("、"));
       lines.push("[" + (i + 1) + "] " + t.name + "  <" + t.level + ">" + (bits.length ? "（" + bits.join("；") + "）" : ""));
     });
@@ -3707,6 +3725,8 @@
     lines.push("关于这个顺序的可靠性（重要）：");
     lines.push("· 前置边的**外部依据支持率** " + (sup.rate * 100).toFixed(1) + "%（" + sup.yes + "/" + sup.total
       + " 条能对上公开框架的官方顺序；依据：" + KG_FRAMEWORKS.map(function (f) { return f.name; }).join("、") + "）");
+    lines.push("· 本路径共 " + (evdN + advN) + " 处先后关系：**有依据 " + evdN + " 处**（上面写作「前置」），"
+      + "**经验性 " + advN + " 处**（上面写作「建议先看」—— 是我的经验安排，不是课纲要求）");
     if (res.domain && res.domain !== "all") {
       const st = sup.domStat[domName];
       if (st && st.inDomEdges === 0) {

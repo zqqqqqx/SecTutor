@@ -1390,7 +1390,8 @@ $("#backLab").click();
     const ov = await ag2.callTool("prereq_check", {});
     assert(/知识图谱总览/.test(ov), "prereq_check 无参返回图谱总览");
     const pq = await ag2.callTool("prereq_check", { topicId: "jwt" });
-    assert(/JWT 安全问题/.test(pq) && /前置/.test(pq), "prereq_check 已知点返回前置链");
+    // v1.8.0 起前置分两档（有依据=前置 / 无依据=建议先看），断言按意图放宽为"两档之一"
+    assert(/JWT 安全问题/.test(pq) && /(前置|建议先看)/.test(pq), "prereq_check 已知点返回前置或建议链（分档后）");
     assert(/进阶/.test(pq) && /并列/.test(pq) && /反向依赖/.test(pq), "prereq_check 含进阶/并列/反向依赖");
     const badq = await ag2.callTool("prereq_check", { topicId: "nope_x" });
     assert(/未找到该知识点/.test(badq), "prereq_check 未知 id 友好报错");
@@ -3894,6 +3895,42 @@ $("#backLab").click();
     const rep = K.render(a);
     assert(/各领域依赖情况/.test(rep) && /零依赖|没有任何依赖关系/.test(rep), "体检报告列出了各领域真实依赖情况");
     assert(/未映射的部分/.test(rep), "报告说明「未映射不等于对或错」（避免读者过度解读）");
+  }
+
+  // ===== 90. 前置依赖的两档措辞（v1.8.0）=====
+  {
+    // 88 条前置边里只有 2 条能对上公开框架（2.3%）——所以措辞必须分档：
+    // 有依据的才叫「前置」，没有依据的只能叫「建议先看（经验性）」。
+    // 这一组守的就是"不许把经验性安排包装成课纲要求"。
+    const ui = window.__ui;
+    const agT = window.__agent;
+
+    const res = ui.buildLearningPath("all", 0, { skipMastered: false });
+    const txt = ui.renderLearningPath(res, { inPath: res.pathIds });
+
+    assert(/前置（有依据）/.test(txt) || /建议先看（经验性/.test(txt), "路径里出现两档措辞之一（说明确实做了分档）");
+    assert(/经验性，无外部依据/.test(txt), "无依据的依赖被明确标注为「经验性，无外部依据」");
+    assert(/是我的经验安排，不是课纲要求/.test(txt), "统计行说明经验性部分不是课纲要求");
+
+    // 计数必须自洽：有依据 + 经验性 = 路径内出现的先后关系数
+    const m = txt.match(/有依据 (\d+) 处）.*?经验性 (\d+) 处/s) || txt.match(/有依据 (\d+) 处/);
+    assert(m, "统计行给出有依据/经验性的数量");
+    const evd = parseInt(m[1], 10);
+    console.log("  本路径：有依据 " + evd + " 处 ｜ 经验性 " + (m[2] ? m[2] : "?") + " 处");
+    assert(evd >= 0, "有依据计数可解析");
+
+    // 关键：有依据的比例应该很低（与全图 2.3% 同量级），不允许被"凑"高
+    const total = parseInt((txt.match(/本路径共 (\d+) 处先后关系/) || [0, "0"])[1], 10);
+    assert(total === 0 || evd / total < 0.5, "有依据占比未被凑高（" + evd + "/" + total + "）");
+
+    // prereq_check 工具同样分档（不许把经验性说成"前置"）
+    const out = agT.callTool ? null : null;
+    const check = agT.kg && agT.kg.support;
+    assert(typeof check === "function", "可用于分档判定的接口存在");
+    const e = check("recon", "scan");
+    assert(e.support === "yes", "ATT&CK 内的先后 → 有依据（会写作「前置」）");
+    const e2 = check("sqli", "sym");
+    assert(e2.support === "no", "跨框架无依据 → 只能写作「建议先看」");
   }
 
   console.log("\n==== 自测结果 ====");
