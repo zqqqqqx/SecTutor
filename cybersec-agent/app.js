@@ -1888,10 +1888,10 @@
     if (!qs.length) return '<p class="u-muted u-f11">该知识点在题库里还没有对应题目（题库覆盖 100% 知识点，但个别题可能标注不同）。</p>';
     return qs.map(function (q, i) {
       const opts = q.options.map(function (o, j) {
-        return '<button class="btn ghost small tq-opt" data-i="' + i + '" data-j="' + j + '" style="margin:3px 6px 3px 0">'
+        return '<button class="btn ghost small tq-opt" data-i="' + i + '" data-j="' + j + '">'
           + escapeHtml(o) + "</button>";
       }).join("");
-      return '<div class="tq-item" data-i="' + i + '"><p style="margin:6px 0 4px">' + (i + 1) + ". " + escapeHtml(q.q) + "</p>"
+      return '<div class="tq-item" data-i="' + i + '"><p class="tq-q">' + (i + 1) + ". " + escapeHtml(q.q) + "</p>"
         + '<div class="tq-opts">' + opts + "</div>"
         + '<div class="u-muted u-f11 tq-fb" data-i="' + i + '"></div></div>';
     }).join("");
