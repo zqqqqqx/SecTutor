@@ -3824,6 +3824,17 @@ $("#backLab").click();
     assert(/color:\s*var\(--muted\)/.test(cssA.slice(cssA.indexOf(".today-alt"))), "次要按钮保留配色差异（这是有意的）");
   }
 
+  // ===== 88. 复习卡按钮与上方 chips 的间距（v1.7.0）=====
+  {
+    // 用户反馈"复习板块的按钮偏上、与上面的按钮重合"。
+    // Electron 真实渲染实测：rel-box 底=330.1 与按钮顶=330.1 → **间隙 0px**（按钮紧贴 chips，
+    // 叠加 .btn 自身阴影 → 视觉上像压在一起）。修法是给它补 9px 上间距（与 .today-go 惯例一致）。
+    // jsdom 无布局能力，这里只守"规则存在"；几何复核靠 Electron 脚本（见 electron-visual-verify 技能）。
+    const cssR = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
+    assert(/#reviewCard\s*>\s*\.btn\s*\{[^}]*margin-top/.test(cssR),
+      "复习卡按钮带明确上间距（避免紧贴上方 chips 造成视觉重合）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
