@@ -3458,6 +3458,46 @@ $("#backLab").click();
     assert(xss.indexOf("<script") < 0, "深度内容经过转义（不注入脚本）");
   }
 
+  // ===== 80. 摘要去模板化（v1.6.5）=====
+  {
+    // 体检发现：253 条摘要长度 33~42 字、变异系数仅 0.22 → 一眼看出批量生成；
+    // 且只有 9/253 含数字（事实密度过低）。反例：开头句式其实不模板化，所以不必改开头。
+    // 本轮把 24 个枢纽知识点扩写到 80~150 字，其余保持短 —— 让长度呈现**有意义的差异**。
+    const SD2 = window.eval("SEC_DATA");
+    const tops = [];
+    SD2.categories.forEach((c) => (c.topics || []).forEach((t) => tops.push(t)));
+    const lens = tops.map((t) => String(t.summary || "").length).sort((a, b) => a - b);
+    const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
+    const sd = Math.sqrt(lens.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lens.length);
+    const cv = sd / mean;
+    const withNum = tops.filter((t) => /\d/.test(t.summary || "")).length;
+    const withTerm = tops.filter((t) => /[A-Za-z][A-Za-z0-9_\-]{2,}/.test(t.summary || "")).length;
+    const longSum = tops.filter((t) => String(t.summary || "").length > 60).length;
+    const maxLen = lens[lens.length - 1];
+    console.log("  摘要：长度 " + lens[0] + "~" + maxLen + " 字 ｜ 变异系数 " + cv.toFixed(2)
+      + "（改前 0.22）｜ 含数字 " + withNum + " 条 ｜ 含术语 " + withTerm + " 条 ｜ >60 字 " + longSum + " 条");
+    assert(cv >= 0.5, "摘要长度必须呈现有意义的差异（变异系数 " + cv.toFixed(2) + " ≥ 0.5；基线仅 0.22）");
+    assert(longSum >= 20, "至少有 20 个知识点写了长摘要（当前 " + longSum + "）");
+    assert(withNum >= 14, "摘要有一定事实密度：含数字的 ≥14 条（当前 " + withNum + "）");
+    assert(withTerm >= 95, "含英文术语/产品名的摘要 ≥95 条（当前 " + withTerm + "）");
+    // 长摘要必须有"据"可依，三种之一即可：
+    //   ① 配了深度内容（deep）② KG 里被当作前置（入度>0）③ 是该领域的基础档（入门/初级）
+    // 注意：移动/数据/供应链/AI/SOC 这 5 个领域当前 KG 没有任何边，所以不能只看入度（上一版就是这里判断错了）。
+    const kg2 = SD2.knowledge_graph || {};
+    const ideg = {};
+    Object.keys(kg2.prereq || {}).forEach((f) => (kg2.prereq[f] || []).forEach((to) => { ideg[to] = (ideg[to] || 0) + 1; }));
+    const deepIds = Object.keys(SD2.deep || {});
+    const longTopics = tops.filter((t) => String(t.summary || "").length > 60);
+    const unsupported = longTopics.filter((t) => deepIds.indexOf(t.id) < 0 && !(ideg[t.id] > 0)
+      && ["入门", "初级"].indexOf(t.level) < 0).map((t) => t.id);
+    console.log("  长摘要依据：有深度 " + longTopics.filter((t) => deepIds.indexOf(t.id) >= 0).length
+      + " ｜ 有入度 " + longTopics.filter((t) => ideg[t.id] > 0).length
+      + " ｜ 领域基础档 " + longTopics.filter((t) => ["入门", "初级"].indexOf(t.level) >= 0).length
+      + " ｜ 无依据 " + unsupported.length);
+    assert(unsupported.length <= 3, "长摘要必须有依据（有深度/有入度/属基础档），当前无依据 " + unsupported.length + " 个：" + unsupported.join(","));
+
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
