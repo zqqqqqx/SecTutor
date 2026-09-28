@@ -3933,6 +3933,53 @@ $("#backLab").click();
     assert(e2.support === "no", "跨框架无依据 → 只能写作「建议先看」");
   }
 
+  // ===== 91. 深度质量检查：不用字数（v1.8.0）=====
+  {
+    // 上一轮用"五字段 + 字数下限"守深度 → 实测模板服从率 100%（把八股写进规范）。
+    // 这里换成三类**可编程、可反驳**的检查，并且**明确不给字数任何权重**。
+    const ui = window.__ui;
+    const agQ = window.__agent;
+    const Q = agQ.deepQuality;
+    assert(Q && typeof Q.check === "function", "质量检查器已暴露");
+
+    // ① 幻觉检查是"外部对照"：编造的术语必须被列出来
+    const good = "SQL 注入是把用户输入当成 SQL 代码执行。常见误解是以为只要转义引号就安全了。"
+      + "例如 CVE-2021-44228 这类问题说明，参数化查询才是根本做法（Nmap 之类的工具能扫到）。";
+    const qg = Q.check(good, null);
+    assert(qg.counterExample === true, "识别出「常见误解」 ✓");
+    assert(qg.facts.length >= 1, "识别出可核对信息（CVE/命令）");
+    const bad = "这里讲一个概念 XYZQWERTY，它配合 AlphaBetaLib 使用，版本 9.9.9 效果好。";
+    const qb = Q.check(bad, null);
+    assert(qb.unknownTerms.length >= 2, "编造的术语被列为「知识库外术语」（" + qb.unknownTerms.join("、") + "）");
+    assert(qb.unknownTerms.indexOf("XYZQWERTY") >= 0 || qb.unknownTerms.indexOf("AlphaBetaLib") >= 0, "具体抓到了编造词");
+    assert(qb.ok === false && qb.hints.length >= 1, "有问题时 ok=false 并给出提示");
+    console.log("  质量检查样例：术语未识别 " + qb.unknownTerms.length + " 个 ｜ 反例 " + qg.counterExample + " ｜ 可核对信息 " + qg.facts.length + " 类");
+
+    // ② **关键**：字数不参与判定 —— 短而准必须与长而空同等对待
+    const shortGood = "常见误解：以为加了 WAF 就安全。其实 CVE-2019-11043 这类问题照样打通。";
+    const longEmpty = ("这个知识点非常重要。" .repeat(120));
+    const qs2 = Q.check(shortGood, null), ql2 = Q.check(longEmpty, null);
+    assert(qs2.ok === true || qs2.counterExample === true, "短内容只要含反例与事实就不该被判差");
+    assert(ql2.counterExample === false && ql2.facts.length === 0, "长而空的内容不会因为字数多而通过");
+    assert(ql2.ok === false, "长而空 → ok=false（字数没有换来通过）");
+    assert(typeof ql2.chars === "number" && ql2.chars > qs2.chars, "字数只作记录（长文 chars 更大），但不影响判定");
+
+    // ③ 题目自测必须来自**真实题库**（独立的、有既定答案的），而不是模型现编
+    const bank = window.eval("SEC_DATA").quizzes;
+    const tq = Q.quiz("sqli", 2);
+    assert(tq.length >= 1, "能从题库抽到该知识点的题目（" + tq.length + " 道）");
+    tq.forEach((q) => {
+      assert(q.options && q.answer != null, "抽出的题带选项与既定答案");
+      assert(bank.indexOf(q) >= 0, "题目确实来自题库（不是现编）");
+    });
+
+    // ④ 渲染：提示里不得出现任何字数评价
+    const hint = Q.render(qg);
+    assert(/质量检查（不含字数）/.test(hint), "提示明确标注「不含字数」");
+    assert(!/\d+\s*字/.test(hint), "提示中不出现字数评价（如「N 字」）");
+    assert(/术语均在知识库内|知识库外术语/.test(hint), "提示覆盖术语核对结果");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

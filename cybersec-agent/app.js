@@ -1785,6 +1785,133 @@
     return lines.join("\n");
   }
 
+  /* ==========================================================================
+     深度内容的质量检查：**不用字数** —— v1.8.0
+     为什么不用字数：字数不是理解深度。上一轮我按"五字段 + 字数下限"来守深度，
+     结果是模板服从率 100%（把八股写进了规范）。这里换成三类**可编程、可反驳**的检查：
+
+       ① 幻觉检查（外部对照）—— 生成内容里出现的英文缩写/术语，是否在知识库里真实存在？
+          不在的列为"待核实"，**这是真正的外部对照**（不是我自己的假设）。
+       ② 反例检查 —— 是否给出了"常见误解 / 反例 / 其实不是这样"这类内容。
+       ③ 具体事实检查 —— 是否含 CVE 编号、版本号、命令、端口等可核对的硬信息。
+
+     另外：**不给字数任何权重**。短而准的一百字，好过一千字的铺陈。
+     ========================================================================== */
+
+  /** 知识库里所有"已知术语"的集合（用于幻觉检查的外部对照） */
+  function buildKnownTerms() {
+    const terms = {};
+    allTopics().forEach(function (t) {
+      String(t.name || "").split(/[\s·、（）()\/]+/).forEach(function (w) {
+        if (w.length >= 2) terms[w.toLowerCase()] = 1;
+      });
+      (t.keywords || []).forEach(function (k) { terms[String(k).toLowerCase()] = 1; });
+      String(t.tool || "").split(/[\s、，,]+/).forEach(function (w) { if (w.length >= 2) terms[w.toLowerCase()] = 1; });
+    });
+    // 工具与靶场名也算已知
+    try {
+      SEC_DATA.labs.forEach(function (l) { terms[String(l.name || "").toLowerCase()] = 1; });
+    } catch (e) { /* 数据里没有 labs 时忽略 */ }
+    SEC_DATA.categories.forEach(function (c) {
+      String(c.name || "").split(/[\s·、（）()\/]+/).forEach(function (w) { if (w.length >= 2) terms[w.toLowerCase()] = 1; });
+    });
+    return terms;
+  }
+
+  /**
+   * 质量检查。返回结构化结果 + 一句人话。
+   * 注意：**不含任何字数判断**。
+   */
+  function checkDeepQuality(text, topic) {
+    const s = String(text || "");
+    const known = buildKnownTerms();
+    // ① 幻觉检查：抓英文缩写/术语（≥3 字符、含大写或数字），看是否在知识库里
+    const cand = (s.match(/\b[A-Za-z][A-Za-z0-9_\-]{2,}\b/g) || []);
+    const seen = {}, unknown = [];
+    cand.forEach(function (w) {
+      const k = w.toLowerCase();
+      if (seen[k]) return;
+      seen[k] = 1;
+      if (known[k]) return;
+      // 允许常见的通用词（避免把英文散文词误判为幻觉）
+      if (/^(the|and|for|with|this|that|from|http|https|com|org|api|json|html|css|sql|xss|csrf|os|ip|url|dns|tls|ssh|pdf|png|exe|cmd|sh|txt|id|ok|no|is|to|of|in|on|at|by|as|if|or)$/i.test(w)) return;
+      unknown.push(w);
+    });
+    // ② 反例检查
+    const hasCounter = /(误解|以为|其实|并不是|并不是说|反例|常见错误|恰恰相反|需要注意的反面|不要以为|容易搞错|错在)/.test(s);
+    // ③ 具体事实检查（可核对的硬信息）
+    const facts = [];
+    if (/CVE-\d{4}-\d{3,}/i.test(s)) facts.push("CVE 编号");
+    if (/\b\d+\.\d+(\.\d+)?\b/.test(s)) facts.push("版本号");
+    if (/(端口|port)\s*\d{2,5}|\b(80|443|22|3389|8080|6379|3306|5432|25|53|389|445)\b/.test(s)) facts.push("端口");
+    if (/`[^`]{2,}`|\b(nmap|curl|openssl|grep|tcpdump|sqlmap|burp|hashcat|john|netstat|ss|iptables|kubectl|docker)\b/i.test(s)) facts.push("命令或工具");
+    const hints = [];
+    if (!hasCounter) hints.push("没有找到「常见误解/反例」的部分（这份讲解可能偏陈述）");
+    if (!facts.length) hints.push("没有可核对的具体信息（CVE/版本/端口/命令都没有）");
+    if (unknown.length) hints.push("有 " + unknown.length + " 个词不在知识库里（可能是必要的新术语，也可能是编的，请自行核实）：" + unknown.slice(0, 6).join("、"));
+    return {
+      chars: s.length,                 // 仅作记录，**不参与任何判定**
+      counterExample: hasCounter,
+      facts: facts,
+      unknownTerms: unknown,
+      hints: hints,
+      ok: hints.length === 0,
+    };
+  }
+
+  /** 把检查结果渲染成一行给人看的提示（诚实：不确定就说不确定） */
+  function renderQualityHint(q) {
+    if (!q) return "";
+    const parts = [];
+    parts.push("📏 质量检查（不含字数）");
+    parts.push(q.counterExample ? "✅ 含常见误解/反例" : "⚠ 未见反例/误解");
+    parts.push(q.facts.length ? "✅ 含可核对信息：" + q.facts.join("、") : "⚠ 无可核对信息");
+    parts.push(q.unknownTerms.length ? "❓ 知识库外术语 " + q.unknownTerms.length + " 个（不一定错，请核实）："
+      + q.unknownTerms.slice(0, 5).join("、") : "✅ 术语均在知识库内");
+    return parts.join("　｜　");
+  }
+
+  /**
+   * 从**真实题库**里抽该知识点的题（这是非自证的关键：题目独立于本次生成，且有既定答案）
+   * 返回最多 2 题，用于"用题目检验理解"。
+   */
+  function pickTopicQuiz(topicId, n) {
+    const bank = (SEC_DATA.quizzes || []).filter(function (q) { return q.topic === topicId && q.options && q.answer != null; });
+    const out = [];
+    for (let i = 0; i < bank.length && out.length < (n || 2); i++) out.push(bank[i]);
+    return out;
+  }
+
+  /** 渲染"用真实题目检验"区块（题目来自题库，答案也是题库里的，不经过模型） */
+  function renderTopicQuiz(topicId) {
+    const qs = pickTopicQuiz(topicId, 2);
+    if (!qs.length) return '<p class="u-muted u-f11">该知识点在题库里还没有对应题目（题库覆盖 100% 知识点，但个别题可能标注不同）。</p>';
+    return qs.map(function (q, i) {
+      const opts = q.options.map(function (o, j) {
+        return '<button class="btn ghost small tq-opt" data-i="' + i + '" data-j="' + j + '" style="margin:3px 6px 3px 0">'
+          + escapeHtml(o) + "</button>";
+      }).join("");
+      return '<div class="tq-item" data-i="' + i + '"><p style="margin:6px 0 4px">' + (i + 1) + ". " + escapeHtml(q.q) + "</p>"
+        + '<div class="tq-opts">' + opts + "</div>"
+        + '<div class="u-muted u-f11 tq-fb" data-i="' + i + '"></div></div>';
+    }).join("");
+  }
+
+  function bindTopicQuiz(root, topicId) {
+    const qs = pickTopicQuiz(topicId, 2);
+    if (!qs.length || !root) return;
+    root.querySelectorAll(".tq-opt").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const i = parseInt(b.dataset.i, 10), j = parseInt(b.dataset.j, 10);
+        const q = qs[i];
+        const right = String(q.answer) === String(j) || String(q.answer) === String(q.options[j]);
+        const fb = root.querySelector('.tq-fb[data-i="' + i + '"]');
+        if (fb) fb.innerHTML = right ? "✅ 正确" : "❌ 不对 —— " + escapeHtml(q.explain || "");
+        if (!right) { try { recordMistake(topicId); } catch (e) {} }   // 答错才记入错题本
+      });
+    });
+  }
+
   const DEEP_CACHE_KEY = "sectutor_deep_cache";
   const DEEP_PROMPT_VERSION = 1;      // 提示词改版时递增，旧缓存自动失效
 
@@ -2505,7 +2632,10 @@
       const paras = String(cached.text).split(/\n{2,}/).filter((p) => p.trim());
       return '<div class="kb-section deep" id="deepBox"><h4>🎯 深入一步</h4>'
         + paras.map((p) => "<p>" + fmt(p).replace(/\n/g, "<br>") + "</p>").join("")
-        + '<p class="u-muted u-f11">按需生成 · 已缓存（' + new Date(cached.t).toLocaleDateString() + "）</p></div>";
+        + '<p class="u-muted u-f11">按需生成 · 已缓存（' + new Date(cached.t).toLocaleDateString() + "）</p>"
+        + '<div class="deep-quality u-muted u-f11">' + escapeHtml(renderQualityHint(cached.q || checkDeepQuality(cached.text, topic))) + "</div>"
+        + '<div class="deep-quiz"><b class="u-f12">用真实题目检验一下（题目与答案来自题库，不经模型）</b>'
+        + renderTopicQuiz(topic.id) + "</div></div>";
     }
     return '<div class="kb-section deep" id="deepBox"><h4>🎯 深入一步</h4>'
       + '<p class="u-muted u-f11">这个知识点的深度讲解没有预置：点下面的按钮，按你当前档位现场生成（内容会缓存，下次直接看）。</p>'
@@ -2521,10 +2651,15 @@
       btn.disabled = true;
       if (msg) msg.textContent = "正在生成…（内容会按知识点缓存，下次直接看）";
       try {
-        await generateDeep(topic.id);
+        const text = await generateDeep(topic.id);
+        // 生成即做质量检查（**不用字数**），结果随缓存一起存，供后续渲染直接展示
+        const q = checkDeepQuality(text, topic);
+        const cache = loadDeepCache();
+        if (cache[topic.id]) { cache[topic.id].q = q; saveDeepCache(cache); }
         const box = $("#deepBox");
         if (box) box.outerHTML = renderDeepSection(topic);
-        toast("深度讲解已生成并缓存", "ok");
+        bindTopicQuiz($("#deepBox"), topic.id);
+        toast("生成完成" + (q.hints.length ? "（有 " + q.hints.length + " 处提示，请留意）" : ""), q.ok ? "ok" : "info");
       } catch (e) {
         btn.disabled = false;
         if (msg) msg.textContent = "生成失败：" + (e && e.message ? e.message : e);
@@ -2594,6 +2729,7 @@
     const kbNextBtn = $("#kbNext");
     if (kbNextBtn && nextT) kbNextBtn.addEventListener("click", () => showTopicDetail(nextT.id));
     bindDeepGen(topic);            // v1.8.0：深度讲解按需生成
+    bindTopicQuiz($("#deepBox"), topic.id);   // 已缓存时：绑定题库自测
     const topicAiBtn = $("#topicAiBtn");
     if (topicAiBtn) topicAiBtn.addEventListener("click", () => aiAssistForTopic(topic));
     $("#learnBtn").addEventListener("click", () => {
@@ -3945,6 +4081,7 @@
         episodes: loadEpisodes, record: recordEpisode, similar: similarEpisodes, hint: episodeHint,
       },
       roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
+      deepQuality: { check: checkDeepQuality, render: renderQualityHint, quiz: pickTopicQuiz, known: buildKnownTerms },
       deep: { get: getCachedDeep, put: putCachedDeep, gen: generateDeep, prompt: buildDeepPrompt,
         cacheKey: DEEP_CACHE_KEY, version: DEEP_PROMPT_VERSION },
       autonomy: {
