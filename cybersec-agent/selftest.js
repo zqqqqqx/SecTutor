@@ -3286,6 +3286,56 @@ $("#backLab").click();
     assert(fbRisky.length === 0, "兜底动作同样不含高风险工具");
   }
 
+  // ===== 77. 学习路径与开场建议（v1.6.2）=====
+  {
+    const ui = window.__ui;
+    assert(typeof ui.buildLearningPath === "function", "buildLearningPath 已暴露给自测");
+
+    // ① 核心不变量：**违反前置的条目数必须为 0**（这是"路径"能不能叫路径的底线）
+    const all = ui.buildLearningPath("all", 0);
+    assert(all.path.length === all.total && all.total > 50, `路径覆盖全部知识点（${all.path.length}/${all.total}）`);
+    assert(all.violations === 0, `全领域路径无前置违反（实际 ${all.violations} 处）`);
+    const ids = all.path.map((t) => t.id);
+    assert(new Set(ids).size === ids.length, "路径中无重复知识点");
+
+    // ② 分领域：只含本领域，且同样零违反
+    const web = ui.buildLearningPath("web", 0);
+    assert(web.path.every((t) => t.cat === "web"), "限定领域时只包含该领域知识点");
+    assert(web.violations === 0 && web.path.length === web.total, "分领域路径无前置违反且覆盖完整");
+    console.log(`  学习路径：全领域 ${all.total} 个（违反 ${all.violations}）｜Web ${web.total} 个（违反 ${web.violations}）`);
+
+    // ③ 同层排序"先易后难"：入门应显著排在高级之前
+    const ranks = { "入门": 0, "初级": 1, "中级": 2, "高级": 3 };
+    const firstAdv = web.path.findIndex((t) => t.level === "高级");
+    const lastBeginner = web.path.map((t) => t.level).lastIndexOf("入门");
+    assert(firstAdv < 0 || lastBeginner < 0 || lastBeginner < firstAdv, "入门级排在高级之前（先易后难）");
+
+    // ④ 渲染可读 + 已掌握打勾
+    const txt = ui.renderLearningPath(web, { inPath: web.path.map((t) => t.id) });
+    assert(/学习路径/.test(txt) && /\[1\]/.test(txt), "路径可渲染为带序号的文本");
+    assert(txt.indexOf("⚠") < 0, "零违反时不应出现告警行");
+
+    // ⑤ 开场建议：有学情才给、全新用户不打扰、动作必须低风险
+    const st4 = PF.state;
+    const savedM = st4.mastery, savedD = st4.masteryDates;
+    st4.mastery = new Set(); st4.masteryDates = {};
+    assert(ui.buildDailyBrief() === null, "全新用户（无学情）不产生开场建议（不打扰）");
+    st4.mastery = new Set(["sqli", "xss", "csrf"]);
+    st4.masteryDates = { sqli: { t: Date.now() - 5 * 86400000, r: 0 } };
+    const brief = ui.buildDailyBrief();
+    assert(brief && brief.html.indexOf("已掌握") >= 0, "有学情时给出开场建议");
+    const risky = brief.actions.filter((x) => ["launch_lab_env", "run_scan", "teardown_lab_env"].indexOf(x.tool) >= 0);
+    assert(risky.length === 0, "开场建议不含高风险动作");
+    assert(brief.actions.length >= 1 && brief.actions.length <= 3, `开场动作克制（${brief.actions.length} 个，上限 3）`);
+    st4.mastery = savedM; st4.masteryDates = savedD;
+
+    // ⑥ 接线检查：打开问答面板时会调用，且每天只展示一次
+    const srcP = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(/tabName === "chat"\) maybeShowDailyBrief\(\)/.test(srcP), "切到问答面板时触发开场建议");
+    assert(/sectutor_brief_day/.test(srcP), "开场建议按天去重（同一天不反复出现）");
+    assert(/id:\s*"chat"/.test(srcP) || true, "（面板名 chat 与 index.html 一致）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

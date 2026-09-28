@@ -1165,6 +1165,26 @@
     });
   }
 
+
+  /** 每天首次进入问答面板时展示一次开场建议（用 localStorage 记日期，避免反复打扰） */
+  function maybeShowDailyBrief() {
+    try {
+      const log = $("#chatLog");
+      if (!log || log.querySelector(".msg-row")) return;            // 已有对话就不插
+      const today = new Date().toISOString().slice(0, 10);
+      let last = "";
+      try { last = localStorage.getItem("sectutor_brief_day") || ""; } catch (e) {}
+      if (last === today) return;                                    // 今天已展示过
+      const brief = buildDailyBrief();
+      if (!brief) return;                                            // 全新用户不打扰
+      try { localStorage.setItem("sectutor_brief_day", today); } catch (e) {}
+      const html = '<b>今天从哪继续？</b><div class="daily-brief">' + brief.html + "</div>"
+        + renderAgentActions(brief.actions);
+      const row = addMsg("bot", html);
+      bindAgentActions(row, brief.actions, (h) => addMsg("bot", h));
+    } catch (e) { /* 开场建议失败不影响正常使用 */ }
+  }
+
   function activateTab(tabName) {
     const prev = $(".panel.active");
     if (prev && prev.id) savePanelScroll(prev.id.replace(/^panel-/, ""));
@@ -1175,6 +1195,7 @@
     });
     $$(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tabName));
     if (tabName === "today") renderToday();   // 今日页按最新掌握度/复习状态重算
+    if (tabName === "chat") maybeShowDailyBrief();   // v1.6.2：打开问答面板即给"今天从哪继续"
     renderCopilotCtx();                        // 副驾驶上下文随面板变化
     // 顶栏 breadcrumb 同步
     const sub = TAB_NAMES[tabName] || "";
@@ -2768,6 +2789,105 @@
     run_scan: "靶机自检",
     teardown_lab_env: "释放靶场",
   };
+
+  /**
+   * 学习路径（v1.6.2）
+   * 背景：项目里此前**没有任何路径排序逻辑**（`learningPath/buildPath/topoSort` 全无）——
+   * "想系统学"只能靠模型临时拼。这是课程型产品的核心能力缺口，而 KG 里已有前置关系可用。
+   * 做法：对领域内的知识点做 Kahn 拓扑排序，保证**任何知识点的前置若也在路径中就一定排在它前面**；
+   * 同层按「入门 → 初级 → 中级 → 高级」稳定排序（先易后难）。
+   * 守护：违反前置的条目数必须为 0。
+   */
+  const LEVEL_RANK = { "入门": 0, "初级": 1, "中级": 2, "高级": 3 };
+  function buildLearningPath(category, limit) {
+    const dom = (category && category !== "all") ? category : null;
+    const topics = allTopics().filter((t) => !dom || t.cat === dom);
+    const ids = {};
+    topics.forEach((t) => { ids[t.id] = t; });
+    const byLevel = (a, b) => ((LEVEL_RANK[a.level] == null ? 9 : LEVEL_RANK[a.level]) -
+                               (LEVEL_RANK[b.level] == null ? 9 : LEVEL_RANK[b.level])) ||
+                               String(a.id).localeCompare(String(b.id));
+    // 入度 = 本集合内的前置数量
+    const indeg = {}, succ = {};
+    topics.forEach((t) => { indeg[t.id] = 0; succ[t.id] = []; });
+    topics.forEach((t) => {
+      (KG.prereq[t.id] || []).forEach((p) => {
+        if (!ids[p]) return;                     // 前置不在本领域内 → 不参与本领域排序
+        indeg[t.id]++;
+        succ[p].push(t.id);
+      });
+    });
+    const queue = topics.filter((t) => indeg[t.id] === 0).sort(byLevel);
+    const ordered = [];
+    const seen = {};
+    while (queue.length) {
+      const t = queue.shift();
+      if (seen[t.id]) continue;
+      seen[t.id] = true;
+      ordered.push(t);
+      (succ[t.id] || []).forEach((n) => {
+        indeg[n]--;
+        if (indeg[n] === 0) { queue.push(ids[n]); queue.sort(byLevel); }
+      });
+    }
+    // 兜底：理论上只会在成环时漏节点（当前数据无环），接在末尾并如实报告
+    const leftover = topics.filter((t) => !seen[t.id]).sort(byLevel);
+    const path = ordered.concat(leftover);
+    return {
+      path: limit ? path.slice(0, limit) : path,
+      total: topics.length,
+      /** 违反前置的条目数（守护用；正常恒为 0） */
+      violations: (function () {
+        const pos = {};
+        path.forEach((t, i) => { pos[t.id] = i; });
+        let bad = 0;
+        path.forEach((t) => {
+          (KG.prereq[t.id] || []).forEach((p) => { if (pos[p] != null && pos[p] > pos[t.id]) bad++; });
+        });
+        return bad;
+      })(),
+      leftover: leftover.length,
+      domain: dom || "all",
+    };
+  }
+
+  /** 把路径渲染成可读文本（供工具返回给人看） */
+  function renderLearningPath(res, opts) {
+    const o = opts || {};
+    const lines = [];
+    lines.push("学习路径（" + (res.domain === "all" ? "全部领域" : catById(res.domain).name) + "）：共 "
+      + res.total + " 个知识点" + (res.path.length < res.total ? "，本次展示前 " + res.path.length + " 个" : ""));
+    res.path.forEach((t, i) => {
+      const pre = (KG.prereq[t.id] || []).filter((p) => (o.inPath || []).indexOf(p) < 0);
+      const mark = state.mastery.has(t.id) ? "✅ " : "";
+      const why = pre.length ? "（前置：" + pre.map(topicName).join("、") + "）" : "";
+      lines.push("[" + (i + 1) + "] " + mark + t.name + "  <" + t.level + ">" + why);
+    });
+    if (res.violations) lines.push("⚠ 注意：有 " + res.violations + " 处前置顺序异常，请以知识图谱为准。");
+    return lines.join("\n");
+  }
+
+  /**
+   * 开场建议（v1.6.2）
+   * 背景：问答面板打开时是一片空白，主动动作又只在"答完之后"才出现 —— 打开即无指引。
+   * 现在：有学情时给一张"今天从哪继续"的卡片（含可点动作）；全新用户不打扰（返回 null）。
+   */
+  function buildDailyBrief() {
+    const due = (typeof dueReviews === "function") ? dueReviews() : [];
+    const mis = (typeof mistakesByTopic === "function") ? mistakesByTopic(3).filter((x) => x.tid) : [];
+    const learned = state.mastery.size, total = allTopics().length;
+    if (!due.length && !mis.length && !learned) return null;
+    const bits = ["已掌握 <b>" + learned + "/" + total + "</b> 个知识点"];
+    if (due.length) {
+      bits.push("有 <b>" + due.length + "</b> 个知识点到期该复习了（最久已逾期 " + due[0].days.toFixed(1) + " 天）");
+    }
+    if (mis.length) bits.push("错得最多的是 <b>" + topicName(mis[0].tid) + "</b>（" + mis[0].n + " 次）");
+    const actions = [];
+    actions.push({ label: "📋 今天学什么", tool: "suggest_next", args: {}, why: "按错题 / 到期 / 前置综合排序" });
+    if (mis.length) actions.push({ label: "🔁 错题重练", tool: "quiz_from_mistakes", args: {}, why: "把错的再练一遍" });
+    if (due.length) actions.push({ label: "📊 看学习进度", tool: "read_progress", args: {}, why: "先看清全局再决定" });
+    return { html: bits.join(" ｜ "), actions: actions };
+  }
 
   /** 解析「键: 值」型结果（如学习进度统计），用于渲染成小格 —— 此前这类结果只能掉进原始文本块 */
   function parseToolStats(text) {
@@ -4490,6 +4610,9 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     window.__ui = {
       renderToolTrace: renderToolTrace,
       buildProactiveActions: buildProactiveActions,
+      buildLearningPath: buildLearningPath,
+      buildDailyBrief: buildDailyBrief,
+      renderLearningPath: renderLearningPath,
       parseToolStats: parseToolStats,
       buildFallbackActions: buildFallbackActions,
       renderAgentActions: renderAgentActions,
@@ -5864,6 +5987,12 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       startReview(ids);
       return "已按错题知识点发起重练，共 " + ids.length + " 个知识点：" + ids.map((i) => topicName(i)).join("、") + "。请在弹窗中作答。";
     } },
+    { name: "learning_path", description: "按知识图谱的前置关系生成一条学习路径（拓扑排序，保证前置在前），可选限定领域。用于「我想系统学 Web 安全」「给我排个学习顺序」这类诉求。返回有序知识点列表，已掌握的打勾标记。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id（如 web/binary）；不填或 all 表示全部领域" }, limit: { type: "integer", description: "返回条数，默认 20，最多 60" } }, required: [] }, run: (a) => {
+      const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 20, 1), 60);
+      const res = buildLearningPath((a && a.category) || "all", limit);
+      if (!res.path.length) return "该范围内没有知识点。";
+      return renderLearningPath(res, { inPath: res.path.map((t) => t.id) });
+    } },
     { name: "suggest_next", description: "基于用户真实学情给出「下一步学什么」的排序建议，每条都带理由。综合三类信号：① 错得最多的知识点（错题本）② 已到期该复习的项（按逾期倍数）③ 知识图谱里前置已满足但尚未掌握的知识点。用于回答「我接下来该学什么/复习什么」「给我排个顺序」。", parameters: { type: "object", properties: { domain: { type: "string", description: "可选，限定领域 id（如 web/binary）；不填则跨领域" }, limit: { type: "integer", description: "返回条数，默认 5，最多 8" } }, required: [] }, run: (a) => {
       const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 5, 1), 8);
       const dom = (a && a.domain) || null;
@@ -5990,6 +6119,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     search_knowledge: { level: "low", confirm: false },
     jwt_decode: { level: "low", confirm: false },
     related_topics: { level: "low", confirm: false },
+    learning_path: { level: "low", confirm: false },
     suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
@@ -6028,7 +6158,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -6038,7 +6168,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {
