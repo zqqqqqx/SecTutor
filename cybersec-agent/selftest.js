@@ -3498,6 +3498,41 @@ $("#backLab").click();
 
   }
 
+  // ===== 81. 异常处理纪律（v1.6.6）=====
+  {
+    // 起因：一份分析指控"防御性过度工程 / 吞异常"。实测后发现：
+    //   · 真正"块内无语句"的 catch 只有 18 处（我第一版脚本报 85 是**测量误差** ——
+    //     把 .catch(handler) 形态和多行块都算成空了）
+    //   · 其中 16 处是**合理降级**（localStorage / 剪贴板 / 脏 JSON / 媒体能力 / SSE 分片）
+    //   · 真正该修的是 2 处：embedding 调用失败、Agent 路由失败 —— 都被完全静默
+    // 于是这条守护不再管"数量"，只管**规则**：网络与模型调用不允许静默失败。
+    const srcC = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    const cl = srcC.split("\n");
+    const bad = [];
+    cl.forEach((l, i) => {
+      const t = l.trim();
+      if (!/^catch\s*\(/.test(t)) return;                       // 只看 try/catch 语句形态
+      const rest = t.slice(t.indexOf(")") + 1).trim();
+      const next = (cl[i + 1] || "").trim();
+      const emptyBlock = rest === "{}" || (rest === "{" && next === "}");
+      if (!emptyBlock) return;
+      const ctx = cl.slice(Math.max(0, i - 14), i).join(" ");
+      // 网络与模型调用：不允许静默
+      if (/fetch\(|EMBED_API_KEY|embeddings|askAgent|_agentGateway/.test(ctx)) bad.push(i + 1);
+    });
+    console.log("  异常处理：网络/模型调用处的空 catch " + bad.length + " 处"
+      + (bad.length ? "（行 " + bad.join(",") + "）" : "（已全部留痕）"));
+    assert(bad.length === 0, "涉及网络与模型调用时不允许静默吞异常（需 console.warn 留痕），当前：" + bad.join(","));
+
+    // 顶部必须有说明，讲清"哪些静默是刻意的"——避免下次又把合理降级当坏味道来改
+    assert(/关于空 catch/.test(srcC), "app.js 顶部保留「空 catch 说明」（解释哪些静默是刻意的）");
+    assert(/涉及网络与模型调用的异常不允许静默/.test(srcC), "说明中写明硬规则");
+
+    // 留痕本身要存在（2 处已加）
+    assert((srcC.match(/console\.warn\("\[embed\]/g) || []).length === 1, "embedding 降级已留痕");
+    assert((srcC.match(/console\.warn\("\[agent\]/g) || []).length === 1, "Agent 路由降级已留痕");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

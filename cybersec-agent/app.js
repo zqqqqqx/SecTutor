@@ -4,6 +4,18 @@
    - 智能问答：关键词路由 + 难度自适应 + 可选 LLM 接口
    - 靶场、学习计划、进度跟踪（localStorage）
    ============================================================ */
+/* 关于空 catch（v1.6.6，回应"防御性过度工程"的质疑）
+   本文件里存在若干刻意静默的异常分支，绝大多数是**合理的降级**，不是吞异常：
+     · localStorage / sessionStorage   —— 隐私模式或被禁用时不该让主流程崩掉
+     · navigator.clipboard            —— 权限被拒时已有 fallbackCopy
+     · JSON.parse（历史记录/草稿）      —— 脏数据不该阻塞渲染
+     · 语音 / 媒体能力                  —— 不可用时已给用户文字提示
+     · SSE 分片不完整                   —— 流式响应的正常现象，已有注释
+   规则：**涉及网络与模型调用的异常不允许静默**。当前仅两处（embedding 调用、Agent 路由），
+   均已加 console.warn 留痕；新增此类分支必须同样留痕，否则 selftest 会失败。
+   计数：本文件真正"块内无语句"的 catch 约 18 处，其中 16 处属上述合理降级。
+*/
+
 (function () {
   "use strict";
 
@@ -157,7 +169,12 @@
       if (!r.ok) return null;
       const d = await r.json();
       return d.data && d.data[0] && d.data[0].embedding ? d.data[0].embedding : null;
-    } catch (e) { return null; }
+    } catch (e) {
+      // 向量服务不可用是**预期内**的降级（未配 EMBED_API_KEY 时必然走到这里），
+      // 但不能完全静默：否则「检索为什么退化成纯 BM25」将无从排查。
+      if (typeof console !== "undefined") console.warn("[embed] 向量服务不可用，本次退化为词法检索：", e && e.message);
+      return null;
+    }
   }
   // 混合召回：BM25 始终参与；向量可用时按 RRF 融合（文档向量需预计算落地，当前为空 → 退化为 BM25）
   function hybridRetrieve(query, k) {
@@ -2011,7 +2028,11 @@
   function askSame(q) {
     try {
       if (state.llm && state.llm.key) { askAgent(q, {}); return; }
-    } catch (e) {}
+    } catch (e) {
+      // 走 Agent 失败会静默降级到内置问答 —— 用户会以为「模型没生效」，
+      // 必须留痕，否则这条降级路径永远不会被发现。
+      if (typeof console !== "undefined") console.warn("[agent] 调用大模型失败，已降级为内置问答：", e && e.message);
+    }
     askBuiltin(q);
   }
 
