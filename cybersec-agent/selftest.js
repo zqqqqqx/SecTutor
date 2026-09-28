@@ -3391,10 +3391,10 @@ $("#backLab").click();
     st5.mastery = savedM5;
   }
 
-  // ===== 79. 内容深度与去 AI 味（v1.6.4）=====
+  // ===== 79. 内容深度与长度分布（v1.6.4）=====
   {
     const ui = window.__ui;
-    // 用真实指标守住"深度"与"AI 味"这两个此前**从没有尺子**的维度。
+    // 用真实指标守住"深度"与"阅读节奏"这两个此前**从没有尺子**的维度。
     const SD = window.eval("SEC_DATA");
     const DEEP = SD.deep || {};
     const ids = Object.keys(DEEP);
@@ -3434,7 +3434,7 @@ $("#backLab").click();
     assert(covered >= 8, `本批至少补 8 个枢纽知识点（当前 ${covered}）`);
     assert(after <= before - 3, `「薄」占比应随补写下降（${before.toFixed(1)}% → ${after.toFixed(1)}%）`);
 
-    // ③ 去 AI 味：deep 集合上的长度变异系数（人写内容长度天然不均）
+    // ③ 长度分布：deep 集合上的长度变异系数（有意义的差异才有阅读节奏）
     const lens = ids.map((id) => {
       const d = DEEP[id];
       return [d.why, d.how, (d.pitfalls || []).join(""), (d.cases || []).join(""), d.further].join("").length;
@@ -3442,7 +3442,7 @@ $("#backLab").click();
     const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
     const sd = Math.sqrt(lens.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lens.length);
     const cv = sd / mean;
-    console.log(`  深度正文长度变异系数 ${cv.toFixed(2)}（摘要基线仅 0.22，越"不齐"越不像模板）`);
+    console.log(`  深度正文长度变异系数 ${cv.toFixed(2)}（摘要基线仅 0.22）`);
     assert(cv >= 0.25, `深度内容长度不应整齐划一（变异系数 ${cv.toFixed(2)} ≥ 0.25）`);
     assert(lens.every((l) => l >= 500), `每条 deep 合计 ≥500 字（最短 ${Math.min.apply(null, lens)}）`);
 
@@ -3531,6 +3531,25 @@ $("#backLab").click();
     // 留痕本身要存在（2 处已加）
     assert((srcC.match(/console\.warn\("\[embed\]/g) || []).length === 1, "embedding 降级已留痕");
     assert((srcC.match(/console\.warn\("\[agent\]/g) || []).length === 1, "Agent 路由降级已留痕");
+  }
+
+  // ===== 82. 交付物不出现「过程话术」（v1.6.5 补充）=====
+  {
+    // 起因：我一度把「去 AI 味」这类**内部工作过程**写进了源码注释、数据文件与 CHANGELOG。
+    // 但这些都是**给用户看的交付物** —— 写进去等于自己贴标签，与"呈现为人工打磨的成品"完全相反。
+    // 规则：交付物只写**产品与工程理由**，不写"我们在回应谁的批评 / 在消除某种痕迹"。
+    const files = ["app.js", "data.js"];
+    const bad = [];
+    files.forEach((f) => {
+      const t = fs.readFileSync(path.join(__dirname, f), "utf8");
+      ["AI 味", "去 AI", "质疑", "summaryRewrite"].forEach((w) => {
+        if (t.indexOf(w) >= 0) bad.push(f + ":" + w);
+      });
+    });
+    const chg = fs.readFileSync(path.join(__dirname, "..", "CHANGELOG.md"), "utf8");
+    ["AI 味", "去 AI", "质疑"].forEach((w) => { if (chg.indexOf(w) >= 0) bad.push("CHANGELOG:" + w); });
+    console.log("  交付物话术检查：" + (bad.length ? "发现 " + bad.join("、") : "干净"));
+    assert(bad.length === 0, "交付物（源码/数据/CHANGELOG）不得出现「AI 味 / 去 AI / 质疑 / summaryRewrite」等过程话术：" + bad.join("、"));
   }
 
   console.log("\n==== 自测结果 ====");
