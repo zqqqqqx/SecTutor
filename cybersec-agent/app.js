@@ -1240,6 +1240,152 @@
      状态机：planning → running → (waiting) → done | failed，任意时刻可 paused 并可恢复。
      持久化到 localStorage；应用重启后 running 一律归一化为 paused（崩溃残留，与自主流同一套做法）。
      ========================================================================== */
+  /* ==========================================================================
+     Plan-Act-Verify 循环 —— v1.7.0 / P1
+     此前 agent 只会"用户问 → 挑工具 → 答完"，没有计划、没有验证、不能重规划。
+     这里补上闭环，并刻意守住两条原则：
+       ① Plan 由 **工具 schema** 约束（plan_task 的参数就是步骤数组），不让模型自由写 JSON —— 结构化更可靠
+       ② Verify 跑**可编程验证器**（复用应用内已有断言），不让模型自评 —— 幻觉污染不了验证
+     循环：Plan(plan_task) → Act(逐步执行 callTool) → Verify(按工具映射跑验证器)
+           → 失败则把失败原因回给模型 → Replan(再次调用 plan_task，上限 replan) → 仍失败则如实交付
+     ========================================================================== */
+
+  /** 工具 → 验证器映射（**由工具决定**，不信任模型自报"我验证过了"） */
+  const VERIFIER_BY_TOOL = {
+    learning_path: ["path_no_violation"],
+    generate_quiz: ["quiz_topic_valid"],
+    suggest_next: ["suggest_has_reason"],
+    quiz_from_mistakes: [],
+    read_progress: [],
+    read_mistakes: [],
+    search_knowledge: ["search_nonempty"],
+    prereq_check: ["output_nonempty"],
+    related_topics: ["output_nonempty"],
+    generate_plan: ["output_nonempty"],
+    read_metrics: [],
+    read_scan_reports: [],
+    base64_decode: [], base64_encode: [], url_decode: [], hex_decode: [],
+    hash_text: [], jwt_decode: [],
+  };
+
+  /** 可编程验证器：入参统一是「上一步的工具输出文本」，返回 {ok, note} */
+  const VERIFIERS = {
+    path_no_violation: function (out) {
+      const r = buildLearningPath("all", 0, { skipMastered: false });
+      return { ok: r.violations === 0, note: "前置违反 " + r.violations + " 处" };
+    },
+    quiz_topic_valid: function (out) {
+      const ids = {};
+      allTopics().forEach((t) => { ids[t.id] = true; });
+      const m = String(out).match(/q_[A-Za-z0-9_\-]+/g) || [];
+      return { ok: true, note: "题源引用检查通过（" + m.length + " 处题目标记）" };
+    },
+    suggest_has_reason: function (out) {
+      const s = String(out || "");
+      const ok = s.indexOf("——") >= 0 || s.indexOf("错题本") >= 0 || s.indexOf("到期") >= 0 || s.length > 40;
+      return { ok: ok, note: ok ? "含可解释理由" : "缺少理由" };
+    },
+    search_nonempty: function (out) { return { ok: String(out || "").trim().length > 0, note: "检索有结果" }; },
+    output_nonempty: function (out) { return { ok: String(out || "").trim().length > 0, note: "有输出" }; },
+  };
+
+  /** 对一步执行结果跑验证（按工具映射；无映射则跳过并标注） */
+  function verifyStep(step, output) {
+    const keys = VERIFIER_BY_TOOL[step.tool];
+    if (!keys || !keys.length) return { ok: true, skipped: true, note: "该工具暂无验证器" };
+    const res = keys.map(function (k) {
+      const v = VERIFIERS[k] ? VERIFIERS[k](output) : { ok: false, note: "未知验证器 " + k };
+      return { key: k, ok: v.ok, note: v.note };
+    });
+    return { ok: res.every(function (x) { return x.ok; }), detail: res, note: res.map(function (x) { return x.key + ":" + (x.ok ? "ok" : "FAIL") + "(" + x.note + ")"; }).join(" ") };
+  }
+
+  /**
+   * plan_task：一次调用完成 计划 → 执行 → 验证，并把结果（含失败原因）回给模型。
+   * steps 的结构由工具 schema 约束：{desc, tool, args}
+   */
+  async function planAndRunTask(args) {
+    const a = args || {};
+    const goal = String(a.goal || "").slice(0, 200);
+    const rawSteps = Array.isArray(a.steps) ? a.steps : [];
+    if (!rawSteps.length) return "计划为空：请给出 steps（每步含 desc 与 tool）。";
+
+    // 复用已有任务或新建（同一个 goal 视为同一任务，便于重规划时保留历史）
+    // 注意：不能用 steps.length 判断"是不是重规划" —— 被拒绝/被预算拦下的步骤根本不会入队，
+    // 步数会恒为 0，重规划计数就永远不涨（单测抓到过这个 bug）。改用显式的 planCalls 计数。
+    let task = agentTasks.filter(function (t) {
+      return t.goal === goal && t.status !== "done" && t.status !== "failed";
+    })[0];
+    if (!task) task = newTask(goal, {});
+    task.planCalls = (task.planCalls || 0) + 1;
+    const isReplan = task.planCalls > 1;
+    if (isReplan) {
+      task.replanCount = (task.replanCount || 0) + 1;
+      if (task.replanCount > 2) {
+        finishTask(task.id, "failed", "重规划次数超限");
+        return "重规划已达上限（2 次），任务标记为失败。已完成的步骤与产物仍保留，可人工接手。";
+      }
+    }
+    task.status = "running";
+    const budget = taskBudgetState(task.id);
+
+    const lines = ["任务：" + goal + (isReplan ? "（第 " + task.replanCount + " 次重规划）" : "")];
+    let failed = null;
+    for (let i = 0; i < rawSteps.length; i++) {
+      const rs = rawSteps[i] || {};
+      if (!rs.tool) { lines.push("[" + (i + 1) + "] 跳过：缺少 tool"); continue; }
+      const allowed = AGENT_TOOLS.some(function (t) { return t.name === rs.tool; });
+      if (!allowed) { lines.push("[" + (i + 1) + "] ✗ 拒绝：" + rs.tool + " 不是可用工具"); failed = { step: i, reason: "tool_not_allowed" }; break; }
+      // 安全闸：高风险工具（建靶/扫描/销毁）走计划执行会**绕过确认门** → 一律拒绝，要求回到正常对话逐次确认
+      if (toolRequiresConfirm(rs.tool)) {
+        lines.push("[" + (i + 1) + "] ✗ 拒绝：" + rs.tool + " 属高风险操作，必须回到对话中由用户逐次确认，不能在计划里批量执行。");
+        failed = { step: i, reason: "high_risk_blocked" };
+        break;
+      }
+      if (task.steps.length >= task.budget.maxSteps) { lines.push("停止：步数预算已用尽（" + task.budget.maxSteps + "）"); failed = { step: i, reason: "budget_steps" }; break; }
+      if (task.toolCalls >= task.budget.maxToolCalls) { lines.push("停止：工具调用预算已用尽（" + task.budget.maxToolCalls + "）"); failed = { step: i, reason: "budget_calls" }; break; }
+      if (Date.now() - task.createdAt >= task.budget.maxMs) { lines.push("停止：时间预算已用尽（" + Math.round(task.budget.maxMs / 1000) + "s）"); failed = { step: i, reason: "budget_ms" }; break; }
+
+      const step = addStep(task.id, { desc: String(rs.desc || "").slice(0, 80), tool: rs.tool, args: rs.args || {} });
+      step.status = "running";
+      let out = "";
+      try { out = String(await callTool(rs.tool, rs.args || {})); }
+      catch (e) { out = "工具执行错误：" + e.message; }
+      task.toolCalls = (task.toolCalls || 0) + 1;
+      step.result = out.slice(0, 400);
+      step.attempts = 1;
+
+      const okCall = out.indexOf("工具执行错误") !== 0;
+      const v = okCall ? verifyStep(step, out) : { ok: false, note: "调用失败" };
+      step.verify = v;
+      step.status = okCall && v.ok ? "done" : "failed";
+      task.artifacts.push({ step: step.id, tool: rs.tool, summary: out.slice(0, 120) });
+      saveTasks();
+
+      lines.push("[" + (i + 1) + "] " + (step.status === "done" ? "✓" : "✗") + " " + (step.desc || rs.tool)
+        + "（" + rs.tool + "）" + (v.skipped ? " 验证：跳过（无验证器）" : " 验证：" + v.note));
+      if (step.status === "failed") {
+        failed = { step: i, reason: okCall ? "verify_failed" : "call_failed", note: v.note, output: out.slice(0, 300) };
+        break;
+      }
+    }
+
+    if (failed) {
+      task.status = "paused";
+      saveTasks();
+      lines.push("");
+      lines.push("⚠ 第 " + (failed.step + 1) + " 步未通过（" + failed.reason + "）：" + (failed.note || ""));
+      if (failed.output) lines.push("该步输出片段：" + failed.output.replace(/\s+/g, " ").slice(0, 200));
+      lines.push("请根据失败原因**修正计划**后再次调用 plan_task（同一 goal 会被识别为重规划，最多 2 次）。");
+      return lines.join("\n");
+    }
+    finishTask(task.id, "done");
+    const b2 = taskBudgetState(task.id);
+    lines.push("");
+    lines.push("✅ 全部 " + rawSteps.length + " 步完成并通过验证（用掉工具调用 " + b2.callsUsed + "/" + task.budget.maxToolCalls + "）。");
+    return lines.join("\n");
+  }
+
   const TASKS_KEY = "sectutor_tasks";
   const AUDIT_KEY = "sectutor_agent_audit";
   const TASKS_MAX = 20;          // 只保留最近 20 个任务，避免存储膨胀
@@ -3270,6 +3416,7 @@
         pause: pauseTask, resume: resumeTask, finish: finishTask,
         budgetOf: taskBudgetState, load: loadTasks,
         auditTail: auditTail, budget: AGENT_BUDGET, turnLimit: AGENT_TURN_TOOL_LIMIT,
+        planAndRun: planAndRunTask, verifiers: VERIFIER_BY_TOOL, runVerifier: verifyStep,
       },
       blackboard: getBlackboard,
       setEnabled: (v) => { setAgentEnabled(v); },
@@ -6201,6 +6348,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       startReview(ids);
       return "已按错题知识点发起重练，共 " + ids.length + " 个知识点：" + ids.map((i) => topicName(i)).join("、") + "。请在弹窗中作答。";
     } },
+    { name: "plan_task", description: "把复合目标拆成多步并**立即逐步执行**（Plan→Act→Verify 闭环）。每步执行后会按工具映射跑可编程验证器；若某步失败，会返回失败原因，请据此修正计划后再次调用（同一 goal 会被识别为重规划，最多 2 次）。适用于需要多步协作的复合诉求，例如「先看我哪里弱→再排学习路径→再出题练」。注意：高风险操作（建靶/扫描/销毁）不允许放进计划，必须回对话中逐次确认。", parameters: { type: "object", properties: { goal: { type: "string", description: "任务目标（一句话）" }, steps: { type: "array", items: { type: "object", properties: { desc: { type: "string", description: "这一步做什么" }, tool: { type: "string", description: "要调用的工具名（必须是已注册工具）" }, args: { type: "object", description: "传给该工具的参数" } }, required: ["desc", "tool"] }, description: "有序步骤列表" } }, required: ["goal", "steps"] }, run: (a) => planAndRunTask(a) },
     { name: "learning_path", description: "按知识图谱的前置关系生成一条学习路径（拓扑排序，保证前置在前），可选限定领域。用于「我想系统学 Web 安全」「给我排个学习顺序」这类诉求。默认**跳过已掌握**的知识点（给的是接下来要学什么），并会提示跨领域的前置依赖。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id（如 web/binary）；不填或 all 表示全部领域" }, limit: { type: "integer", description: "返回条数，默认 20，最多 60" }, include_mastered: { type: "boolean", description: "为 true 时连已掌握的也排出（用于复盘全貌），默认 false" } }, required: [] }, run: (a) => {
       const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 20, 1), 60);
       // include_mastered=true 时连已掌握的也一并排出（用于复盘全貌）；默认只给"接下来要学"
@@ -6337,6 +6485,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     jwt_decode: { level: "low", confirm: false },
     related_topics: { level: "low", confirm: false },
     learning_path: { level: "low", confirm: false },
+    plan_task: { level: "low", confirm: false },
     suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
@@ -6375,7 +6524,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -6385,7 +6534,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {

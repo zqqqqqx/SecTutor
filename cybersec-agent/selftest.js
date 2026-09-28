@@ -3605,6 +3605,68 @@ $("#backLab").click();
     assert(/loadTasks\(\);/.test(srcB), "启动时载入任务（持久化闭环）");
   }
 
+  // ===== 84. Plan-Act-Verify 循环（v1.7.0 / P1）=====
+  {
+    const ag8 = window.__agent;
+    const T = ag8.tasks;
+    assert(typeof T.planAndRun === "function", "Plan-Act-Verify 已暴露（planAndRun）");
+    assert(T.verifiers && T.verifiers.learning_path && T.verifiers.learning_path.length > 0,
+      "工具→验证器映射存在（learning_path 有可编程验证器）");
+
+    // ① 多步任务：全部成功 → 任务 done，且每步都有验证结论
+    const r1 = await T.planAndRun({ goal: "单测-多步成功", steps: [
+      { desc: "看进度", tool: "read_progress" },
+      { desc: "排路径", tool: "learning_path", args: { category: "web", limit: 5 } },
+      { desc: "给建议", tool: "suggest_next" },
+    ] });
+    assert(/✅ 全部 3 步完成/.test(r1), "多步任务全部完成后给出汇总（" + r1.split("\n").slice(-1)[0].slice(0, 40) + "）");
+    const tk1 = T.list().filter((t) => t.goal === "单测-多步成功")[0];
+    assert(tk1 && tk1.status === "done", "任务状态置为 done");
+    assert(tk1.steps.length === 3 && tk1.steps.every((s) => s.status === "done"), "三步都标记为 done");
+    assert(tk1.steps[1].verify && tk1.steps[1].verify.ok === true, "第 2 步带验证结论（learning_path 走 path_no_violation）");
+    assert(tk1.artifacts.length === 3, "产物逐步累积（artifacts）");
+
+    // ② 某步失败 → 中断 + 给出失败原因 + 任务挂起（等重规划）
+    const r2 = await T.planAndRun({ goal: "单测-中途失败", steps: [
+      { desc: "看进度", tool: "read_progress" },
+      { desc: "调用不存在的工具", tool: "not_a_real_tool" },
+      { desc: "这一步不该执行", tool: "read_mistakes" },
+    ] });
+    assert(/✗ 拒绝/.test(r2) && /不是可用工具/.test(r2), "非法工具被拒绝并说明");
+    assert(/请根据失败原因/.test(r2), "把失败原因回给模型，要求修正计划（重规划入口）");
+    const tk2 = T.list().filter((t) => t.goal === "单测-中途失败")[0];
+    assert(tk2.status === "paused", "失败后任务挂起（paused），不假装成功");
+    assert(tk2.steps.length === 1, "失败之后的步骤没有继续执行");
+
+    // ③ 安全闸：高风险工具不允许放进计划（否则会绕过确认门）
+    const r3 = await T.planAndRun({ goal: "单测-安全闸", steps: [
+      { desc: "扫一遍", tool: "run_scan" },
+    ] });
+    assert(/高风险操作/.test(r3) && /逐次确认/.test(r3), "高风险工具在计划中被拒绝（必须回对话逐次确认）");
+    const tk3 = T.list().filter((t) => t.goal === "单测-安全闸")[0];
+    assert(tk3 && tk3.status === "paused" && tk3.steps.length === 0, "高风险步骤未被执行（steps 为空）");
+
+    // ④ 重规划上限：同一 goal 连续重规划最多 2 次，第 3 次拒绝
+    // 语义：首次计划 + 最多 2 次重规划 = 允许 3 次调用；第 4 次才拒绝
+    const g = "单测-重规划上限";
+    await T.planAndRun({ goal: g, steps: [{ desc: "x", tool: "nope1" }] });      // 首次
+    await T.planAndRun({ goal: g, steps: [{ desc: "x", tool: "nope2" }] });      // replan #1
+    const r3b = await T.planAndRun({ goal: g, steps: [{ desc: "x", tool: "nope3" }] });  // replan #2
+    assert(!/重规划已达上限/.test(r3b), "第 3 次调用（首次+2 次重规划）仍被允许");
+    const r4 = await T.planAndRun({ goal: g, steps: [{ desc: "x", tool: "nope4" }] });  // 第 4 次 → 拒绝
+    assert(/重规划已达上限/.test(r4), "超过 2 次重规划后拒绝（防止无限循环）");
+    const tk4 = T.list().filter((t) => t.goal === g)[0];
+    assert(tk4.status === "failed" && tk4.replanCount >= 3, "任务标记 failed 且记录了重规划次数（" + tk4.replanCount + "）");
+
+    // ⑤ 预算：步数用尽要停止并说明
+    const r5 = await T.planAndRun({ goal: "单测-步数预算", steps: Array.from({ length: 12 }, (_, i) => ({ desc: "s" + i, tool: "read_progress" })) });
+    assert(/步数预算已用尽|工具调用预算已用尽|时间预算已用尽/.test(r5), "超出预算时停止并说明（不静默截断）");
+
+    // ⑥ 每次执行都进审计（可追溯）
+    const tail = T.auditTail(80);
+    assert(tail.length > 0 && tail.some((x) => x.tool === "learning_path"), "计划执行产生的调用同样进入审计");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
