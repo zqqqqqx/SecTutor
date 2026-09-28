@@ -3292,14 +3292,15 @@ $("#backLab").click();
     assert(typeof ui.buildLearningPath === "function", "buildLearningPath 已暴露给自测");
 
     // ① 核心不变量：**违反前置的条目数必须为 0**（这是"路径"能不能叫路径的底线）
-    const all = ui.buildLearningPath("all", 0);
+    // 注意：v1.6.3 起默认跳过已掌握 → 这里要全貌，显式关掉跳过
+    const all = ui.buildLearningPath("all", 0, { skipMastered: false });
     assert(all.path.length === all.total && all.total > 50, `路径覆盖全部知识点（${all.path.length}/${all.total}）`);
     assert(all.violations === 0, `全领域路径无前置违反（实际 ${all.violations} 处）`);
     const ids = all.path.map((t) => t.id);
     assert(new Set(ids).size === ids.length, "路径中无重复知识点");
 
     // ② 分领域：只含本领域，且同样零违反
-    const web = ui.buildLearningPath("web", 0);
+    const web = ui.buildLearningPath("web", 0, { skipMastered: false });
     assert(web.path.every((t) => t.cat === "web"), "限定领域时只包含该领域知识点");
     assert(web.violations === 0 && web.path.length === web.total, "分领域路径无前置违反且覆盖完整");
     console.log(`  学习路径：全领域 ${all.total} 个（违反 ${all.violations}）｜Web ${web.total} 个（违反 ${web.violations}）`);
@@ -3313,7 +3314,7 @@ $("#backLab").click();
     // ④ 渲染可读 + 已掌握打勾
     const txt = ui.renderLearningPath(web, { inPath: web.path.map((t) => t.id) });
     assert(/学习路径/.test(txt) && /\[1\]/.test(txt), "路径可渲染为带序号的文本");
-    assert(txt.indexOf("⚠") < 0, "零违反时不应出现告警行");
+    assert(txt.indexOf("前置顺序异常") < 0, "零违反时不应出现顺序异常告警（跨领域前置提示另算）");
 
     // ⑤ 开场建议：有学情才给、全新用户不打扰、动作必须低风险
     const st4 = PF.state;
@@ -3334,6 +3335,60 @@ $("#backLab").click();
     assert(/tabName === "chat"\) maybeShowDailyBrief\(\)/.test(srcP), "切到问答面板时触发开场建议");
     assert(/sectutor_brief_day/.test(srcP), "开场建议按天去重（同一天不反复出现）");
     assert(/id:\s*"chat"/.test(srcP) || true, "（面板名 chat 与 index.html 一致）");
+  }
+
+  // ===== 78. 学习路径优化（v1.6.3）=====
+  {
+    const ui = window.__ui;
+    const st5 = PF.state;
+    const savedM5 = st5.mastery;
+
+    // ① 默认**跳过已掌握**：给的是"接下来学什么"，而不是把学过的再背一遍
+    st5.mastery = new Set();
+    const before = ui.buildLearningPath("web", 0);
+    st5.mastery = new Set(["sqli", "xss", "csrf"]);
+    const after = ui.buildLearningPath("web", 0);
+    assert(after.masteredCount >= 3, `已掌握计数正确（${after.masteredCount}）`);
+    assert(after.path.length === before.path.length - after.masteredCount,
+      `默认跳过已掌握（${before.path.length} → ${after.path.length}，跳过 ${after.masteredCount}）`);
+    assert(after.path.every((t) => !st5.mastery.has(t.id)), "路径中不含已掌握的知识点");
+    assert(after.skippedMastered === true, "返回体标明「已跳过已掌握」（便于文案解释）");
+
+    // ② 需要全貌时可显式要求包含已掌握
+    const full = ui.buildLearningPath("web", 0, { skipMastered: false });
+    assert(full.skippedMastered === false && full.path.length === before.path.length,
+      "skipMastered=false 时返回完整路径（用于复盘全貌）");
+
+    // ③ 跨领域前置必须被报告（本领域路径覆盖不到，不提示就会误导）
+    assert(Array.isArray(full.external), "返回体带 external 字段");
+    assert(ui.buildLearningPath("all", 0).external.length === 0,
+      "全领域路径不存在「跨领域前置」（所有前置都在范围内）");
+    const nonEmptyDomain = ["web", "binary", "crypto", "pentest"].map((c) => ui.buildLearningPath(c, 0))
+      .some((r) => r.external.length > 0);
+    assert(nonEmptyDomain, "至少有一个领域存在跨领域前置，且会被报告出来");
+
+    // ④ 优化后仍守住核心不变量：顺序正确 + 覆盖完整（不因跳过已掌握而漏掉未掌握的）
+    assert(full.violations === 0, `路径顺序仍无前置违反（实际 ${full.violations}）`);
+    assert(full.path.length === full.total, "完整模式下覆盖全部知识点");
+
+    // ⑤ 性能：入队改为分桶后，全领域构建应远低于感知阈值
+    const t0 = Date.now();
+    for (let i = 0; i < 20; i++) ui.buildLearningPath("all", 0, { skipMastered: false });
+    const per = (Date.now() - t0) / 20;
+    console.log(`  学习路径构建耗时：${per.toFixed(1)}ms/次（253 个知识点，分桶优化前每次入队都全量排序）`);
+    assert(per < 50, `路径构建足够快（${per.toFixed(1)}ms < 50ms）`);
+
+    // ⑥ 文案：要能看出"已掌握多少被跳过 / 接下来多少个"
+    const txt = ui.renderLearningPath(after, { inPath: after.pathIds });
+    assert(/已掌握 \d+ 个已跳过/.test(txt) && /接下来要学 \d+ 个/.test(txt), "渲染文案说明了跳过与剩余");
+    assert(/学习路径/.test(txt) && /\[1\]/.test(txt), "渲染结构完整");
+
+    // ⑦ 启动兜底：应用直接开在问答面板时也要出现开场建议
+    const src6 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(/function initDailyBriefOnBoot/.test(src6), "存在启动兜底函数");
+    assert(/initDailyBriefOnBoot\(\);/.test(src6), "启动兜底被真正调用（接线检查）");
+
+    st5.mastery = savedM5;
   }
 
   console.log("\n==== 自测结果 ====");

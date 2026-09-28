@@ -1167,6 +1167,14 @@
 
 
   /** 每天首次进入问答面板时展示一次开场建议（用 localStorage 记日期，避免反复打扰） */
+  /** 启动兜底：若应用直接开在问答面板，"切面板"钩子不会触发 → 这里补一次 */
+  function initDailyBriefOnBoot() {
+    try {
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => maybeShowDailyBrief());
+      else setTimeout(() => maybeShowDailyBrief(), 0);
+    } catch (e) { /* 忽略 */ }
+  }
+
   function maybeShowDailyBrief() {
     try {
       const log = $("#chatLog");
@@ -1207,6 +1215,8 @@
   $$(".rail-item").forEach((tab) => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab));
   });
+  // v1.6.3：若应用启动时就在问答面板，"切面板"钩子不会触发 → 启动后补一次开场建议
+  initDailyBriefOnBoot();
 
   /* ============================================================
      键盘导航层（P1）：全局快捷键 / Esc / 焦点管理
@@ -2791,62 +2801,90 @@
   };
 
   /**
-   * 学习路径（v1.6.2）
+   * 学习路径（v1.6.2，v1.6.3 优化）
    * 背景：项目里此前**没有任何路径排序逻辑**（`learningPath/buildPath/topoSort` 全无）——
    * "想系统学"只能靠模型临时拼。这是课程型产品的核心能力缺口，而 KG 里已有前置关系可用。
-   * 做法：对领域内的知识点做 Kahn 拓扑排序，保证**任何知识点的前置若也在路径中就一定排在它前面**；
-   * 同层按「入门 → 初级 → 中级 → 高级」稳定排序（先易后难）。
-   * 守护：违反前置的条目数必须为 0。
+   * 做法：Kahn 拓扑排序，保证**任何知识点的前置若也在路径中就一定排在它前面**；
+   * 同层按「入门 → 初级 → 中级 → 高级」先易后难。
+   * v1.6.3 优化：
+   *   ① 性能：入队不再每次全量 sort（改为"按档位分桶 + 每轮取最高优先级桶"），渲染侧用 Set 代替 indexOf
+   *   ② 语义：默认**跳过已掌握**（给"接下来学什么"，而不是把学过的再背一遍）
+   *   ③ 信息：额外报告**跨领域前置**（本领域路径无法覆盖的依赖，必须显式提示）
    */
   const LEVEL_RANK = { "入门": 0, "初级": 1, "中级": 2, "高级": 3 };
-  function buildLearningPath(category, limit) {
+  function buildLearningPath(category, limit, options) {
+    const o = options || {};
+    const skipMastered = o.skipMastered !== false;   // 默认跳过已掌握
     const dom = (category && category !== "all") ? category : null;
-    const topics = allTopics().filter((t) => !dom || t.cat === dom);
-    const ids = {};
-    topics.forEach((t) => { ids[t.id] = t; });
-    const byLevel = (a, b) => ((LEVEL_RANK[a.level] == null ? 9 : LEVEL_RANK[a.level]) -
-                               (LEVEL_RANK[b.level] == null ? 9 : LEVEL_RANK[b.level])) ||
-                               String(a.id).localeCompare(String(b.id));
-    // 入度 = 本集合内的前置数量
-    const indeg = {}, succ = {};
-    topics.forEach((t) => { indeg[t.id] = 0; succ[t.id] = []; });
-    topics.forEach((t) => {
+    const all = allTopics().filter((t) => !dom || t.cat === dom);
+    const inDomain = {};
+    all.forEach((t) => { inDomain[t.id] = t; });
+
+    // 入度只统计**本集合内**的前置；跨领域的单独记下来（本路径覆盖不到，必须告知）
+    const indeg = {}, succ = {}, extPre = {};
+    all.forEach((t) => { indeg[t.id] = 0; succ[t.id] = []; extPre[t.id] = []; });
+    all.forEach((t) => {
       (KG.prereq[t.id] || []).forEach((p) => {
-        if (!ids[p]) return;                     // 前置不在本领域内 → 不参与本领域排序
-        indeg[t.id]++;
-        succ[p].push(t.id);
+        if (inDomain[p]) { indeg[t.id]++; succ[p].push(t.id); }
+        else if (TOPIC_BY_ID.has(p)) extPre[t.id].push(p);
       });
     });
-    const queue = topics.filter((t) => indeg[t.id] === 0).sort(byLevel);
+
+    // 按档位分桶（避免每次入队都全量排序）
+    const buckets = [[], [], [], [], []];
+    const rankOf = (t) => (LEVEL_RANK[t.level] == null ? 4 : LEVEL_RANK[t.level]);
+    const pushQ = (t) => { buckets[rankOf(t)].push(t); };
+    all.forEach((t) => { if (indeg[t.id] === 0) pushQ(t); });
+    const takeQ = () => {
+      for (let i = 0; i < buckets.length; i++) {
+        if (buckets[i].length) {
+          buckets[i].sort((a, b) => String(a.id).localeCompare(String(b.id)));  // 同档位内稳定
+          return buckets[i].shift();
+        }
+      }
+      return null;
+    };
+
     const ordered = [];
     const seen = {};
-    while (queue.length) {
-      const t = queue.shift();
+    let t;
+    while ((t = takeQ())) {
       if (seen[t.id]) continue;
       seen[t.id] = true;
       ordered.push(t);
       (succ[t.id] || []).forEach((n) => {
         indeg[n]--;
-        if (indeg[n] === 0) { queue.push(ids[n]); queue.sort(byLevel); }
+        if (indeg[n] === 0) pushQ(inDomain[n]);
       });
     }
-    // 兜底：理论上只会在成环时漏节点（当前数据无环），接在末尾并如实报告
-    const leftover = topics.filter((t) => !seen[t.id]).sort(byLevel);
-    const path = ordered.concat(leftover);
+    // 兜底：只会在成环时漏节点（当前数据无环），接在末尾并如实报告
+    const leftover = all.filter((x) => !seen[x.id])
+      .sort((a, b) => rankOf(a) - rankOf(b) || String(a.id).localeCompare(String(b.id)));
+    const full = ordered.concat(leftover);
+
+    const pos = {};
+    full.forEach((x, i) => { pos[x.id] = i; });
+    let violations = 0;
+    full.forEach((x) => {
+      (KG.prereq[x.id] || []).forEach((p) => { if (pos[p] != null && pos[p] > pos[x.id]) violations++; });
+    });
+
+    // 已掌握与跨领域前置的统计
+    const masteredCount = full.filter((x) => state.mastery.has(x.id)).length;
+    const external = full.filter((x) => (extPre[x.id] || []).length)
+      .map((x) => ({ id: x.id, name: x.name, need: extPre[x.id] }));
+    const path = skipMastered ? full.filter((x) => !state.mastery.has(x.id)) : full;
+
     return {
       path: limit ? path.slice(0, limit) : path,
-      total: topics.length,
-      /** 违反前置的条目数（守护用；正常恒为 0） */
-      violations: (function () {
-        const pos = {};
-        path.forEach((t, i) => { pos[t.id] = i; });
-        let bad = 0;
-        path.forEach((t) => {
-          (KG.prereq[t.id] || []).forEach((p) => { if (pos[p] != null && pos[p] > pos[t.id]) bad++; });
-        });
-        return bad;
-      })(),
+      pathIds: path.map((x) => x.id),
+      total: all.length,
+      remaining: path.length,
+      masteredCount: masteredCount,
+      violations: violations,
       leftover: leftover.length,
+      external: external,
+      skippedMastered: skipMastered,
       domain: dom || "all",
     };
   }
@@ -2854,15 +2892,26 @@
   /** 把路径渲染成可读文本（供工具返回给人看） */
   function renderLearningPath(res, opts) {
     const o = opts || {};
+    const inPath = new Set(o.inPath || res.pathIds || []);
     const lines = [];
-    lines.push("学习路径（" + (res.domain === "all" ? "全部领域" : catById(res.domain).name) + "）：共 "
-      + res.total + " 个知识点" + (res.path.length < res.total ? "，本次展示前 " + res.path.length + " 个" : ""));
+    const domName = res.domain === "all" ? "全部领域" : (catById(res.domain) ? catById(res.domain).name : res.domain);
+    lines.push("学习路径（" + domName + "）：范围内共 " + res.total + " 个知识点"
+      + (res.skippedMastered ? "，已掌握 " + res.masteredCount + " 个已跳过" : "")
+      + "，接下来要学 " + res.remaining + " 个");
     res.path.forEach((t, i) => {
-      const pre = (KG.prereq[t.id] || []).filter((p) => (o.inPath || []).indexOf(p) < 0);
-      const mark = state.mastery.has(t.id) ? "✅ " : "";
-      const why = pre.length ? "（前置：" + pre.map(topicName).join("、") + "）" : "";
-      lines.push("[" + (i + 1) + "] " + mark + t.name + "  <" + t.level + ">" + why);
+      const pre = (KG.prereq[t.id] || []);
+      const inPathPre = pre.filter((p) => inPath.has(p));
+      const outPre = pre.filter((p) => !inPath.has(p) && TOPIC_BY_ID.has(p));
+      const bits = [];
+      if (o.showPrereq !== false && inPathPre.length) bits.push("前置：" + inPathPre.slice(0, 3).map(topicName).join("、"));
+      if (outPre.length) bits.push("⚠ 需先了解（不在本路径内）：" + outPre.slice(0, 3).map(topicName).join("、"));
+      lines.push("[" + (i + 1) + "] " + t.name + "  <" + t.level + ">" + (bits.length ? "（" + bits.join("；") + "）" : ""));
     });
+    if (res.external.length) {
+      lines.push("提示：有 " + res.external.length + " 个知识点的前置在其他领域（如 "
+        + res.external.slice(0, 2).map((x) => x.name + " ← " + x.need.map(topicName).join("、")).join("；")
+        + "），建议先补上再进入。");
+    }
     if (res.violations) lines.push("⚠ 注意：有 " + res.violations + " 处前置顺序异常，请以知识图谱为准。");
     return lines.join("\n");
   }
@@ -5987,11 +6036,14 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
       startReview(ids);
       return "已按错题知识点发起重练，共 " + ids.length + " 个知识点：" + ids.map((i) => topicName(i)).join("、") + "。请在弹窗中作答。";
     } },
-    { name: "learning_path", description: "按知识图谱的前置关系生成一条学习路径（拓扑排序，保证前置在前），可选限定领域。用于「我想系统学 Web 安全」「给我排个学习顺序」这类诉求。返回有序知识点列表，已掌握的打勾标记。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id（如 web/binary）；不填或 all 表示全部领域" }, limit: { type: "integer", description: "返回条数，默认 20，最多 60" } }, required: [] }, run: (a) => {
+    { name: "learning_path", description: "按知识图谱的前置关系生成一条学习路径（拓扑排序，保证前置在前），可选限定领域。用于「我想系统学 Web 安全」「给我排个学习顺序」这类诉求。默认**跳过已掌握**的知识点（给的是接下来要学什么），并会提示跨领域的前置依赖。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id（如 web/binary）；不填或 all 表示全部领域" }, limit: { type: "integer", description: "返回条数，默认 20，最多 60" }, include_mastered: { type: "boolean", description: "为 true 时连已掌握的也排出（用于复盘全貌），默认 false" } }, required: [] }, run: (a) => {
       const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 20, 1), 60);
-      const res = buildLearningPath((a && a.category) || "all", limit);
-      if (!res.path.length) return "该范围内没有知识点。";
-      return renderLearningPath(res, { inPath: res.path.map((t) => t.id) });
+      // include_mastered=true 时连已掌握的也一并排出（用于复盘全貌）；默认只给"接下来要学"
+      const res = buildLearningPath((a && a.category) || "all", limit, { skipMastered: !(a && a.include_mastered) });
+      if (!res.path.length) {
+        return res.masteredCount ? "该范围内的知识点你已全部掌握，可以换个领域或做几道综合自测。" : "该范围内没有知识点。";
+      }
+      return renderLearningPath(res, { inPath: res.pathIds });
     } },
     { name: "suggest_next", description: "基于用户真实学情给出「下一步学什么」的排序建议，每条都带理由。综合三类信号：① 错得最多的知识点（错题本）② 已到期该复习的项（按逾期倍数）③ 知识图谱里前置已满足但尚未掌握的知识点。用于回答「我接下来该学什么/复习什么」「给我排个顺序」。", parameters: { type: "object", properties: { domain: { type: "string", description: "可选，限定领域 id（如 web/binary）；不填则跨领域" }, limit: { type: "integer", description: "返回条数，默认 5，最多 8" } }, required: [] }, run: (a) => {
       const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 5, 1), 8);
