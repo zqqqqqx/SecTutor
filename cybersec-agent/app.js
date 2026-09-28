@@ -1232,8 +1232,119 @@
   $$(".rail-item").forEach((tab) => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab));
   });
+  /* ==========================================================================
+     任务（Task）层 —— v1.7.0 / P0
+     为什么要有它：在此之前，agent 的能力只存在于"一次问答"里 —— 用户问、模型调工具、答完就结束。
+     没有"进行中的工作"这个概念，于是不可能有计划、不可能暂停恢复、不可能重规划。
+     Task 就是那个"载体"：目标 + 步骤 + 预算 + 产物 + 状态机。
+     状态机：planning → running → (waiting) → done | failed，任意时刻可 paused 并可恢复。
+     持久化到 localStorage；应用重启后 running 一律归一化为 paused（崩溃残留，与自主流同一套做法）。
+     ========================================================================== */
+  const TASKS_KEY = "sectutor_tasks";
+  const AUDIT_KEY = "sectutor_agent_audit";
+  const TASKS_MAX = 20;          // 只保留最近 20 个任务，避免存储膨胀
+  const AUDIT_MAX = 300;         // 审计只留最近 300 条
+
+  /** 任务预算：步数 / 时间 / 工具调用次数 —— 超限要"说清楚"，不能静默失败 */
+  const AGENT_BUDGET = { maxSteps: 8, maxMs: 120000, maxToolCalls: 20 };
+  /** 单轮对话的工具调用上限（防跑飞）：超限时向用户解释并停止，而不是继续烧 token */
+  const AGENT_TURN_TOOL_LIMIT = 12;
+
+  let agentTasks = [];
+
+  function loadTasks() {
+    try {
+      const raw = localStorage.getItem(TASKS_KEY);
+      agentTasks = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(agentTasks)) agentTasks = [];
+      // 崩溃/关窗残留：上次还在 running 的任务归一化为 paused，等待用户显式恢复
+      agentTasks.forEach((t) => { if (t.status === "running" || t.status === "planning") t.status = "paused"; });
+    } catch (e) { agentTasks = []; }
+    return agentTasks;
+  }
+  function saveTasks() {
+    try { localStorage.setItem(TASKS_KEY, JSON.stringify(agentTasks.slice(-TASKS_MAX))); } catch (e) { /* 存储不可用时静默降级 */ }
+  }
+  function newTask(goal, opts) {
+    const o = opts || {};
+    const t = {
+      id: "task_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      goal: String(goal || "").slice(0, 200),
+      status: "planning",
+      steps: [],
+      budget: Object.assign({}, AGENT_BUDGET, o.budget || {}),
+      artifacts: [],
+      replanCount: 0,
+      createdAt: Date.now(), updatedAt: Date.now(),
+      toolCalls: 0,
+    };
+    agentTasks.push(t);
+    saveTasks();
+    return t;
+  }
+  function getTask(id) { return agentTasks.filter((t) => t.id === id)[0] || null; }
+  function updateTask(id, patch) {
+    const t = getTask(id);
+    if (!t) return null;
+    Object.assign(t, patch, { updatedAt: Date.now() });
+    saveTasks();
+    return t;
+  }
+  function addStep(id, step) {
+    const t = getTask(id);
+    if (!t) return null;
+    if (t.steps.length >= t.budget.maxSteps) return { error: "budget_steps" };
+    const s = Object.assign({ id: "s" + (t.steps.length + 1), status: "pending", attempts: 0 }, step);
+    t.steps.push(s);
+    t.updatedAt = Date.now();
+    saveTasks();
+    return s;
+  }
+  function pauseTask(id) { return updateTask(id, { status: "paused" }); }
+  function resumeTask(id) {
+    const t = getTask(id);
+    if (!t) return null;
+    return updateTask(id, { status: t.status === "paused" ? "running" : t.status });
+  }
+  function finishTask(id, status, note) {
+    const t = getTask(id);
+    if (!t) return null;
+    return updateTask(id, { status: status || "done", note: note || "" });
+  }
+  /** 任务是否超预算（步数/时间/工具调用） */
+  function taskBudgetState(id) {
+    const t = getTask(id);
+    if (!t) return null;
+    const ms = Date.now() - t.createdAt;
+    return {
+      stepsUsed: t.steps.length, stepsLeft: t.budget.maxSteps - t.steps.length,
+      msUsed: ms, msLeft: t.budget.maxMs - ms,
+      callsUsed: t.toolCalls, callsLeft: t.budget.maxToolCalls - t.toolCalls,
+      exceeded: t.steps.length >= t.budget.maxSteps || ms >= t.budget.maxMs || t.toolCalls >= t.budget.maxToolCalls,
+    };
+  }
+
+  /* ---------- 工具审计：每次调用留痕，可追溯"谁在什么时候因为什么调了什么" ---------- */
+  function auditTool(name, args, ok, ms, note) {
+    let list = [];
+    try { const raw = localStorage.getItem(AUDIT_KEY); list = raw ? JSON.parse(raw) : []; } catch (e) { list = []; }
+    if (!Array.isArray(list)) list = [];
+    let digest = "";
+    try { digest = JSON.stringify(args == null ? {} : args).slice(0, 160); } catch (e) { digest = "(不可序列化)"; }
+    list.push({ t: Date.now(), tool: name, args: digest, ok: !!ok, ms: ms || 0, note: note || "" });
+    try { localStorage.setItem(AUDIT_KEY, JSON.stringify(list.slice(-AUDIT_MAX))); } catch (e) { /* 同上 */ }
+  }
+  function auditTail(n) {
+    try {
+      const raw = localStorage.getItem(AUDIT_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return (Array.isArray(list) ? list : []).slice(-(n || 20));
+    } catch (e) { return []; }
+  }
+
   // v1.6.3：若应用启动时就在问答面板，"切面板"钩子不会触发 → 启动后补一次开场建议
   initDailyBriefOnBoot();
+  loadTasks();       // v1.7.0：载入任务并从崩溃残留中恢复（running → paused）
 
   /* ============================================================
      键盘导航层（P1）：全局快捷键 / Esc / 焦点管理
@@ -2585,6 +2696,7 @@
         let rounds = 0;
         const seenCalls = new Set();            // 19.3 防循环：相同 (tool,args) 只执行一次
         const toolTrace = [];                   // v1.6.0：本次回答调用过的工具与结果（仅用于渲染给人看）
+        let turnCalls = 0;                      // v1.7.0：本轮工具调用计数（配额用）
         while (reply.toolCalls && reply.toolCalls.length && rounds < 4) {
           rounds++; messages.push(reply.message);
           let executed = 0;
@@ -2603,7 +2715,13 @@
               if (!ok) { messages.push({ role: "tool", tool_call_id: tc.id, content: "用户拒绝执行该操作（" + tool.name + "），请勿再调用它，改为用文字向用户说明。" }); continue; }
             }
             const _t0 = Date.now();
-            const res = await callTool(tc.function.name, args);
+            if (turnCalls >= AGENT_TURN_TOOL_LIMIT) {
+            messages.push({ role: "tool", tool_call_id: tc.id,
+              content: "本轮工具调用已达上限（" + AGENT_TURN_TOOL_LIMIT + " 次）。请立即基于已有结果作答，不要再调用工具。" });
+            continue;
+          }
+          turnCalls++;
+          const res = await callTool(tc.function.name, args);
             toolTrace.push({ name: tc.function.name, res: res, ms: Date.now() - _t0 });   // v1.6.0：轨迹含耗时
             executed++;
             if (tc.function.name === "generate_plan") { const b = getBlackboard(); b.plan = { at: Date.now(), category: args.category || "all" }; saveBlackboard(b); }
@@ -3145,6 +3263,14 @@
       //   （单测只能验函数，端到端才能验"错题 → 建议"这条链真的通）
       callTool: callTool,
       recordMistake: recordMistake,
+      // ↓ v1.7.0 任务层（仅测试与调试用）
+      tasks: {
+        list: function () { return agentTasks.slice(); },
+        new: newTask, get: getTask, update: updateTask, addStep: addStep,
+        pause: pauseTask, resume: resumeTask, finish: finishTask,
+        budgetOf: taskBudgetState, load: loadTasks,
+        auditTail: auditTail, budget: AGENT_BUDGET, turnLimit: AGENT_TURN_TOOL_LIMIT,
+      },
       blackboard: getBlackboard,
       setEnabled: (v) => { setAgentEnabled(v); },
       gateway: { complete: agentGatewayComplete },
@@ -6492,10 +6618,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     try {
       const r = await t.run(args || {});
       const out = truncateToolResult(r == null ? "" : r);
-      metricRecordTool(name, out.indexOf("工具执行错误") !== 0, Date.now() - t0);
+      const ok = out.indexOf("工具执行错误") !== 0;
+      metricRecordTool(name, ok, Date.now() - t0);
+      auditTool(name, args, ok, Date.now() - t0);          // v1.7.0：每次调用都留痕（可追溯）
       return out;
     } catch (e) {
       metricRecordTool(name, false, Date.now() - t0);
+      auditTool(name, args, false, Date.now() - t0, String(e && e.message).slice(0, 80));
       return "工具执行错误：" + e.message;
     }
   }

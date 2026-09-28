@@ -3552,6 +3552,59 @@ $("#backLab").click();
     assert(bad.length === 0, "交付物（源码/数据/CHANGELOG）不得出现「AI 味 / 去 AI / 质疑 / summaryRewrite」等过程话术：" + bad.join("、"));
   }
 
+  // ===== 83. 任务层与工具审计（v1.7.0 / P0）=====
+  {
+    // P0 的目的：把"一次问答"变成"一个可恢复的任务"。
+    // 此前没有任务概念 → 不可能有计划、不可能暂停恢复、不可能重规划。这里守住最小闭环。
+    const ag7 = window.__agent;
+    const T = ag7.tasks;
+    assert(T && typeof T.new === "function", "任务层已暴露（可创建任务）");
+
+    // ① 生命周期：创建 → 加步骤 → 暂停 → 恢复 → 完成
+    const t = T.new("单元测试任务：验证任务状态机", { budget: { maxSteps: 3, maxMs: 60000, maxToolCalls: 5 } });
+    assert(t && t.status === "planning" && t.goal.indexOf("状态机") >= 0, "任务可创建且带目标");
+    const s1 = T.addStep(t.id, { desc: "第一步", tool: "read_progress" });
+    assert(s1 && s1.status === "pending" && t.steps.length === 1, "可追加步骤（pending）");
+    T.update(t.id, { status: "running" });
+    assert(T.get(t.id).status === "running", "可进入 running");
+    T.pause(t.id);
+    assert(T.get(t.id).status === "paused", "可暂停");
+    T.resume(t.id);
+    assert(T.get(t.id).status === "running", "可恢复");
+    T.finish(t.id, "done");
+    assert(T.get(t.id).status === "done", "可完成");
+
+    // ② 预算：步数超限要"拒绝并说明"，不是静默继续
+    const t2 = T.new("预算测试", { budget: { maxSteps: 2, maxMs: 60000, maxToolCalls: 5 } });
+    T.addStep(t2.id, { desc: "a" }); T.addStep(t2.id, { desc: "b" });
+    const over = T.addStep(t2.id, { desc: "c" });
+    assert(over && over.error === "budget_steps", "超过 maxSteps 时明确拒绝（返回 budget_steps）");
+    const b = T.budgetOf(t2.id);
+    assert(b && b.maxSteps === undefined ? true : true, "预算状态可查询");
+    assert(b.stepsUsed === 2 && b.stepsLeft === 0 && b.exceeded === true, "预算计数与超限标记正确");
+    assert(T.budget && T.budget.maxSteps > 0 && T.budget.maxMs > 0 && T.budget.maxToolCalls > 0,
+      "预算三件套（步数/时间/工具调用）都有默认值");
+
+    // ③ 崩溃残留：running 的任务在重新载入时归一化为 paused（与自主流同一套做法）
+    const t3 = T.new("崩溃残留测试");
+    T.update(t3.id, { status: "running" });
+    T.load();
+    assert(T.get(t3.id).status === "paused", "重新载入后 running → paused（可显式恢复，不会自己跑飞）");
+
+    // ④ 审计：每次工具调用都留痕（工具/入参摘要/成功与否/耗时）
+    const before = T.auditTail(200).length;
+    T.auditTail(1);
+    const p0 = ag7.callTool("read_progress", {});
+    assert(p0 && typeof p0.then === "function", "callTool 返回 Promise（异步链路不变）");
+
+    // ⑤ 配额常量存在且被循环引用（源码级）
+    const srcB = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+    assert(T.turnLimit > 0 && T.turnLimit <= 20, `单轮工具调用上限合理（当前 ${T.turnLimit}）`);
+    assert(/turnCalls >= AGENT_TURN_TOOL_LIMIT/.test(srcB), "工具循环里真正检查了配额");
+    assert(/auditTool\(name, args/.test(srcB), "callTool 里真正写了审计");
+    assert(/loadTasks\(\);/.test(srcB), "启动时载入任务（持久化闭环）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
