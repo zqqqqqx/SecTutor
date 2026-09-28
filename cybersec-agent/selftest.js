@@ -3391,71 +3391,72 @@ $("#backLab").click();
     st5.mastery = savedM5;
   }
 
-  // ===== 79. 内容深度与长度分布（v1.6.4）=====
+  // ===== 79. 深度讲解：按需生成 + 缓存（v1.8.0）=====
   {
-    const ui = window.__ui;
-    // 用真实指标守住"深度"与"阅读节奏"这两个此前**从没有尺子**的维度。
-    const SD = window.eval("SEC_DATA");
-    const DEEP = SD.deep || {};
-    const ids = Object.keys(DEEP);
-    const allTopics = [];
-    SD.categories.forEach((c) => (c.topics || []).forEach((t) => allTopics.push(t)));
-    const idSet = new Set(allTopics.map((t) => t.id));
+    // 这一组守的是"不要再走预写模板那条路"：
+    //   上一轮预写 8 份五段式内容 → 实测字段齐全率 100%、结构高度一致 = 把八股写进规范，
+    //   而覆盖率只有 8/253（用户 96.8% 概率撞上"只有摘要"）。现在改为用户点击时按需生成。
+    const SD3 = window.eval("SEC_DATA");
+    const agD = window.__agent;
+    const D = agD.deep;
+    const ui = window.__ui;          // <== 新守护块必须自取引用（这里踩过两次）
+    const PF = window.__perf;
+    assert(D && typeof D.gen === "function", "按需生成能力已暴露（deep.gen）");
 
-    // ① 结构完整性：五项齐 + 案例/坑有下限 + 正文够长
-    const CLICHES = ["有效地", "有助于提升", "从根本上解决", "值得注意的是", "需要注意的是"];
-    const noFact = [], tooShort = [], cliche = [], badRef = [];
-    ids.forEach((id) => {
-      if (!idSet.has(id)) badRef.push(id);
-      const d = DEEP[id];
-      if (!d.why || !d.how || !d.further) tooShort.push(id + "(缺 why/how/further)");
-      if (!Array.isArray(d.pitfalls) || d.pitfalls.length < 2) tooShort.push(id + "(坑<2)");
-      if (!Array.isArray(d.cases) || d.cases.length < 1) tooShort.push(id + "(无案例)");
-      if (String(d.why).length < 100 || String(d.how).length < 100) tooShort.push(id + "(why/how<100字)");
-      const text = [d.why, d.how, (d.pitfalls || []).join(""), (d.cases || []).join(""), d.further].join("");
-      // 细节密度：至少一个具体事实（数字/版本/CVE/命令/端口）
-      if (!/\d|CVE-|`|SHA-?1|GCM|arp|ARP/.test(text)) noFact.push(id);
-      CLICHES.forEach((c) => { if (text.indexOf(c) >= 0) cliche.push(id + ":" + c); });
+    // ① 禁止预写：数据里不应再有预置深度内容（避免"给 README 看"的假覆盖）
+    const pre = SD3.deep;
+    const preCount = pre && typeof pre === "object" ? Object.keys(pre).length : 0;
+    console.log("  预置深度内容：" + preCount + " 份（应为 0）");
+    assert(preCount === 0, "不应预置深度内容（按需生成，预写会产生模板一致性与假覆盖问题）");
+
+    // ② 缓存往返 + 版本失效
+    D.put("__unit_topic__", "第一段测试内容。\n\n第二段测试内容。", { by: "unit" });
+    const got = D.get("__unit_topic__");
+    assert(got && got.text.indexOf("第一段") >= 0 && got.v === D.version, "生成结果可缓存并可读回（含版本号）");
+    const cacheKey = D.cacheKey;
+    const raw = window.eval("localStorage.getItem('" + cacheKey + "')");
+    assert(raw && raw.indexOf("__unit_topic__") >= 0, "缓存确实落到 localStorage");
+    // 版本不匹配时视为失效
+    const cache = JSON.parse(raw);
+    cache.__unit_topic__.v = 0;
+    window.eval("localStorage.setItem('" + cacheKey + "', '" + JSON.stringify(cache).replace(/'/g, "\\'") + "')");
+    assert(D.get("__unit_topic__") === null, "提示词改版后旧缓存自动失效（v 不匹配）");
+
+    // ③ 提示词：**不给固定结构**，但强制要求"具体事实 + 反例 + 不许编"
+    let tp = null;
+    SD3.categories.forEach((c) => (c.topics || []).forEach((t) => { if (t.id === "sqli") tp = t; }));
+    if (!tp) tp = SD3.categories[0].topics[0];
+    const prompt = D.prompt(tp);
+    assert(/不要使用固定小标题或分点模板/.test(prompt), "提示词明确禁止套固定结构（这是对上一轮八股的纠正）");
+    assert(/可验证的具体事实/.test(prompt), "提示词要求给出可验证的具体事实");
+    assert(/常见误解或反例/.test(prompt), "提示词要求指出常见误解或反例");
+    assert(/不要编造/.test(prompt), "提示词明确禁止编造");
+    assert(prompt.indexOf(tp.name) >= 0, "提示词带上了知识点名称");
+
+    // ④ 未配置模型时给出可理解的错误（而不是静默失败）
+    const savedLLM = PF.state.llm;
+    PF.state.llm = null;
+    let errMsg = "";
+    try { await D.gen("sqli"); } catch (e) { errMsg = String(e && e.message); }
+    PF.state.llm = savedLLM;
+    assert(/配置模型/.test(errMsg), "未配置模型时报错可理解（" + errMsg.slice(0, 30) + "）");
+
+    // ⑤ 渲染：无缓存 → 给"生成"入口；有缓存 → 渲染成段落，**不出现五段式小标题**
+    window.eval("localStorage.removeItem('" + cacheKey + "')");
+    const htmlNo = ui.renderDeepSection(tp);
+    assert(/deepGenBtn/.test(htmlNo) && /生成深入讲解/.test(htmlNo), "无缓存时渲染出「生成」入口（而不是空白或假内容）");
+    assert(htmlNo.indexOf("为什么需要它") < 0, "无缓存时不伪造五段式结构");
+    D.put(tp.id, "段落一。\n\n段落二。", { by: "unit" });
+    const htmlYes = ui.renderDeepSection(tp);
+    assert(htmlYes.indexOf("段落一") >= 0 && htmlYes.indexOf("段落二") >= 0, "有缓存时按段落渲染");
+    ["为什么需要它", "工程上怎么做", "常见误解与坑", "真实案例", "想深入"].forEach((w) => {
+      assert(htmlYes.indexOf(w) < 0, "渲染不套用固定小标题（" + w + "）");
     });
-    assert(badRef.length === 0, `deep 的 key 必须都是存在的知识点 id（异常：${badRef.join(",") || "无"}）`);
-    assert(tooShort.length === 0, `deep 结构完整且够长（问题：${tooShort.join("；") || "无"}）`);
-    assert(noFact.length === 0, `每条 deep 至少一个具体事实（数字/版本/命令）：${noFact.join(",") || "无"}`);
-    assert(cliche.length === 0, `deep 不含空话套话：${cliche.join("；") || "无"}`);
-
-    // ② 深度指标：把"薄"的比例当成可上抬的门槛（基线 90.1% 未加-depth 时）
-    const thinBefore = allTopics.filter((t) => Object.values(t.levels || {}).join("").length < 400).length;
-    const covered = allTopics.filter((t) => ids.indexOf(t.id) >= 0).length;
-    const thinAfter = allTopics.filter((t) => {
-      if (ids.indexOf(t.id) >= 0) return false;      // 已补深度的不再算薄
-      return Object.values(t.levels || {}).join("").length < 400;
-    }).length;
-    const before = thinBefore / allTopics.length * 100, after = thinAfter / allTopics.length * 100;
-    console.log(`  内容深度：已补深度 ${covered}/${allTopics.length} 个 ｜ 「薄」占比 ${before.toFixed(1)}% → ${after.toFixed(1)}%`);
-    assert(covered >= 8, `本批至少补 8 个枢纽知识点（当前 ${covered}）`);
-    assert(after <= before - 3, `「薄」占比应随补写下降（${before.toFixed(1)}% → ${after.toFixed(1)}%）`);
-
-    // ③ 长度分布：deep 集合上的长度变异系数（有意义的差异才有阅读节奏）
-    const lens = ids.map((id) => {
-      const d = DEEP[id];
-      return [d.why, d.how, (d.pitfalls || []).join(""), (d.cases || []).join(""), d.further].join("").length;
-    });
-    const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
-    const sd = Math.sqrt(lens.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lens.length);
-    const cv = sd / mean;
-    console.log(`  深度正文长度变异系数 ${cv.toFixed(2)}（摘要基线仅 0.22）`);
-    assert(cv >= 0.25, `深度内容长度不应整齐划一（变异系数 ${cv.toFixed(2)} ≥ 0.25）`);
-    assert(lens.every((l) => l >= 500), `每条 deep 合计 ≥500 字（最短 ${Math.min.apply(null, lens)}）`);
-
-    // ④ 渲染：有内容才渲染，无内容零占位；且做转义与行内代码
-    const t0 = allTopics.find((t) => t.id === ids[0]);
-    const html = ui.renderDeepSection(t0);
-    assert(html.indexOf("kb-section deep") >= 0 && html.indexOf("为什么需要它") >= 0, "深度区块渲染出结构");
-    assert(html.indexOf("常见误解与坑") >= 0 && html.indexOf("真实案例") >= 0, "坑与案例都渲染");
-    assert(html.indexOf("<code>") >= 0, "反引号内容渲染为行内代码");
-    assert(ui.renderDeepSection({ id: "__not_exist__" }) === "", "没有 deep 的知识点零占位（不产生空区块）");
-    assert(ui.renderDeepSection(null) === "", "空参数安全返回");
-    const xss = ui.renderDeepSection({ id: ids[0] });
-    assert(xss.indexOf("<script") < 0, "深度内容经过转义（不注入脚本）");
+    assert(/已缓存/.test(htmlYes), "标明这是缓存内容");
+    // 清理单测痕迹
+    const c2 = JSON.parse(window.eval("localStorage.getItem('" + cacheKey + "')") || "{}");
+    delete c2[tp.id]; delete c2.__unit_topic__;
+    window.eval("localStorage.setItem('" + cacheKey + "', '" + JSON.stringify(c2).replace(/'/g, "\\'") + "')");
   }
 
   // ===== 80. 摘要去模板化（v1.6.5）=====

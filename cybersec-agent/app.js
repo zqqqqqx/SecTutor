@@ -1609,6 +1609,87 @@
     return head + '<div class="daily-brief">' + rows + "</div>";
   }
 
+  /* ==========================================================================
+     深度讲解：按需生成 + 缓存 —— v1.8.0
+     为什么改成这样（这是对前一轮做法的纠正）：
+       上一轮预写了 8 份"五段式"深度内容（why/how/pitfalls/cases/further），
+       实测结果是：字段齐全率 100%、坑数量集中在 3、案例集中在 1-2 —— 结构高度一致，
+       等于把"AI 八股"写进了规范；而 8/253 = 3.2%，用户随机点开知识点，
+       96.8% 的概率仍然只看到一句摘要。**预写这个形态本身就是错的。**
+     现在：
+       · 不预写任何深度内容（0 份）
+       · 用户在知识点详情页点「深入一步」时**当场生成**，生成结果按知识点缓存
+       · 提示词**不给固定结构** —— 让内容按知识点自身特点组织，并强制要求
+         "至少一个可验证的具体事实"+"至少一处常见误解或反例"，不确定要说不确定
+       · 质量不按字数考核（字数不是理解深度），改由"是否给出可验证事实与反例"来约束
+     ========================================================================== */
+  const DEEP_CACHE_KEY = "sectutor_deep_cache";
+  const DEEP_PROMPT_VERSION = 1;      // 提示词改版时递增，旧缓存自动失效
+
+  function loadDeepCache() {
+    try {
+      const raw = localStorage.getItem(DEEP_CACHE_KEY);
+      const o = raw ? JSON.parse(raw) : {};
+      return (o && typeof o === "object" && !Array.isArray(o)) ? o : {};
+    } catch (e) { return {}; }
+  }
+  function saveDeepCache(cache) { try { localStorage.setItem(DEEP_CACHE_KEY, JSON.stringify(cache)); } catch (e) {} }
+  /** 取缓存（无则 null）。注意：**没有预写内容**，没生成过就是没有。 */
+  function getCachedDeep(topicId) {
+    const c = loadDeepCache()[topicId];
+    if (!c || c.v !== DEEP_PROMPT_VERSION) return null;
+    return c;
+  }
+  function putCachedDeep(topicId, text, meta) {
+    const cache = loadDeepCache();
+    cache[topicId] = { v: DEEP_PROMPT_VERSION, t: Date.now(), text: text, by: (meta && meta.by) || "" };
+    saveDeepCache(cache);
+  }
+
+  /** 生成提示词：**刻意不给固定结构**，只给要求 */
+  function buildDeepPrompt(topic) {
+    const lv = state.userLevel;
+    const body = (topic.levels && (topic.levels[lv] || topic.levels["入门"])) || topic.summary || "";
+    return [
+      "你是网络安全讲师。请把下面这个知识点讲透，帮一个正在自学的人真正理解它（而不是记住一句话）。",
+      "",
+      "知识点：" + topic.name + "（" + topic.level + "｜" + (catById(topic.cat) || {}).name + "）",
+      "已有的简要讲解：" + body,
+      "",
+      "要求（重要）：",
+      "1. 不要使用固定小标题或分点模板。按这个知识点自身的特点来组织——该讲故事就讲故事，该给命令就给命令，该作对比就作对比。",
+      "2. 至少给出一个**可验证的具体事实**：命令、端口、字段名、版本号、CVE 编号或真实事件。",
+      "3. 至少指出一处**常见误解或反例**——人们通常会想错的地方，以及为什么会想错。",
+      "4. 不确定的地方明确说「不确定」，绝对不要编造论文、数字或事件。",
+      "5. 长度以讲透为准，可以 300 字，也可以 900 字，不要为了凑字数铺陈。",
+      "6. 直接从内容开始，不要写「好的」「以下是」这类开场。",
+    ].join("\n");
+  }
+
+  /**
+   * 按需生成某个知识点的深度讲解。
+   * onChunk(text) 可选（流式）；返回完整文本；失败抛错由调用方展示。
+   */
+  async function generateDeep(topicId, onChunk) {
+    const topic = allTopics().filter(function (t) { return t.id === topicId; })[0];
+    if (!topic) throw new Error("知识点不存在：" + topicId);
+    const cached = getCachedDeep(topicId);
+    if (cached) return cached.text;
+    if (!state.llm || !state.llm.key) throw new Error("需要先在「API 接入」里配置模型，才能生成深度讲解。");
+    const prompt = buildDeepPrompt(topic);
+    let text = "";
+    // 走应用统一的网关（与 Agent 同一条链路，便于审计与替换）
+    const gw = buildAgentApi().gateway;
+    const reply = await gw.complete([{ role: "user", content: prompt }], []);
+    text = (reply && (reply.content || (reply.message && reply.message.content))) || "";
+    text = String(text).trim();
+    if (!text) throw new Error("模型没有返回内容。");
+    if (typeof onChunk === "function") { try { onChunk(text); } catch (e) {} }
+    putCachedDeep(topicId, text, { by: (state.llm && state.llm.model) || "" });
+    auditTool("deep_generate", { topicId: topicId }, true, Date.now(), "按需生成深度讲解");
+    return text;
+  }
+
   const TASKS_KEY = "sectutor_tasks";
   const AUDIT_KEY = "sectutor_agent_audit";
   const TASKS_MAX = 20;          // 只保留最近 20 个任务，避免存储膨胀
@@ -2249,20 +2330,45 @@
     return out.sort((a, b) => b.s - a.s).slice(0, 6).map((x) => x.d);
   }
 
-  const DEEP = (SEC_DATA.deep || {});
-  /** 深度讲解（v1.6.4）：why / how / pitfalls / cases / further —— 只在有内容时渲染，无内容时零占位 */
+  /**
+   * 深度讲解区块（v1.8.0 起改为**按需生成**）
+   *  · 有缓存 → 直接渲染（按段落输出，不套固定小标题）
+   *  · 无缓存 → 给「生成」入口（生成发生在用户点击时，而不是预写 253 份）
+   */
   function renderDeepSection(topic) {
-    const d = DEEP[topic && topic.id];
-    if (!d) return "";
+    if (!topic || !topic.id) return "";
+    const cached = getCachedDeep(topic.id);
     const fmt = (x) => escapeHtml(String(x == null ? "" : x)).replace(/`([^`]+)`/g, "<code>$1</code>");
-    const ul = (arr) => (arr || []).map((x) => "<li>" + fmt(x) + "</li>").join("");
-    return '<div class="kb-section deep"><h4>🎯 深入一步</h4>'
-      + '<div class="deep-why"><b>为什么需要它</b><p>' + fmt(d.why) + "</p></div>"
-      + '<div class="deep-how"><b>工程上怎么做</b><p>' + fmt(d.how) + "</p></div>"
-      + (d.pitfalls && d.pitfalls.length ? '<div class="deep-pit"><b>常见误解与坑</b><ul>' + ul(d.pitfalls) + "</ul></div>" : "")
-      + (d.cases && d.cases.length ? '<div class="deep-case"><b>真实案例</b><ul>' + ul(d.cases) + "</ul></div>" : "")
-      + (d.further ? '<div class="deep-more"><b>想深入</b><p class="u-muted">' + fmt(d.further) + "</p></div>" : "")
-      + "</div>";
+    if (cached) {
+      const paras = String(cached.text).split(/\n{2,}/).filter((p) => p.trim());
+      return '<div class="kb-section deep" id="deepBox"><h4>🎯 深入一步</h4>'
+        + paras.map((p) => "<p>" + fmt(p).replace(/\n/g, "<br>") + "</p>").join("")
+        + '<p class="u-muted u-f11">按需生成 · 已缓存（' + new Date(cached.t).toLocaleDateString() + "）</p></div>";
+    }
+    return '<div class="kb-section deep" id="deepBox"><h4>🎯 深入一步</h4>'
+      + '<p class="u-muted u-f11">这个知识点的深度讲解没有预置：点下面的按钮，按你当前档位现场生成（内容会缓存，下次直接看）。</p>'
+      + '<button class="btn small" id="deepGenBtn">✨ 生成深入讲解</button>'
+      + '<div id="deepGenMsg" class="u-muted u-f11"></div></div>';
+  }
+  /** 绑定「生成」按钮（详情页渲染后调用） */
+  function bindDeepGen(topic) {
+    const btn = $("#deepGenBtn");
+    if (!btn || !topic) return;
+    btn.addEventListener("click", async () => {
+      const msg = $("#deepGenMsg");
+      btn.disabled = true;
+      if (msg) msg.textContent = "正在生成…（内容会按知识点缓存，下次直接看）";
+      try {
+        await generateDeep(topic.id);
+        const box = $("#deepBox");
+        if (box) box.outerHTML = renderDeepSection(topic);
+        toast("深度讲解已生成并缓存", "ok");
+      } catch (e) {
+        btn.disabled = false;
+        if (msg) msg.textContent = "生成失败：" + (e && e.message ? e.message : e);
+        toast("生成失败：" + (e && e.message ? e.message : e), "warn");
+      }
+    });
   }
 
   function showTopicDetail(topicId) {
@@ -2325,6 +2431,7 @@
     if (kbPrevBtn && prevT) kbPrevBtn.addEventListener("click", () => showTopicDetail(prevT.id));
     const kbNextBtn = $("#kbNext");
     if (kbNextBtn && nextT) kbNextBtn.addEventListener("click", () => showTopicDetail(nextT.id));
+    bindDeepGen(topic);            // v1.8.0：深度讲解按需生成
     const topicAiBtn = $("#topicAiBtn");
     if (topicAiBtn) topicAiBtn.addEventListener("click", () => aiAssistForTopic(topic));
     $("#learnBtn").addEventListener("click", () => {
@@ -3647,6 +3754,8 @@
         episodes: loadEpisodes, record: recordEpisode, similar: similarEpisodes, hint: episodeHint,
       },
       roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
+      deep: { get: getCachedDeep, put: putCachedDeep, gen: generateDeep, prompt: buildDeepPrompt,
+        cacheKey: DEEP_CACHE_KEY, version: DEEP_PROMPT_VERSION },
       autonomy: {
         get: getAutonomy, set: setAutonomy, sweep: autonomySweep, due: autonomyDue,
         render: renderSweepReport, levels: AUTONOMY_LEVELS,

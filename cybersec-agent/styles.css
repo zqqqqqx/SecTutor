@@ -413,14 +413,12 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .tt-raw { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 12px; line-height: 1.6; white-space: pre-wrap; max-height: 220px; overflow: auto; }
 
 /* 深度讲解（v1.6.4）：把"知道有这么个东西"变成"知道为什么、怎么做、哪里会翻车" */
+/* 深度讲解（v1.8.0 改为按需生成后，按段落渲染；原先五段式的 .deep-why/.deep-pit/... 已删除） */
 .kb-section.deep { border-left: 3px solid var(--brand); padding-left: 14px; }
 .kb-section.deep > div { margin: 10px 0; }
-.kb-section.deep b { display: block; margin-bottom: 4px; color: var(--brand); font-size: 12.5px; }
-.kb-section.deep p { margin: 0; line-height: 1.75; }
-.kb-section.deep ul { margin: 0; padding-left: 20px; line-height: 1.75; }
-.kb-section.deep li + li { margin-top: 6px; }
+.kb-section.deep p { margin: 0 0 10px; line-height: 1.75; }
 .kb-section.deep code { background: var(--chip); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; }
-.deep-pit b { color: var(--warn, #d97706) !important; }
+#deepGenBtn { margin-top: 8px; }
 
 .cat-list { list-style: none; margin: 0 0 18px; padding: 0; }
 .cat-list li {
