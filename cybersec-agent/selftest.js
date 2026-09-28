@@ -3725,6 +3725,76 @@ $("#backLab").click();
     function T5AuditLen() { return ag9.tasks.auditTail(500).length; }
   }
 
+  // ===== 86. 情景记忆与多角色约束（v1.7.0 / P3+P4）=====
+  {
+    const agA = window.__agent;
+    const M = agA.memory, RG = agA.roleGuard;
+    assert(M && typeof M.record === "function" && RG && typeof RG.check === "function",
+      "情景记忆与角色守卫已暴露");
+
+    // ① P3：执行一次任务后写入情景（含工具链、步数、耗时、成败）
+    const G1 = "单测-情景记忆-排路径与出题";
+    await agA.tasks.planAndRun({ goal: G1, steps: [
+      { desc: "排路径", tool: "learning_path", args: { category: "web", limit: 3 } },
+      { desc: "出题", tool: "generate_quiz" },
+    ] });
+    const eps = M.episodes();
+    const mine = eps.filter((e) => e.goal === G1);
+    assert(mine.length === 1, "成功后写入一条情景（实际 " + mine.length + "）");
+    assert(mine[0].ok === true && mine[0].tools.length === 2 && mine[0].steps === 2, "情景含工具链/步数/成败");
+    assert(typeof mine[0].ms === "number" && mine[0].ms >= 0, "情景含耗时");
+    assert(eps.length <= 50, "情景库有上限（当前 " + eps.length + " ≤ 50）");
+
+    // ② P3：相似目标能被召回（相似度阈值 0.3）
+    const sim = M.similar(G1, 2);
+    assert(sim.length >= 1, "同一目标可被召回（" + sim.length + " 条）");
+    assert(sim[0].score >= 0.3, "相似度达标（" + sim[0].score.toFixed(2) + "）");
+    assert(M.similar("完全不相干的目标 Xyzzy", 2).length === 0, "不相关的目标不会误召回");
+
+    // ③ P3（关键）：第二次执行同一目标时，**返回文本里带上历史经验** —— 这才是"记忆被复用"
+    const r2 = await agA.tasks.planAndRun({ goal: G1, steps: [
+      { desc: "排路径", tool: "learning_path", args: { category: "web", limit: 3 } },
+      { desc: "出题", tool: "generate_quiz" },
+    ] });
+    assert(/【历史经验】/.test(r2), "第二次执行时返回历史经验（模型据此少走弯路）");
+    assert(/learning_path/.test(r2.split("\n")[0]) || /learning_path/.test(r2), "历史经验里给出了上次的工具链");
+
+    // ④ P3：失败情景带"教训"（供下次规避）
+    const G2 = "单测-情景记忆-失败教训";
+    await agA.tasks.planAndRun({ goal: G2, steps: [{ desc: "x", tool: "nope_tool" }] });
+    const failEp = M.episodes().filter((e) => e.goal === G2)[0];
+    assert(failEp && failEp.ok === false && /教训|第 1 步/.test(failEp.lesson || ""), "失败情景带教训（" + (failEp ? failEp.lesson : "") + "）");
+
+    // ⑤ P4：角色白名单成为**可执行约束**（讲师没有靶场工具）
+    const chkBad = RG.check({ tool: "launch_lab_env" }, "tutor");
+    assert(chkBad.ok === false && /白名单/.test(chkBad.note), "讲师角色调用靶场工具被拒（角色约束生效）");
+    const chkGood = RG.check({ tool: "search_knowledge" }, "tutor");
+    assert(chkGood.ok === true, "讲师调用知识库工具允许");
+    assert(RG.check({ tool: "launch_lab_env" }, null).ok === true, "未指定角色时不限制（沿用自动编排）");
+    assert(RG.check({ tool: "launch_lab_env" }, "lab").ok === true, "靶场员角色有权调用靶场工具");
+
+    // ⑥ P4：计划里声明越权角色 → 该步被拒绝且不执行
+    const G3 = "单测-角色越权";
+    const r3c = await agA.tasks.planAndRun({ goal: G3, steps: [
+      { desc: "以讲师身份建靶", tool: "launch_lab_env", role: "tutor" },
+    ] });
+    assert(/白名单/.test(r3c) && /✗ 拒绝/.test(r3c), "计划里越权角色被拒绝并说明原因");
+    const tk3 = agA.tasks.list().filter((t) => t.goal === G3)[0];
+    assert(tk3.status === "paused" && tk3.steps.length === 0, "越权步骤没有被执行（steps 为空）");
+
+    // ⑦ P4：多角色协作 —— 合法角色交接会被记录（黑板 → 任务板）
+    const G4 = "单测-多角色交接";
+    const r4c = await agA.tasks.planAndRun({ goal: G4, steps: [
+      { desc: "规划", tool: "learning_path", role: "planner" },
+      { desc: "复盘", tool: "read_progress", role: "coach" },
+    ] });
+    assert(/✅ 全部 2 步完成/.test(r4c), "多角色计划端到端执行成功");
+    const tk4 = agA.tasks.list().filter((t) => t.goal === G4)[0];
+    assert(Array.isArray(tk4.handoffs) && tk4.handoffs.length === 2, "两次角色交接被记录（" + (tk4.handoffs || []).length + " 次）");
+    assert(tk4.handoffs[0].to === "planner" && tk4.handoffs[1].to === "coach", "交接顺序正确（planner → coach）");
+    assert(tk4.steps.every((x) => x.status === "done"), "每步都标记 done（含角色信息 " + tk4.steps[0].role + "）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

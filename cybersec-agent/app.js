@@ -1338,7 +1338,10 @@
     task.status = "running";
     const budget = taskBudgetState(task.id);
 
-    const lines = ["任务：" + goal + (isReplan ? "（第 " + task.replanCount + " 次重规划）" : "")];
+    const lines = [];
+    const hint = episodeHint(goal);            // P3：先给历史经验，再给本次计划
+    if (hint) lines.push(hint.trim());
+    lines.push("任务：" + goal + (isReplan ? "（第 " + task.replanCount + " 次重规划）" : ""));
     let failed = null;
     for (let i = 0; i < rawSteps.length; i++) {
       const rs = rawSteps[i] || {};
@@ -1346,6 +1349,13 @@
       const allowed = AGENT_TOOLS.some(function (t) { return t.name === rs.tool; });
       if (!allowed) { lines.push("[" + (i + 1) + "] ✗ 拒绝：" + rs.tool + " 不是可用工具"); failed = { step: i, reason: "tool_not_allowed" }; break; }
       // 安全闸：高风险工具（建靶/扫描/销毁）走计划执行会**绕过确认门** → 一律拒绝，要求回到正常对话逐次确认
+      // P4：多角色约束 —— 步骤声明了 role 就必须在其工具白名单内
+      const roleChk = checkStepRole(rs, rs.role);
+      if (!roleChk.ok) {
+        lines.push("[" + (i + 1) + "] ✗ 拒绝：" + roleChk.note);
+        failed = { step: i, reason: "role_not_allowed", note: roleChk.note };
+        break;
+      }
       if (toolRequiresConfirm(rs.tool)) {
         lines.push("[" + (i + 1) + "] ✗ 拒绝：" + rs.tool + " 属高风险操作，必须回到对话中由用户逐次确认，不能在计划里批量执行。");
         failed = { step: i, reason: "high_risk_blocked" };
@@ -1355,7 +1365,12 @@
       if (task.toolCalls >= task.budget.maxToolCalls) { lines.push("停止：工具调用预算已用尽（" + task.budget.maxToolCalls + "）"); failed = { step: i, reason: "budget_calls" }; break; }
       if (Date.now() - task.createdAt >= task.budget.maxMs) { lines.push("停止：时间预算已用尽（" + Math.round(task.budget.maxMs / 1000) + "s）"); failed = { step: i, reason: "budget_ms" }; break; }
 
-      const step = addStep(task.id, { desc: String(rs.desc || "").slice(0, 80), tool: rs.tool, args: rs.args || {} });
+      const step = addStep(task.id, { desc: String(rs.desc || "").slice(0, 80), tool: rs.tool, args: rs.args || {}, role: rs.role || null });
+      if (rs.role && rs.role !== task.currentRole) {
+        task.handoffs = task.handoffs || [];
+        task.handoffs.push({ t: Date.now(), from: task.currentRole || "(自动)", to: rs.role, step: step.id });
+        task.currentRole = rs.role;
+      }
       step.status = "running";
       let out = "";
       try { out = String(await callTool(rs.tool, rs.args || {})); }
@@ -1382,6 +1397,12 @@
     if (failed) {
       task.status = "paused";
       saveTasks();
+      recordEpisode({                       // P3：失败也记，并把原因写成"教训"
+        goal: goal,
+        tools: task.steps.map(function (x) { return x.tool; }),
+        steps: task.steps.length, ms: Date.now() - task.createdAt, ok: false,
+        lesson: "第 " + (failed.step + 1) + " 步 " + (failed.reason || "") + (failed.note ? "：" + failed.note : ""),
+      });
       lines.push("");
       lines.push("⚠ 第 " + (failed.step + 1) + " 步未通过（" + failed.reason + "）：" + (failed.note || ""));
       if (failed.output) lines.push("该步输出片段：" + failed.output.replace(/\s+/g, " ").slice(0, 200));
@@ -1389,6 +1410,11 @@
       return lines.join("\n");
     }
     finishTask(task.id, "done");
+    recordEpisode({                         // P3：成功情景（含工具链，供下次复用）
+      goal: goal,
+      tools: task.steps.map(function (x) { return x.tool; }),
+      steps: task.steps.length, ms: Date.now() - task.createdAt, ok: true,
+    });
     const b2 = taskBudgetState(task.id);
     lines.push("");
     lines.push("✅ 全部 " + rawSteps.length + " 步完成并通过验证（用掉工具调用 " + b2.callsUsed + "/" + task.budget.maxToolCalls + "）。");
@@ -1405,6 +1431,86 @@
        ③ L3 默认关闭；未显式开启时不得自动触发
      折中说明：应用没有后台常驻，所谓"定时"用「上次巡检时间 + 打开应用时按间隔补跑」等效实现（零后台成本）。
      ========================================================================== */
+  /* ==========================================================================
+     P3 情景记忆 / 反思 + P4 多角色协作 —— v1.7.0
+     共同点：两者都长在 plan_task 这条链上，一个管"记得上次怎么做"，一个管"谁来做"。
+
+     P3：把每次计划执行记成结构化**情景**（工具链/步数/耗时/成败/教训），下次遇到相似目标时
+          **主动把历史经验回给模型**（不是让它重新摸索）。失败时写下**教训**，供下次规避。
+     P4：计划里每步可声明 role；执行时**按该角色的工具白名单校验** —— 于是"多角色"有了强制语义，
+          而不只是一段 persona 文本。角色交接记入 task.handoffs（可审计）。
+     ========================================================================== */
+  const EPISODES_KEY = "sectutor_episodes";
+  const EPISODES_MAX = 50;
+
+  function loadEpisodes() {
+    try {
+      const raw = localStorage.getItem(EPISODES_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+  }
+  function recordEpisode(ep) {
+    try {
+      const list = loadEpisodes();
+      list.push(Object.assign({ t: Date.now() }, ep));
+      localStorage.setItem(EPISODES_KEY, JSON.stringify(list.slice(-EPISODES_MAX)));
+    } catch (e) { /* 存储不可用时静默降级，不影响任务执行 */ }
+  }
+  /** 目标相似度：轻量关键词重合（复用同一套分词思路，避免引入新依赖） */
+  function similarEpisodes(goal, k) {
+    const g = String(goal || "");
+    const toks = function (s) {
+      const out = {};
+      (String(s || "").toLowerCase().match(/[a-z0-9_]+/g) || []).forEach(function (w) { out[w] = 1; });
+      const cn = String(s || "").replace(/[^\u4e00-\u9fa5]/g, "");
+      for (let i = 0; i < cn.length - 1; i++) out[cn.slice(i, i + 2)] = 1;
+      return out;
+    };
+    const gt = toks(g);
+    return loadEpisodes().map(function (e) {
+      const et = toks(e.goal);
+      let hit = 0;
+      Object.keys(gt).forEach(function (x) { if (et[x]) hit++; });
+      const score = hit / Math.max(1, Object.keys(gt).length);
+      return { ep: e, score: score };
+    }).filter(function (x) { return x.score >= 0.3; })
+      .sort(function (a, b) { return b.score - a.score; })
+      .slice(0, k || 2);
+  }
+  /** 把历史经验渲染成给模型看的一段提示（模型据此少走弯路） */
+  function episodeHint(goal) {
+    const sim = similarEpisodes(goal, 2);
+    if (!sim.length) return "";
+    const lines = ["【历史经验】相似目标此前执行过 " + sim.length + " 次："];
+    sim.forEach(function (x) {
+      const e = x.ep;
+      lines.push("- 「" + e.goal.slice(0, 24) + "」用 " + (e.tools || []).join(" → ")
+        + "，" + (e.ok ? "成功" : "失败") + "，" + (e.steps || 0) + " 步 / " + Math.round((e.ms || 0) / 1000) + "s"
+        + (e.lesson ? "；教训：" + e.lesson : ""));
+    });
+    return lines.join("\n") + "\n";
+  }
+
+  /** P4：取某角色的工具白名单（auto/未知名返回 null 表示不限制） */
+  function roleToolWhitelist(roleId) {
+    const r = AGENT_ROLES[roleId];
+    if (!r || !r.tools) return null;
+    return r.tools;
+  }
+
+  /**
+   * 多角色校验：步骤声明的 role 若有权限，则该步工具必须在其白名单内。
+   * 这条把"角色"从 persona 文本变成**可执行约束** —— 讲师不会拿到靶场工具，考官不会拿到建靶工具。
+   */
+  function checkStepRole(step, roleId) {
+    if (!roleId) return { ok: true, note: "未指定角色（沿用自动编排）" };
+    const wl = roleToolWhitelist(roleId);
+    if (!wl) return { ok: true, note: "角色 " + roleId + " 不限工具" };
+    const ok = wl.indexOf(step.tool) >= 0;
+    return { ok: ok, note: ok ? "角色 " + roleId + " 有权调用" : "角色 " + roleId + " 的白名单里没有 " + step.tool };
+  }
+
   const AUTONOMY_KEY = "sectutor_autonomy";
   const AUTONOMY_LEVELS = ["L0", "L1", "L2", "L3"];
   const AUTONOMY_DEFAULTS = { level: "L1", intervalHours: 12, lastSweep: 0, enabledL3: false };
@@ -3536,6 +3642,11 @@
         planAndRun: planAndRunTask, verifiers: VERIFIER_BY_TOOL, runVerifier: verifyStep,
       },
       // ↓ v1.7.0 自主性分级（仅测试与调试用）
+      // ↓ v1.7.0 P3/P4（仅测试与调试用）
+      memory: {
+        episodes: loadEpisodes, record: recordEpisode, similar: similarEpisodes, hint: episodeHint,
+      },
+      roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
       autonomy: {
         get: getAutonomy, set: setAutonomy, sweep: autonomySweep, due: autonomyDue,
         render: renderSweepReport, levels: AUTONOMY_LEVELS,
