@@ -1764,6 +1764,35 @@
     };
   }
 
+  /**
+   * 兴趣入口（v1.8.1）：用户说"我就想学 X"时，只回答一件事 ——
+   * **必须先会什么**（只算有外部依据的依赖，递归往前），其余一律标为"可跳过"。
+   * 这是对"学习不是编译依赖树"的正面回应：不排全序，只给最小硬约束。
+   */
+  function pathFromTopic(topicId, depth, seen) {
+    const t = TOPIC_BY_ID.get(topicId);
+    if (!t) return { error: "知识点不存在：" + topicId };
+    seen = seen || {};
+    if (seen[topicId]) return { topic: t, required: [], optional: [] };
+    seen[topicId] = 1;
+    const pre = KG.prereq[topicId] || [];
+    const required = [], optional = [];
+    pre.forEach(function (x) {
+      const sup = edgeSupport(x, topicId);
+      if (sup.support === "yes") required.push({ id: x, name: topicName(x), by: sup.by });
+      else optional.push({ id: x, name: topicName(x) });
+    });
+    // 递归展开"硬前置"的前置（同样只看有依据的）
+    let chain = [];
+    if ((depth || 0) < 3) {
+      required.forEach(function (r) {
+        const sub = pathFromTopic(r.id, (depth || 0) + 1, seen);
+        if (sub && sub.chain) chain = chain.concat(sub.chain);
+      });
+    }
+    return { topic: t, required: required, optional: optional, chain: chain.concat([{ id: topicId, name: topicName(topicId) }]) };
+  }
+
   /** 给外部依据体检结果渲染一段人话（用于工具输出与界面提示） */
   function renderKgSupport(a) {
     const lines = [];
@@ -3972,8 +4001,37 @@
     lines.push("学习路径（" + domName + "）：范围内共 " + res.total + " 个知识点"
       + (res.skippedMastered ? "，已掌握 " + res.masteredCount + " 个已跳过" : "")
       + "，接下来要学 " + res.remaining + " 个");
+    // v1.8.1：从"线性序列"改为"分层建议" —— 学习不是编译依赖树，人可以跳、可以回头、凭兴趣走。
+    // 只有**有外部依据**的依赖才构成硬约束；无依据的只是提示，不参与分层。
+    const inPathSet = inPath;
+    const depthMemo = {};
+    function pathDepth(id, seen) {
+      if (depthMemo[id] != null) return depthMemo[id];
+      seen = seen || {};
+      if (seen[id]) return 0;
+      seen[id] = 1;
+      const pre = (KG.prereq[id] || []).filter(function (x) {
+        return inPathSet.has(x) && edgeSupport(x, id).support === "yes";
+      });
+      const d = pre.length ? 1 + Math.max.apply(null, pre.map(function (x) { return pathDepth(x, seen); })) : 0;
+      depthMemo[id] = d;
+      return d;
+    }
+    const layers = {};
+    res.path.forEach(function (t) { const d = pathDepth(t.id); (layers[d] = layers[d] || []).push(t); });
+    lines.push("");
+    lines.push("这是**建议的层次**，不是必须的顺序：只有标「前置（有依据）」的才是硬约束，"
+      + "同层内可以任意顺序，也可以凭兴趣跳着学、需要时回头补。"
+      + "（想直接学某一个？用 learning_path 的 fromTopic 参数，只会告诉你它**必须**先会什么）");
+
     let evdN = 0, advN = 0;
-    res.path.forEach((t, i) => {
+    Object.keys(layers).map(Number).sort(function (a, b) { return a - b; }).forEach(function (L) {
+      const group = layers[L];
+      lines.push("");
+      lines.push("【第 " + (L + 1) + " 层】" + (L === 0
+        ? "无硬性前置（共 " + group.length + " 个，可任意顺序）"
+        : "需先看前面层里标为「前置（有依据）」的内容（共 " + group.length + " 个，层内可任意顺序）"));
+      group.forEach((t) => {
       const pre = (KG.prereq[t.id] || []);
       const inPathPre = pre.filter((p) => inPath.has(p));
       const outPre = pre.filter((p) => !inPath.has(p) && TOPIC_BY_ID.has(p));
@@ -3991,7 +4049,8 @@
       if (evd.length) bits.push("前置（有依据）：" + evd.slice(0, 3).map(topicName).join("、"));
       if (adv.length) bits.push("建议先看（经验性，无外部依据）：" + adv.slice(0, 3).map(topicName).join("、"));
       if (outPre.length) bits.push("⚠ 需先了解（不在本路径内）：" + outPre.slice(0, 3).map(topicName).join("、"));
-      lines.push("[" + (i + 1) + "] " + t.name + "  <" + t.level + ">" + (bits.length ? "（" + bits.join("；") + "）" : ""));
+      lines.push("  · " + t.name + "  <" + t.level + ">" + (bits.length ? "（" + bits.join("；") + "）" : ""));
+      });
     });
     if (res.external.length) {
       lines.push("提示：有 " + res.external.length + " 个知识点的前置在其他领域（如 "
@@ -4281,6 +4340,7 @@
         load: loadFlowState,
       },
       // —— v1.1.0 知识图谱 + 质量度量暴露 ——
+      path: { fromTopic: pathFromTopic },
       kg: {
         check: prereqCheck, graph: () => KG,
         // v1.8.0：外部依据体检（与图谱 API 同一命名空间，不要再另起一个 kg 键——会被覆盖）
@@ -7171,6 +7231,28 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } },
     { name: "kg_audit", description: "体检知识图谱的**外部依据**：统计前置依赖里有多少条能对上公开框架（Security+ 考纲 / MITRE ATT&CK 战术链 / NIST CSF / OWASP ASVS / 密码学教材章节 / 网络分层）的官方顺序，并列出哪些领域其实**没有**可验证的依赖顺序。用于回答「这个学习路径靠谱吗」「顺序有依据吗」这类问题。", parameters: { type: "object", properties: {}, required: [] }, run: () => renderKgSupport(auditKgSupport()) },
     { name: "plan_task", description: "把复合目标拆成多步并**立即逐步执行**（Plan→Act→Verify 闭环）。每步执行后会按工具映射跑可编程验证器；若某步失败，会返回失败原因，请据此修正计划后再次调用（同一 goal 会被识别为重规划，最多 2 次）。适用于需要多步协作的复合诉求，例如「先看我哪里弱→再排学习路径→再出题练」。注意：高风险操作（建靶/扫描/销毁）不允许放进计划，必须回对话中逐次确认。", parameters: { type: "object", properties: { goal: { type: "string", description: "任务目标（一句话）" }, steps: { type: "array", items: { type: "object", properties: { desc: { type: "string", description: "这一步做什么" }, tool: { type: "string", description: "要调用的工具名（必须是已注册工具）" }, args: { type: "object", description: "传给该工具的参数" } }, required: ["desc", "tool"] }, description: "有序步骤列表" } }, required: ["goal", "steps"] }, run: (a) => planAndRunTask(a) },
+    { name: "path_from_topic", description: "兴趣入口：用户说「我就想学 X」时，只回答**必须先会什么** —— 只列出有外部依据的硬前置（可递归几层），其余前置一律标为「可跳过」。用于避免把学习路径当编译依赖树强排顺序。", parameters: { type: "object", properties: { topicId: { type: "string", description: "你想学的知识点 id" } }, required: ["topicId"] }, run: (a) => {
+        const r = pathFromTopic(a && a.topicId, 0, {});
+        if (r.error) return r.error;
+        const lines = ["想学《" + r.topic.name + "》——先说结论：**必须先会的**只有下面这些（有公开框架依据），其余都可以先跳过。"];
+        if (r.chain.length > 1) {
+          lines.push("");
+          lines.push("硬前置链（按顺序）：" + r.chain.map(function (x) { return x.name; }).join(" → "));
+        } else {
+          lines.push("");
+          lines.push("它**没有**任何有依据的硬前置 —— 可以直接开始，遇到卡点再回头补。");
+        }
+        if (r.required.length) {
+          lines.push("");
+          lines.push("它的直接硬前置：" + r.required.map(function (x) { return x.name + "（依据：" + x.by + "）"; }).join("、"));
+        }
+        if (r.optional.length) {
+          lines.push("");
+          lines.push("以下在我的经验里相关，但**没有外部依据支持它是前置**，可以跳过、也可以按兴趣先看："
+            + r.optional.map(function (x) { return x.name; }).join("、"));
+        }
+        return lines.join("\n");
+      } },
     { name: "learning_path", description: "按知识图谱的前置关系生成一条学习路径（拓扑排序，保证前置在前），可选限定领域。用于「我想系统学 Web 安全」「给我排个学习顺序」这类诉求。默认**跳过已掌握**的知识点（给的是接下来要学什么），并会提示跨领域的前置依赖。", parameters: { type: "object", properties: { category: { type: "string", description: "领域 id（如 web/binary）；不填或 all 表示全部领域" }, limit: { type: "integer", description: "返回条数，默认 20，最多 60" }, include_mastered: { type: "boolean", description: "为 true 时连已掌握的也排出（用于复盘全貌），默认 false" } }, required: [] }, run: (a) => {
       const limit = Math.min(Math.max(parseInt(a && a.limit, 10) || 20, 1), 60);
       // include_mastered=true 时连已掌握的也一并排出（用于复盘全貌）；默认只给"接下来要学"
@@ -7309,6 +7391,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     learning_path: { level: "low", confirm: false },
     plan_task: { level: "low", confirm: false },
     kg_audit: { level: "low", confirm: false },
+    path_from_topic: { level: "low", confirm: false },
     suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
@@ -7347,7 +7430,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -7357,7 +7440,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {

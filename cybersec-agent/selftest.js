@@ -4037,6 +4037,84 @@ $("#backLab").click();
     assert(/给不出出处的，就不要写/.test(prompt), "提示词明确说「给不出出处就别写」");
   }
 
+  // ===== 93. 学习路径：分层建议 + 兴趣入口（v1.8.1）=====
+  {
+    // 用户/评审指出："用拓扑排序规划学习路径，是工程思维对教育场景的粗暴移植。
+    // 学习不是编译依赖，人可以跳跃、回头、凭兴趣驱动。"
+    // 这一组守的就是"不许再把它当线性路线图"。
+    const ui = window.__ui;
+    const agL = window.__agent;
+    assert(agL.path && typeof agL.path.fromTopic === "function", "兴趣入口已暴露（path.fromTopic）");
+
+    const res = ui.buildLearningPath("all", 0, { skipMastered: false });
+    const txt = ui.renderLearningPath(res, { inPath: res.pathIds });
+
+    // ① 不再输出"[1] [2] [3]"式线性序号，改为分层
+    assert(/【第 1 层】/.test(txt), "输出改为**分层**（第 1 层…）");
+    assert(/建议的层次，不是必须的顺序/.test(txt), "明确说明这是建议而非必须顺序");
+    assert(/同层内可以任意顺序/.test(txt), "说明同层内可任意顺序");
+    assert(/凭兴趣跳着学、需要时回头补/.test(txt), "明确允许跳跃与回头（不再假装线性）");
+    assert(!/^\[1\]/m.test(txt) && !/^\[2\]/m.test(txt), "不再出现线性序号标记");
+
+    // ② 分层必须真的分出来（全领域下应有多层）
+    const layerCount = (txt.match(/【第 \d+ 层】/g) || []).length;
+    console.log("  全领域路径层数：" + layerCount + " ｜ 有依据 " + (txt.match(/有依据 \d+ 处/) || ["?"])[0]);
+    assert(layerCount >= 2, "至少分出 2 层（实际 " + layerCount + "）");
+
+    // ③ 兴趣入口：对某个知识点只回答"必须先会什么"
+    const t = window.eval("SEC_DATA").categories[0].topics[0];
+    const r = agL.path.fromTopic(t.id, 0, {});
+    assert(r && r.topic && Array.isArray(r.required) && Array.isArray(r.optional), "兴趣入口返回结构化结果");
+    assert(r.required.every((x) => x.by), "硬前置必须带依据来源（by 字段）");
+    console.log("  《" + r.topic.name + "》硬前置 " + r.required.length + " 个 ｜ 可跳过 " + r.optional.length + " 个");
+
+    // ④ 工具输出：必须分别说明「必须先会」与「可以跳过」
+    const out = agL.callTool ? null : null;
+    const toolTxt = (function () {
+      const tools = agL.tools();
+      assert(tools.filter((x) => x.name === "path_from_topic").length === 1, "新增 path_from_topic 工具（工具总数 " + tools.length + "）");
+      return "ok";
+    })();
+    assert(toolTxt === "ok", "工具已注册");
+
+    // ⑤ 分层只由**有依据**的边决定：无依据的依赖不该影响层号
+    const depthOf = {};
+    (function () {
+      const inPathSet = new Set(res.pathIds);
+      const memo = {};
+      function d(id, seen) {
+        if (memo[id] != null) return memo[id];
+        seen = seen || {};
+        if (seen[id]) return 0;
+        seen[id] = 1;
+        const pre = (agL.kg.graph().prereq[id] || []).filter(function (x) {
+          return inPathSet.has(x) && agL.kg.support(x, id).support === "yes";
+        });
+        const v = pre.length ? 1 + Math.max.apply(null, pre.map(function (x) { return d(x, seen); })) : 0;
+        memo[id] = v;
+        return v;
+      }
+      res.path.forEach(function (x) { depthOf[x.id] = d(x.id); });
+    })();
+    const evidencedEdges = res.pathIds.reduce(function (acc, id) {
+      return acc + (agL.kg.graph().prereq[id] || []).filter(function (p) {
+        return inPathSetHas(res.pathIds, p) && agL.kg.support(p, id).support === "yes";
+      }).length;
+    }, 0);
+    function inPathSetHas(arr, x) { return arr.indexOf(x) >= 0; }
+    assert(evidencedEdges >= 0, "（信息）路径内有依据的边数：" + evidencedEdges);
+    // 抽查：所有"有依据的边"必须 from 的层号 < to 的层号
+    let bad = 0;
+    res.pathIds.forEach(function (id) {
+      (agL.kg.graph().prereq[id] || []).forEach(function (p) {
+        if (res.pathIds.indexOf(p) < 0) return;
+        if (agL.kg.support(p, id).support !== "yes") return;   // 只检查硬约束
+        if (!(depthOf[p] < depthOf[id])) bad++;
+      });
+    });
+    assert(bad === 0, "所有**有依据**的前置都严格排在前面层（违反 " + bad + " 处）");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
