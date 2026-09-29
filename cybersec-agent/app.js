@@ -4020,7 +4020,7 @@
     const layers = {};
     res.path.forEach(function (t) { const d = pathDepth(t.id); (layers[d] = layers[d] || []).push(t); });
     lines.push("");
-    lines.push("这是**建议的层次**，不是必须的顺序：只有标「前置（有依据）」的才是硬约束，"
+    lines.push("这是「建议的层次」，不是必须的顺序：只有标「前置（有依据）」的才是硬约束，"
       + "同层内可以任意顺序，也可以凭兴趣跳着学、需要时回头补。"
       + "（想直接学某一个？用 learning_path 的 fromTopic 参数，只会告诉你它**必须**先会什么）");
 
@@ -4062,15 +4062,15 @@
     const sup = auditKgSupport();
     lines.push("");
     lines.push("关于这个顺序的可靠性（重要）：");
-    lines.push("· 前置边的**外部依据支持率** " + (sup.rate * 100).toFixed(1) + "%（" + sup.yes + "/" + sup.total
+    lines.push("· 前置边的外部依据支持率 " + (sup.rate * 100).toFixed(1) + "%（" + sup.yes + "/" + sup.total
       + " 条能对上公开框架的官方顺序；依据：" + KG_FRAMEWORKS.map(function (f) { return f.name; }).join("、") + "）");
     lines.push("· 本路径共 " + (evdN + advN) + " 处先后关系：**有依据 " + evdN + " 处**（上面写作「前置」），"
-      + "**经验性 " + advN + " 处**（上面写作「建议先看」—— 是我的经验安排，不是课纲要求）");
+      + "经验性 " + advN + " 处（上面写作「建议先看」—— 是我的经验安排，不是课纲要求）");
     if (res.domain && res.domain !== "all") {
       const st = sup.domStat[domName];
       if (st && st.inDomEdges === 0) {
         lines.push("· ⚠ 本领域内**没有任何依赖关系**：下面这个顺序只是按难度档位排的，"
-          + "**不是**有依据的知识依赖顺序，请勿当作学习路线图使用。");
+          + "不是有依据的知识依赖顺序，请勿当作学习路线图使用。");
       } else if (st) {
         lines.push("· 本领域内 " + st.inDomEdges + " 条依赖，其中 " + st.supported + " 条有外部依据；其余为经验性安排。");
       }
@@ -7234,13 +7234,13 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     { name: "path_from_topic", description: "兴趣入口：用户说「我就想学 X」时，只回答**必须先会什么** —— 只列出有外部依据的硬前置（可递归几层），其余前置一律标为「可跳过」。用于避免把学习路径当编译依赖树强排顺序。", parameters: { type: "object", properties: { topicId: { type: "string", description: "你想学的知识点 id" } }, required: ["topicId"] }, run: (a) => {
         const r = pathFromTopic(a && a.topicId, 0, {});
         if (r.error) return r.error;
-        const lines = ["想学《" + r.topic.name + "》——先说结论：**必须先会的**只有下面这些（有公开框架依据），其余都可以先跳过。"];
+        const lines = ["想学《" + r.topic.name + "》——先说结论：必须先会的只有下面这些（有公开框架依据），其余都可以先跳过。"];
         if (r.chain.length > 1) {
           lines.push("");
           lines.push("硬前置链（按顺序）：" + r.chain.map(function (x) { return x.name; }).join(" → "));
         } else {
           lines.push("");
-          lines.push("它**没有**任何有依据的硬前置 —— 可以直接开始，遇到卡点再回头补。");
+          lines.push("它没有任何有依据的硬前置 —— 可以直接开始，遇到卡点再回头补。");
         }
         if (r.required.length) {
           lines.push("");

@@ -3314,7 +3314,7 @@ $("#backLab").click();
 
     // ④ 渲染可读 + 已掌握打勾
     const txt = ui.renderLearningPath(web, { inPath: web.path.map((t) => t.id) });
-    assert(/学习路径/.test(txt) && /\[1\]/.test(txt), "路径可渲染为带序号的文本");
+    assert(/学习路径/.test(txt) && /【第 1 层】/.test(txt), "路径可渲染为分层文本（v1.8.1 起不再用线性序号）");
     assert(txt.indexOf("前置顺序异常") < 0, "零违反时不应出现顺序异常告警（跨领域前置提示另算）");
 
     // ⑤ 开场建议：有学情才给、全新用户不打扰、动作必须低风险
@@ -3382,7 +3382,7 @@ $("#backLab").click();
     // ⑥ 文案：要能看出"已掌握多少被跳过 / 接下来多少个"
     const txt = ui.renderLearningPath(after, { inPath: after.pathIds });
     assert(/已掌握 \d+ 个已跳过/.test(txt) && /接下来要学 \d+ 个/.test(txt), "渲染文案说明了跳过与剩余");
-    assert(/学习路径/.test(txt) && /\[1\]/.test(txt), "渲染结构完整");
+    assert(/学习路径/.test(txt) && /【第 1 层】/.test(txt), "渲染结构完整（分层形态）");
 
     // ⑦ 启动兜底：应用直接开在问答面板时也要出现开场建议
     const src6 = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
@@ -4051,7 +4051,7 @@ $("#backLab").click();
 
     // ① 不再输出"[1] [2] [3]"式线性序号，改为分层
     assert(/【第 1 层】/.test(txt), "输出改为**分层**（第 1 层…）");
-    assert(/建议的层次，不是必须的顺序/.test(txt), "明确说明这是建议而非必须顺序");
+    assert(/建议的层次[」"]?，不是必须的顺序/.test(txt), "明确说明这是建议而非必须顺序");
     assert(/同层内可以任意顺序/.test(txt), "说明同层内可任意顺序");
     assert(/凭兴趣跳着学、需要时回头补/.test(txt), "明确允许跳跃与回头（不再假装线性）");
     assert(!/^\[1\]/m.test(txt) && !/^\[2\]/m.test(txt), "不再出现线性序号标记");
