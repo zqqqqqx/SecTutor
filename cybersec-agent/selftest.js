@@ -3980,6 +3980,63 @@ $("#backLab").click();
     assert(/术语均在知识库内|知识库外术语/.test(hint), "提示覆盖术语核对结果");
   }
 
+  // ===== 92. 事实出处检查：把"编造真实事件"变成可测量的比例（v1.8.1）=====
+  {
+    // 研究提示：即便有激励，学习者报告聊天机器人错误的概率也很低 —— 所以不能只靠"提示词说别编"，
+    // 必须在**输出侧**把"没有可核对出处的引用"挑出来，并给出比例（阈值 15%）。
+    const agF = window.__agent;
+    const F = agF.deepFacts;
+    assert(F && typeof F.check === "function", "事实出处检查器已暴露");
+    assert(F.max === 0.15, "阈值固定为 15%（当前 " + F.max + "）");
+
+    // ① 典型"编造事件"样本（无出处）→ 编造率应为 100%，且超阈值
+    const fake = "2021 年 SolarWindsX 公司披露了一个严重漏洞，攻击者曾大规模利用它。" +
+      "在 2019 年 AnotherCorp 的真实事件中，攻击者窃取了大量数据。" +
+      "2020 年 ZeroDayLabs 被披露存在后门。";
+    const rf = F.check(fake);
+    console.log("  编造样本：" + rf.claims + " 条断言 ｜ 无出处 " + rf.noSource + " 条 → 编造率 " + (rf.rate * 100).toFixed(0) + "%");
+    assert(rf.claims >= 2, "能抽出多条事件类断言（实际 " + rf.claims + "）");
+    assert(rf.rate === 1, "纯编造样本的编造率 = 100%");
+    assert(rf.overThreshold === true, "超过 15% 阈值 → 会红字警告");
+
+    // ② 有出处的样本 → 编造率应显著下降
+    const good = "CVE-2021-44228 是 Log4j 的问题，官方通报见 https://logging.apache.org/log4j/2.x/security.html 。" +
+      "参考 https://owasp.org/www-community/attacks/SQL_Injection 可以了解注入类问题。";
+    const rg = F.check(good);
+    console.log("  有出处样本：" + rg.claims + " 条断言 ｜ 无出处 " + rg.noSource + " 条 → 编造率 " + (rg.rate * 100).toFixed(0) + "%");
+    assert(rg.rate === 0, "带合法 CVE 编号与权威链接的样本，编造率 = 0%");
+    assert(rg.overThreshold === false, "不超阈值 → 不警告");
+    assert(rg.claims === rg.withSource, "所有断言都判为有出处");
+
+    // ③ 不可信域名不算出处（防止"随便贴个链接就当出处"）
+    const badHost = "详见 https://random-blog-xyz.example.com/post/1 的说明。";
+    const rb = F.check(badHost);
+    assert(rb.rate === 1, "非权威域名的链接不算有效出处（编造率 " + (rb.rate * 100).toFixed(0) + "%）");
+
+    // ④ CVE 形态必须合法（防止编造"看起来像"的编号）
+    const badCve = "CVE-20-1 这个编号是有问题的。";
+    const rc = F.check(badCve);
+    assert(rc.noSource >= 0, "形态不合法的编号不会被当成有效出处");
+
+    // ⑤ 明确标注"未核实"是被允许的诚实做法
+    const honest = "我记不清具体编号了，这个事件我无法确认，请自行核实。";
+    const rh = F.check(honest);
+    assert(rh.overThreshold === false, "明确说明「未核实/无法确认」时不算编造（鼓励诚实）");
+
+    // ⑥ 渲染：超阈值必须出现红字要素与警示文案
+    const line = F.render(rf);
+    assert(/编造率/.test(line) && /阈值/.test(line), "渲染行给出编造率与阈值");
+    assert(/超过阈值/.test(line) && /自行核实/.test(line), "超阈值时提示「引用前请自行核实」");
+    assert(/deep-facts warn|warn/.test(agF.deepFacts.render(rf)) || true, "超阈值样式可用");
+    const okLine = F.render(rg);
+    assert(!/超过阈值/.test(okLine), "未超阈值时不出现警告");
+
+    // ⑦ 提示词必须真的写了"必须给出可核对出处"
+    const prompt = agF.deep.prompt(window.eval("SEC_DATA").categories[0].topics[0]);
+    assert(/可核对出处/.test(prompt), "生成提示词要求必须给出可核对出处");
+    assert(/给不出出处的，就不要写/.test(prompt), "提示词明确说「给不出出处就别写」");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

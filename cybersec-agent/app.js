@@ -1798,6 +1798,132 @@
      另外：**不给字数任何权重**。短而准的一百字，好过一千字的铺陈。
      ========================================================================== */
 
+  /* ==========================================================================
+     事实出处检查：把"AI 编造真实事件"变成**可测量、可拦截**的东西 —— v1.8.1
+     背景：深度讲解改为按需生成后，内容由 LLM 现场写。有人指出（且研究支持）：
+     LLM 最擅长编造"听起来合理但无法验证的真实案例"，而**学习者识别 AI 错误的概率很低**。
+     光在提示词里说"不要编造"不够 —— 必须**在输出侧做检查**，而且要给出数字。
+
+     定义（写清楚，避免自欺）：
+       · **事件类断言**：文中出现的可核实事实性说法 —— CVE 编号、被点名的事件/事件年份、
+         被点名的厂商或产品、被引用的研究/报告。
+       · **有效出处**：① 合法的 CVE 编号形态（CVE-YYYY-NNNN+）；② 指向权威域名的 URL；
+         ③ 该事实能在本地知识库里找到对应条目；④ 明确标注「未核实」。
+       · **编造率** = 没有有效出处的事件类断言 / 事件类断言总数。
+       目标：**编造率 < 15%**（阈值常量 FABRICATION_MAX），超过就在界面上红字提示。
+
+     注意：这是**筛查**不是**判真**。没有出处 ≠ 一定假，有出处 ≠ 一定真；
+     它做的是"把不可核对的引用挑出来，交给人去核实"，并给出一个可跟踪的比例。
+     ========================================================================== */
+  const FABRICATION_MAX = 0.15;        // 编造率阈值：超过就警告
+  const AUTHORITATIVE_HOSTS = [
+    "nvd.nist.gov", "cve.org", "cve.mitre.org", "cwe.mitre.org",
+    "owasp.org", "mitre.org", "attack.mitre.org",
+    "nist.gov", "csrc.nist.gov", "cert.org", "kb.cert.org",
+    "cisa.gov", "us-cert.cisa.gov", "msrc.microsoft.com", "support.microsoft.com",
+    "apache.org", "logging.apache.org", "spring.io", "jenkins.io",
+    "github.com/advisories", "security.snyk.io", "portswigger.net", "openwall.com",
+    "wikipedia.org", "zh.wikipedia.org",
+  ];
+
+  /** 抽取"事件类断言"：CVE 编号、URL、以及被点名的组织+年份这类可核实说法 */
+  function extractFactClaims(text) {
+    const s = String(text || "");
+    const claims = [];
+    // ① CVE 编号（最强的可核实形态）
+    (s.match(/CVE-\d{4}-\d{4,}/gi) || []).forEach(function (c) {
+      claims.push({ kind: "cve", raw: c.toUpperCase() });
+    });
+    // ② 显式 URL
+    (s.match(/https?:\/\/[^\s<>"'）)】]+/g) || []).forEach(function (u) {
+      claims.push({ kind: "url", raw: u.replace(/[.,;:]+$/, "") });
+    });
+    // ③ 被点名的组织 + 年份/事件（"2021 年 Apache Log4j 披露了…" 这类）
+    const reOrg = /(\d{4})\s*年[^。；\n]{0,24}?([A-Z][A-Za-z0-9]{1,20}(?:\.js|\.js)?)/g;
+    let m;
+    while ((m = reOrg.exec(s))) {
+      claims.push({ kind: "event", raw: m[0].slice(0, 40), year: m[1], org: m[2] });
+    }
+    // ④ "曾发生过 / 被披露 / 被利用 / 真实事件"这类断言（无具体主体也要记账）
+    (s.match(/(曾(?:发生|出现|被)?[^。；\n]{0,20}(?:事件|事故|漏洞|攻击)|真实(?:事件|案例)|实际(?:事件|案例))/g) || []).forEach(function (x) {
+      claims.push({ kind: "vague", raw: x.slice(0, 30) });
+    });
+    // 去重（同 kind+raw）
+    const seen = {};
+    return claims.filter(function (c) {
+      const k = c.kind + "|" + c.raw;
+      if (seen[k]) return false;
+      seen[k] = 1;
+      return true;
+    });
+  }
+
+  /** 判断单条断言有没有"有效出处" */
+  function claimHasProvenance(claim, text) {
+    const s = String(text || "");
+    if (claim.kind === "cve") {
+      // CVE 形态合法即视为**可核对**（NVD/CVE 官网可查），但要求全文里出现"官方/编号"语境或它本身
+      return /^CVE-\d{4}-\d{4,}$/.test(claim.raw);
+    }
+    if (claim.kind === "url") {
+      const host = (claim.raw.match(/^https?:\/\/([^\/]+)/) || [])[1] || "";
+      const h = host.replace(/^www\./, "").toLowerCase();
+      return AUTHORITATIVE_HOSTS.some(function (a) { return h === a || h.endsWith(a); });
+    }
+    if (claim.kind === "event") {
+      // 有年份 + 组织名还不够：必须在同一段落附近出现 URL 或 CVE 编号，或能在知识库里找到
+      const near = s.indexOf(claim.raw);
+      const win = s.slice(Math.max(0, near - 120), near + 200);
+      if (/CVE-\d{4}-\d{4,}/i.test(win)) return true;
+      if (/https?:\/\//.test(win)) return true;
+      if (claim.org && buildKnownTerms()[String(claim.org).toLowerCase()]) return true;
+      return false;
+    }
+    // 模糊的"真实事件"类：除非上下文给出编号/链接/明确说"未核实"，否则视为无出处
+    const near = s.indexOf(claim.raw);
+    const win = s.slice(Math.max(0, near - 100), near + 160);
+    if (/CVE-\d{4}-\d{4,}/i.test(win)) return true;
+    if (/https?:\/\//.test(win)) return true;
+    if (/(未核实|不确定|记不清|我无法确认)/.test(win)) return true;
+    return false;
+  }
+
+  /**
+   * 事实出处检查（输出侧）。
+   * 返回 { claims, withSource, noSource, rate, overThreshold, list }
+   * rate = 无出处 / 总数 —— **这就是"编造率"的代理指标**
+   */
+  function checkFactProvenance(text) {
+    const claims = extractFactClaims(text);
+    const list = claims.map(function (c) {
+      const ok = claimHasProvenance(c, text);
+      return { kind: c.kind, raw: c.raw, sourced: ok };
+    });
+    const noSource = list.filter(function (x) { return !x.sourced; });
+    const rate = list.length ? noSource.length / list.length : 0;
+    return {
+      claims: list.length,
+      withSource: list.length - noSource.length,
+      noSource: noSource.length,
+      rate: rate,
+      overThreshold: list.length > 0 && rate > FABRICATION_MAX,
+      list: list,
+    };
+  }
+
+  /** 渲染成一行给人看（超过阈值时红字警告） */
+  function renderProvenance(fr) {
+    if (!fr || !fr.claims) return "";
+    const pct = (fr.rate * 100).toFixed(0);
+    let s = "🔍 事实出处检查（" + fr.claims + " 条可核实说法）：有出处 " + fr.withSource + " 条"
+      + "，**无出处 " + fr.noSource + " 条 → 编造率 " + pct + "%**（阈值 " + (FABRICATION_MAX * 100) + "%）";
+    if (fr.overThreshold) {
+      s += "　⚠️ **超过阈值**：以下说法没有可核对的出处，引用前请自行核实 —— "
+        + fr.list.filter(function (x) { return !x.sourced; }).slice(0, 4).map(function (x) { return x.raw; }).join("、");
+    }
+    return s;
+  }
+
   /** 知识库里所有"已知术语"的集合（用于幻觉检查的外部对照） */
   function buildKnownTerms() {
     const terms = {};
@@ -1950,6 +2076,10 @@
       "2. 至少给出一个**可验证的具体事实**：命令、端口、字段名、版本号、CVE 编号或真实事件。",
       "3. 至少指出一处**常见误解或反例**——人们通常会想错的地方，以及为什么会想错。",
       "4. 不确定的地方明确说「不确定」，绝对不要编造论文、数字或事件。",
+      "4.1 **引用真实事件必须给出可核对出处**：CVE 编号，或指向官方/权威来源的链接",
+      "     （NVD / cve.org / 厂商安全公告 / OWASP / MITRE / CERT）。",
+      "     给不出出处的，就不要写这个事件，也不要写「某年某公司发生过……」这种无法核对的说法。",
+      "     宁可写「我不确定具体编号」，也不要编一个看起来合理的编号或事件。",
       "5. 长度以讲透为准，可以 300 字，也可以 900 字，不要为了凑字数铺陈。",
       "6. 直接从内容开始，不要写「好的」「以下是」这类开场。",
     ].join("\n");
@@ -2634,8 +2764,20 @@
         + paras.map((p) => "<p>" + fmt(p).replace(/\n/g, "<br>") + "</p>").join("")
         + '<p class="u-muted u-f11">按需生成 · 已缓存（' + new Date(cached.t).toLocaleDateString() + "）</p>"
         + '<div class="deep-quality u-muted u-f11">' + escapeHtml(renderQualityHint(cached.q || checkDeepQuality(cached.text, topic))) + "</div>"
+        + '<div class="' + ((cached.fr || checkFactProvenance(cached.text)).overThreshold ? "deep-facts warn" : "deep-facts u-muted u-f11") + '">'
+        + escapeHtml(renderProvenance(cached.fr || checkFactProvenance(cached.text))) + "</div>"
         + '<div class="deep-quiz"><b class="u-f12">用真实题目检验一下（题目与答案来自题库，不经模型）</b>'
         + renderTopicQuiz(topic.id) + "</div></div>";
+    }
+    // 未配置模型时必须**把话说清楚**，而不是留一个点了才报错的按钮
+    const noModel = !(state.llm && state.llm.key);
+    if (noModel) {
+      return '<div class="kb-section deep" id="deepBox"><h4>🎯 深入一步</h4>'
+        + '<p class="u-muted u-f11">这个知识点的深度讲解是**按需生成**的（不再预置成固定模板）。'
+        + '当前**还没有配置模型**，所以暂时无法生成。</p>'
+        + '<p class="u-muted u-f11">配好之后，点开任意知识点都能现场生成一份讲透的讲解，并自动缓存。</p>'
+        + '<button class="btn small" id="deepGenBtn">✨ 去配置模型</button>'
+        + '<div id="deepGenMsg" class="u-muted u-f11"></div></div>';
     }
     return '<div class="kb-section deep" id="deepBox"><h4>🎯 深入一步</h4>'
       + '<p class="u-muted u-f11">这个知识点的深度讲解没有预置：点下面的按钮，按你当前档位现场生成（内容会缓存，下次直接看）。</p>'
@@ -2647,6 +2789,7 @@
     const btn = $("#deepGenBtn");
     if (!btn || !topic) return;
     btn.addEventListener("click", async () => {
+      if (!(state.llm && state.llm.key)) { openSettings(); return; }   // 未配置 → 直接带到设置里的模型配置处
       const msg = $("#deepGenMsg");
       btn.disabled = true;
       if (msg) msg.textContent = "正在生成…（内容会按知识点缓存，下次直接看）";
@@ -2654,8 +2797,9 @@
         const text = await generateDeep(topic.id);
         // 生成即做质量检查（**不用字数**），结果随缓存一起存，供后续渲染直接展示
         const q = checkDeepQuality(text, topic);
+        const fr = checkFactProvenance(text);      // v1.8.1：事实出处 / 编造率检查
         const cache = loadDeepCache();
-        if (cache[topic.id]) { cache[topic.id].q = q; saveDeepCache(cache); }
+        if (cache[topic.id]) { cache[topic.id].q = q; cache[topic.id].fr = fr; saveDeepCache(cache); }
         const box = $("#deepBox");
         if (box) box.outerHTML = renderDeepSection(topic);
         bindTopicQuiz($("#deepBox"), topic.id);
@@ -4081,6 +4225,8 @@
         episodes: loadEpisodes, record: recordEpisode, similar: similarEpisodes, hint: episodeHint,
       },
       roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
+      deepFacts: { claims: extractFactClaims, check: checkFactProvenance, render: renderProvenance,
+        max: FABRICATION_MAX, hosts: AUTHORITATIVE_HOSTS },
       deepQuality: { check: checkDeepQuality, render: renderQualityHint, quiz: pickTopicQuiz, known: buildKnownTerms },
       deep: { get: getCachedDeep, put: putCachedDeep, gen: generateDeep, prompt: buildDeepPrompt,
         cacheKey: DEEP_CACHE_KEY, version: DEEP_PROMPT_VERSION },

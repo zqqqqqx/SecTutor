@@ -425,6 +425,9 @@ h3 { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); text-transform: u
 .tq-q { margin: 6px 0 4px; }
 .tq-opt { margin: 3px 6px 3px 0; }
 .deep-quality { margin-top: 8px; }
+/* 事实出处检查：超阈值时红字警告（v1.8.1） */
+.deep-facts { margin-top: 6px; }
+.deep-facts.warn { margin-top: 6px; color: var(--danger, #dc2626); font-weight: 600; }
 
 .cat-list { list-style: none; margin: 0 0 18px; padding: 0; }
 .cat-list li {
