@@ -4406,6 +4406,60 @@ $("#backLab").click();
     assert(judged === "fail", "同一份输出若 data.violations=3 → 判 fail（结构化优先于文本）");
   }
 
+  // ===== 99. 剩余 4 个场景的输出契约（v2.2.0）=====
+  {
+    // 四个契约各卡一类真实病：幻觉知识点 / 空话周报 / 概念混着说 / 越权替课纲拍板。
+    const agW = window.__agent;
+    const S2 = agW.scenes2;
+    assert(S2 && S2.impl, "剩余场景已注册");
+    const keys = Object.keys(S2.impl);
+    console.log("  第二批场景：" + keys.join(", ") + "（共 " + Object.keys(agW.scenes.impl).length + " 个场景）");
+    ["review_plan", "weekly_report", "concept_compare", "path_advice"].forEach((k) => {
+      assert(S2.impl[k], "已注册场景「" + k + "」");
+      assert(S2.impl[k].build && S2.impl[k].validate, k + " 同时有 build 与 validate");
+    });
+    assert(Object.keys(agW.scenes.impl).length >= 6, "场景总数 ≥6（实际 " + Object.keys(agW.scenes.impl).length + "）");
+
+    // ① review_plan：**发明不存在的知识点** → 必须判不合格
+    const realId = S2.realTopics() && Object.keys(S2.realTopics())[0];
+    const fakePlan = '{"items":[{"id":"fake_topic_xyz","minutes":10,"why":"很重要"}]}';
+    const v1 = S2.impl.review_plan.validate(fakePlan);
+    assert(v1.ok === false && /不存在的知识点/.test(v1.reason), "计划里出现不存在的知识点 → 判不合格（" + v1.reason + "）");
+    const goodPlan = '{"items":[{"id":"' + realId + '","minutes":10,"why":"逾期最久"}],"note":"先清逾期"}';
+    const v2 = S2.impl.review_plan.validate(goodPlan);
+    assert(v2.ok === true, "用真实知识点 id → 判合格");
+
+    // ② weekly_report：**只有空话** → 必须判不合格
+    const v3 = S2.impl.weekly_report.validate("你进步很大，继续保持良好的节奏，加油！");
+    assert(v3.ok === false && /数字|空话/.test(v3.reason), "通篇空话 → 判不合格（" + v3.reason + "）");
+    const v4 = S2.impl.weekly_report.validate("本周学了 12 个知识点，自测 40 题错 9 题，复习 5 次。"
+      + "卡点集中在访问控制：你在这类题上错了 4 次，说明对象级校验还没建立。下周动作：做 10 道越权判断题。");
+    assert(v4.ok === true, "含具体数字与卡点 → 判合格");
+
+    // ③ concept_compare：**只提一个概念 / 不讲差异** → 判不合格
+    const v5 = S2.impl.concept_compare.validate("SSRF 是服务端请求伪造，它会让服务器去访问内网。", { names: ["SSRF", "CSRF"] });
+    assert(v5.ok === false && /没有同时提到/.test(v5.reason), "只提一个概念 → 判不合格");
+    const v6 = S2.impl.concept_compare.validate("SSRF 骗服务器去请求内网资源，而 CSRF 骗的是用户浏览器替你发请求。"
+      + "判断口径：看请求是谁发出的——服务器发出的是 SSRF，用户浏览器发出的是 CSRF。前者区别在于信任边界不同。",
+      { names: ["SSRF", "CSRF"] });
+    assert(v6.ok === true, "两者都提且讲清差异 → 判合格");
+
+    // ④ path_advice：**把无依据的说成"必须"** → 判不合格（这是最要紧的一条）
+    const v7 = S2.impl.path_advice.validate("你必须先学「访问控制」，这是必修前提，一定要打牢。");
+    assert(v7.ok === false && /没有给出依据/.test(v7.reason), "无依据却用「必须」→ 判不合格（越权替课纲拍板）");
+    const v8 = S2.impl.path_advice.validate("访问控制有依据（OWASP ASVS V4），可以算必须先学；"
+      + "而「Web 应用基础」我没有可查依据，只是经验性建议，按兴趣即可。");
+    assert(v8.ok === true, "有依据才说必须、无依据标为经验性 → 判合格");
+
+    // ⑤ 4 个工具都已注册且低风险（模型能真正调用它们）
+    const names = agW.tools().map((x) => x.name);
+    ["review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice"].forEach((n) => {
+      assert(names.indexOf(n) >= 0, "已注册工具 " + n);
+      assert(agW.requiresConfirm(n) === false, n + " 属低风险");
+    });
+    console.log("  工具总数：" + names.length);
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

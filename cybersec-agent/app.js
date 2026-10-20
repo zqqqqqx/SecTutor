@@ -3773,6 +3773,142 @@
     },
   };
 
+  /* ==========================================================================
+     剩余 4 个场景（v2.2.0）：复习计划 / 周报 / 概念对比 / 路径建议
+     与前面两个场景同一套规矩：build（稳定段+易变段）→ 模型 → validate（输出契约）。
+     每个契约都故意卡住一类**真实病**：
+       · review_plan      —— 计划里出现**不存在的知识点**（幻觉）→ 判不合格
+       · weekly_report    —— 只有空话、没有具体数字（"你进步很大"）→ 判不合格
+       · concept_compare  —— 没讲清**两者差异**，把两个概念混着说 → 判不合格
+       · path_advice      —— 把**没有外部依据**的依赖说成"必须"（越权替课纲拍板）→ 判不合格
+     ========================================================================== */
+
+  /** 题库/知识库里真实存在的 topic id 集合（用于校验"计划里的知识点是否真实"） */
+  function realTopicIds() {
+    const set = {};
+    allTopics().forEach(function (t) { set[t.id] = 1; });
+    return set;
+  }
+
+  const SCENE_IMPL2 = {
+    review_plan: {
+      label: "复习计划",
+      build: function (ctx) {
+        const due = (ctx.due || []).map(function (d) { return "- " + d.name + "（逾期 " + d.days + " 天）"; }).join("\n");
+        return {
+          stable: [
+            "你是复习规划助手。根据到期清单，给出**今天**要复习的顺序与理由。",
+            "只输出 JSON，不要解释文字。字段：",
+            '{"items":[{"id":"知识点id","minutes":10,"why":"为什么先复习它"}],"note":"一句总述"}',
+            "规则：① 只能使用清单里出现的知识点 id，**不要发明新的**；② 逾期越久越靠前；③ 总量控制在 30 分钟内。",
+          ].join("\n"),
+          volatile: "【到期清单】\n" + (due || "（今日无到期项）") +
+            "\n【可用 id】" + (ctx.due || []).map(function (d) { return d.id; }).join(", "),
+        };
+      },
+      validate: function (out) {
+        const s = String(out || "").trim();
+        const m = s.match(/\{[\s\S]*\}/);
+        if (!m) return { ok: false, reason: "没有返回 JSON" };
+        let o = null;
+        try { o = JSON.parse(m[0]); } catch (e) { return { ok: false, reason: "JSON 解析失败" }; }
+        if (!Array.isArray(o.items) || !o.items.length) return { ok: false, reason: "items 为空" };
+        const real = realTopicIds();
+        const fake = o.items.filter(function (it) { return !it || !real[it.id]; }).map(function (it) { return it && it.id; });
+        if (fake.length) return { ok: false, reason: "计划里出现不存在的知识点 id：" + fake.slice(0, 3).join(","), data: o };
+        const badMin = o.items.filter(function (it) { return !(it.minutes > 0 && it.minutes <= 60); });
+        if (badMin.length) return { ok: false, reason: "有 items 的 minutes 不合理", data: o };
+        return { ok: true, reason: "知识点 id 全部真实、时长合理", data: o };
+      },
+    },
+
+    weekly_report: {
+      label: "学习周报",
+      build: function (ctx) {
+        const s = ctx.stats || {};
+        return {
+          stable: [
+            "你是学习教练。根据本周数据写一份**简短**周报，给一个正在自学网安的人看。",
+            "要求：① 必须引用**具体数字**（学了多少、错了多少、复习了几次）；② 指出一个**具体卡点**并说明依据；",
+            "③ 给一个下周可执行的动作；④ 不要空话（如'继续加油''进步很大'），不要写'好的''以下是'这类开场；",
+            "⑤ 不要用固定小标题。",
+          ].join("\n"),
+          volatile: "【本周数据】学习 " + (s.learned || 0) + " 个知识点，自测 " + (s.quiz || 0) + " 题，错 " + (s.wrong || 0)
+            + " 题，复习 " + (s.review || 0) + " 次；错题最多的领域：" + (s.topDomain || "无")
+            + "；连续学习 " + (s.streak || 0) + " 天。",
+        };
+      },
+      validate: function (out) {
+        const s = String(out || "");
+        const hasNum = /(\d+)\s*(个|题|次|天|条)/.test(s);
+        const hasBlock = /(卡点|问题|弱|错|拖)/.test(s);
+        const hasAction = /(下周|动作|建议|接下来|先做)/.test(s);
+        if (!hasNum) return { ok: false, reason: "没有引用具体数字（只有空话）" };
+        if (!hasBlock) return { ok: false, reason: "没有指出具体卡点" };
+        if (!hasAction) return { ok: false, reason: "没有给下周可执行的动作" };
+        if (s.length < 60) return { ok: false, reason: "内容过短（" + s.length + " 字）" };
+        return { ok: true, reason: "含具体数字、卡点与动作" };
+      },
+    },
+
+    concept_compare: {
+      label: "近邻概念对比",
+      build: function (ctx) {
+        const a = ctx.a || {}, b = ctx.b || {};
+        return {
+          stable: [
+            "你是安全讲师。用户要把两个**容易混淆**的知识点区分清楚。",
+            "要求：① 先说**一句话说清区别**；② 给一个**判断口径**（什么情况下用哪个）；③ 各举一个具体例子；",
+            "④ 指出最容易混的一点；⑤ 不要用固定小标题；⑥ 引用真实事件必须给可核对出处。",
+          ].join("\n"),
+          volatile: "【概念 A】" + a.name + "：" + (a.summary || "") + "\n【概念 B】" + b.name + "：" + (b.summary || ""),
+        };
+      },
+      validate: function (out, data) {
+        const s = String(out || "");
+        const names = (data && data.names) || [];
+        const bothNamed = names.length === 2 ? (s.indexOf(names[0]) >= 0 && s.indexOf(names[1]) >= 0) : true;
+        const hasDiff = /(区别|不同|而|相反|前者|后者|差异|vs|VS)/.test(s);
+        if (!bothNamed) return { ok: false, reason: "没有同时提到两个概念" };
+        if (!hasDiff) return { ok: false, reason: "没有讲差异（可能把两者混着说）" };
+        if (s.length < 80) return { ok: false, reason: "内容过短" };
+        return { ok: true, reason: "同时覆盖两者且讲清差异" };
+      },
+    },
+
+    path_advice: {
+      label: "路径建议",
+      build: function (ctx) {
+        const ev = (ctx.evidenced || []).map(function (x) { return "- " + x.name + "（依据：" + x.by + "）"; }).join("\n");
+        const adv = (ctx.advisory || []).map(function (x) { return "- " + x.name; }).join("\n");
+        return {
+          stable: [
+            "你是学习路径顾问。用户问「我先学哪个」。",
+            "**硬规则**：只有「有外部依据」的前置才可以说「必须先学」；",
+            "没有外部依据的只能说「建议先看（经验性安排）」，**不得**说成必修；",
+            "如果两者都没有依据，就直说「没有可查依据，按兴趣即可」。不要编造课纲要求。",
+          ].join("\n"),
+          volatile: "【有依据的前置】\n" + (ev || "（无）") + "\n【无依据但相关的】\n" + (adv || "（无）"),
+        };
+      },
+      validate: function (out) {
+        const s = String(out || "");
+        // 若提到"必须/一定/先学"这类强制词，就必须同时出现"依据"
+        const force = /(必须|一定要|先学|必修|前提)/.test(s);
+        const cite = /(依据|课纲|框架|官方|Security\+|ATT&CK|ASVS|CSF)/.test(s);
+        const honest = /(经验性|没有.*依据|按兴趣|可选|可跳过)/.test(s);
+        if (force && !cite) {
+          return { ok: false, reason: "用了「必须/先学」这类强制表述，但没有给出依据（越权替课纲拍板）" };
+        }
+        if (!cite && !honest) return { ok: false, reason: "既没说依据，也没说「这是经验性的」" };
+        return { ok: true, reason: "强制表述都有依据，或明确标注为经验性" };
+      },
+    },
+  };
+
+  // 合并进场景表（runScene 用同一套执行逻辑）
+  Object.keys(SCENE_IMPL2).forEach(function (k) { SCENE_IMPL[k] = SCENE_IMPL2[k]; });
+
   /**
    * 跑一个场景。返回 { ok, text, data, usage, ms, reason }
    * 未配模型 / 能力不足 → 返回 ok:false 并**说明原因**（不静默、不降级）
@@ -4830,6 +4966,7 @@
         summary: llmLedgerSummary, record: recordLlmCall },
       tools2: { structured: callToolStructured, data: toolData, normalize: normalizeToolResult,
         adapters: Object.keys(STRUCTURED_ADAPTERS) },
+      scenes2: { impl: SCENE_IMPL2, realTopics: realTopicIds },
       scenes: { impl: SCENE_IMPL, run: runScene, keys: Object.keys(SCENE_IMPL) },
       adversarial: { cases: ADVERSARIAL_CASES, selfcheck: adversarialSelfcheck,
         last: lastAdversarial, render: renderAdversarial, judge: judgeAdversarial, run: runAdversarial,
@@ -7793,6 +7930,39 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } },
     { name: "kg_audit", description: "体检知识图谱的**外部依据**：统计前置依赖里有多少条能对上公开框架（Security+ 考纲 / MITRE ATT&CK 战术链 / NIST CSF / OWASP ASVS / 密码学教材章节 / 网络分层）的官方顺序，并列出哪些领域其实**没有**可验证的依赖顺序。用于回答「这个学习路径靠谱吗」「顺序有依据吗」这类问题。", parameters: { type: "object", properties: {}, required: [] }, run: () => renderKgSupport(auditKgSupport()) },
     { name: "plan_task", description: "把复合目标拆成多步并**立即逐步执行**（Plan→Act→Verify 闭环）。每步执行后会按工具映射跑可编程验证器；若某步失败，会返回失败原因，请据此修正计划后再次调用（同一 goal 会被识别为重规划，最多 2 次）。适用于需要多步协作的复合诉求，例如「先看我哪里弱→再排学习路径→再出题练」。注意：高风险操作（建靶/扫描/销毁）不允许放进计划，必须回对话中逐次确认。", parameters: { type: "object", properties: { goal: { type: "string", description: "任务目标（一句话）" }, steps: { type: "array", items: { type: "object", properties: { desc: { type: "string", description: "这一步做什么" }, tool: { type: "string", description: "要调用的工具名（必须是已注册工具）" }, args: { type: "object", description: "传给该工具的参数" } }, required: ["desc", "tool"] }, description: "有序步骤列表" } }, required: ["goal", "steps"] }, run: (a) => planAndRunTask(a) },
+    { name: "review_plan_advice", description: "根据**到期复习清单**给出今天的复习顺序与理由（只使用清单里真实存在的知识点，不会发明新的）。需要先配置模型。", parameters: { type: "object", properties: {}, required: [] }, run: async () => {
+        const due = dueReviews().slice(0, 12).map(function (d) { return { id: d.id, name: topicName(d.id), days: +d.days.toFixed(1) }; });
+        if (!due.length) return "今天没有到期复习项。";
+        const r = await runScene("review_plan", { due: due });
+        if (!r.ok) return "未能生成复习计划：" + r.reason;
+        return (r.data.items || []).map(function (it, i) { return (i + 1) + ". " + topicName(it.id) + "（" + it.minutes + " 分钟）—— " + (it.why || ""); }).join("\n")
+          + (r.data.note ? "\n" + r.data.note : "");
+      } },
+    { name: "weekly_report_advice", description: "根据本周学习数据写一份简短周报（必须引用具体数字，指出一个卡点并给下周动作）。需要先配置模型。", parameters: { type: "object", properties: {}, required: [] }, run: async () => {
+        const s = { learned: state.mastery.size, quiz: (state.activity || []).filter(function (x) { return x.type === "quiz"; }).length,
+          wrong: (state.mistakes || []).length, review: (state.activity || []).filter(function (x) { return x.type === "review"; }).length,
+          streak: (typeof currentStreak === "function" ? currentStreak() : 0), topDomain: "" };
+        const r = await runScene("weekly_report", { stats: s });
+        return r.ok ? r.text : "未能生成周报：" + r.reason;
+      } },
+    { name: "concept_compare", description: "把两个**容易混淆**的知识点讲清区别（一句话区别 + 判断口径 + 各自例子 + 最易混的点）。参数是两个知识点名称或 id。需要先配置模型。", parameters: { type: "object", properties: { a: { type: "string", description: "第一个概念（名称或 id）" }, b: { type: "string", description: "第二个概念（名称或 id）" } }, required: ["a", "b"] }, run: async (args) => {
+        const find = function (q) {
+          const s = String(q || "").toLowerCase();
+          return allTopics().filter(function (t) { return t.id.toLowerCase() === s || t.name.toLowerCase().indexOf(s) >= 0; })[0];
+        };
+        const ta = find(args && args.a), tb = find(args && args.b);
+        if (!ta || !tb) return "找不到这两个知识点：" + [args && args.a, args && args.b].join(" / ");
+        const r = await runScene("concept_compare", { a: { name: ta.name, summary: (ta.levels || {})[state.userLevel] || ta.summary }, b: { name: tb.name, summary: (tb.levels || {})[state.userLevel] || tb.summary } });
+        return r.ok ? r.text : "未能生成对比：" + r.reason;
+      } },
+    { name: "path_advice", description: "回答「我先学哪个」：只有**有外部依据**的前置才说「必须先学」，没有依据的只能标为「建议先看（经验性）」。参数是目标知识点 id。需要先配置模型。", parameters: { type: "object", properties: { topicId: { type: "string", description: "目标知识点 id" } }, required: ["topicId"] }, run: async (args) => {
+        const p = pathFromTopic(args && args.topicId, 0, {});
+        if (p.error) return p.error;
+        const ev = (p.required || []).map(function (x) { return { name: x.name, by: x.by }; });
+        const ad = (p.optional || []).map(function (x) { return { name: x.name }; });
+        const r = await runScene("path_advice", { evidenced: ev, advisory: ad });
+        return r.ok ? r.text : "未能生成建议：" + r.reason;
+      } },
     { name: "adversarial_selfcheck", description: "跑一轮**内容对抗自检**：用 16 条用例测它在错误前提、不存在的知识点、提示注入、危险请求、编造诱导下的表现，用可编程规则判定并给出通过率。需要先配置模型（否则会说明无法运行，不伪造结果）。用于回答「你自己经得起对抗测试吗」「有没有做过对抗测试」。", parameters: { type: "object", properties: { only: { type: "array", items: { type: "string" }, description: "只跑指定用例 id（可选）" } }, required: [] }, run: async (a) => {
         const r = await adversarialSelfcheck(a && a.only ? { only: a.only } : {});
         return renderAdversarial(r);
@@ -7959,6 +8129,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     kg_audit: { level: "low", confirm: false },
     path_from_topic: { level: "low", confirm: false },
     adversarial_selfcheck: { level: "low", confirm: false },
+    review_plan_advice: { level: "low", confirm: false },
+    weekly_report_advice: { level: "low", confirm: false },
+    concept_compare: { level: "low", confirm: false },
+    path_advice: { level: "low", confirm: false },
     suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
@@ -7997,7 +8171,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck", "review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -8007,7 +8181,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck", "review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {
