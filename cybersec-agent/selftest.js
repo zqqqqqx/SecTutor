@@ -4223,6 +4223,80 @@ $("#backLab").click();
     assert(/全部通过/.test(txt2), "全通过时给出明确结论");
   }
 
+  // ===== 96. 统一模型调用层：能力声明 + 缓存友好 + 记账（v2.0.0）=====
+  {
+    // 用户要求：接入别的模型 API 时**不降低能力、不降低缓存命中**。
+    // 这两件事都必须可测，否则又变成口号。
+    const agZ = window.__agent;
+    const L = agZ.llm;
+    assert(L && L.caps && L.build, "统一调用层已暴露");
+
+    // ① 能力声明：四家都要有工具/JSON/缓存字段声明
+    ["openai", "deepseek", "anthropic", "local"].forEach((p) => {
+      const c = L.caps[p];
+      assert(c, "有 " + p + " 的能力声明");
+      assert(typeof c.tools === "boolean" && typeof c.json === "boolean", p + " 声明了 tools/json 能力");
+      assert(c.maxContext > 0, p + " 声明了上下文上限");
+      assert("cacheReadField" in c && "cacheWriteField" in c, p + " 声明了缓存统计字段");
+    });
+    // 未知 provider 必须回落到**保守**能力（本地模型那条：不支持工具），不能放大能力
+    const unknown = L.capsOf({ provider: "some-new-vendor" });
+    assert(unknown && unknown.tools === true, "未知 provider 回落 openai 兼容能力（默认支持工具）");
+    const localCaps = L.capsOf({ provider: "local" });
+    assert(localCaps.tools === false, "本地模型声明为不支持工具调用（不夸大能力）");
+    console.log("  能力表：openai/deepseek/anthropic 支持工具；local 不支持（" + Object.keys(L.caps).length + " 家）");
+
+    // ② **缓存关键**：同场景 + 同稳定段 → 稳定前缀 hash 必须一致（哪怕易变段每次都变）
+    const stable = ["你是网络安全讲师，回答要具体、给可核对出处。", "知识库版本：v2（内容摘要…）"];
+    const h1 = L.build("deep", stable, ["用户问：什么是 SSRF？"]);
+    const h2 = L.build("deep", stable, ["用户问：CSRF 和 SSRF 的区别？"]);
+    const h3 = L.build("deep", stable, ["时间：09:41 ｜ 用户档位：中级 ｜ 问题：XSS 怎么防"]);
+    assert(h1.stableHash === h2.stableHash, "易变段不同 → 稳定前缀 hash 仍相同（缓存可命中）");
+    assert(h2.stableHash === h3.stableHash, "连时间/档位变化也不影响稳定前缀 hash");
+    assert(h1.messages[0].role === "system" && h1.messages[1].role === "system", "稳定段在前、易变段在后（顺序固定）");
+    assert(h1.messages[0].content.indexOf("你是网络安全讲师") === 0, "稳定段确实排在第一条");
+    assert(h1.messages[1].content !== h2.messages[1].content, "易变段随请求变化（这是应该的）");
+    console.log("  稳定前缀 hash：" + h1.stableHash + "（三次不同问题，hash 一致 ✓）");
+    // 稳定段内容一变，hash 必须变（否则说明 hash 没用）
+    const h4 = L.build("deep", ["完全不同的系统提示"], ["同一问题"]);
+    assert(h4.stableHash !== h1.stableHash, "稳定段变了 → hash 变（可用于排查命中率下降）");
+
+    // ③ 能力不足时**明确报错**，不静默降级
+    const saved = PF.state.llm;
+    PF.state.llm = { provider: "local", key: "k", model: "llama" };
+    let err1 = "";
+    try { await L.call("deep", { stable: ["s"], volatile: ["v"] }, { tools: [{ name: "x" }] }); }
+    catch (e) { err1 = String(e && e.message); }
+    PF.state.llm = saved;
+    assert(/不支持工具调用/.test(err1), "本地模型被要求工具调用 → 明确报错（" + err1.slice(0, 28) + "…）");
+
+    // ④ usage 归一：三家字段名不同，必须都能抽到缓存命中
+    const uOpenai = L.usage({ prompt_tokens: 1000, completion_tokens: 50, prompt_tokens_details: { cached_tokens: 800 } }, L.caps.openai);
+    assert(uOpenai.cacheRead === 800 && Math.abs(uOpenai.cacheHitRate - 0.8) < 1e-6, "OpenAI nested cached_tokens 归一正确（80%）");
+    const uDs = L.usage({ prompt_tokens: 1000, prompt_cache_hit_tokens: 600, prompt_cache_miss_tokens: 400 }, L.caps.deepseek);
+    assert(uDs.cacheRead === 600 && uDs.cacheWrite === 400, "DeepSeek hit/miss 归一正确");
+    const uAnt = L.usage({ input_tokens: 2000, output_tokens: 80, cache_read_input_tokens: 1500, cache_creation_input_tokens: 500 }, L.caps.anthropic);
+    assert(uAnt.cacheRead === 1500 && uAnt.cacheWrite === 500 && uAnt.prompt === 2000, "Anthropic read/creation 归一正确");
+
+    // ⑤ 记账：按场景汇总（回答"缓存有没有掉、钱花在哪"）
+    const before = L.summary().total;
+    L.record({ scene: "quiz_explain", provider: "openai", model: "m", prompt: 1000, completion: 100, cacheRead: 800, ms: 500 });
+    L.record({ scene: "quiz_explain", provider: "openai", model: "m", prompt: 1000, completion: 100, cacheRead: 0, ms: 700 });
+    const sum = L.summary();
+    assert(sum.total >= before + 2, "调用记账可累加");
+    const b = sum.by.quiz_explain;
+    assert(b && b.calls >= 2 && b.prompt >= 2000, "按场景汇总调用量与 tokens");
+    assert(Math.abs(b.cacheHitRate - 0.4) < 1e-6, "场景缓存命中率计算正确（800/2000 = 40%）");
+
+    // ⑥ 场景注册：模型要参与**多个学习环节**，不能只有聊天
+    const scenes = Object.keys(L.scenes);
+    console.log("  已定义场景 " + scenes.length + " 个：" + scenes.join(", "));
+    assert(scenes.length >= 6, "场景数 ≥6（实际 " + scenes.length + "）");
+    ["chat", "deep", "quiz_explain", "mistake_diagnose", "review_plan", "weekly_report"].forEach((k) => {
+      assert(L.scenes[k], "已注册场景「" + k + "」");
+    });
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

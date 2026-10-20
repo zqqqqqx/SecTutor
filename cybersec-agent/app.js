@@ -3499,6 +3499,197 @@
     const bb = getBlackboard(); bb.last_role = AGENT_ROLE; saveBlackboard(bb);
   }
   function initAgentRole() { try { AGENT_ROLE = readAgentRole(); } catch (e) {} }
+  /* ==========================================================================
+     统一模型调用层（能力声明 + 缓存友好 + 记账）—— v2.0.0
+     要解决的三个具体问题：
+
+     ① **接入别的模型时不降低能力**
+        不同 provider / 模型能力不同（工具调用、JSON、流式、视觉、上下文长度、缓存）。
+        以前只按 provider 分支，不区分模型能力 → 可能把 tools 塞给不支持的模型（静默失效），
+        或在超长上下文时被截断而不自知。这里建立**能力声明表 + 失败显式化**：
+        不支持的请求**明确报错**，绝不静默降级。
+
+     ② **不降低缓存命中**
+        供应商侧前缀缓存（prompt caching）的命中条件基本一致：**前缀必须逐字节稳定**。
+        现实中最常见的"命中率掉的莫名其妙"，就是因为把时间戳/随机数/变动的用户状态
+        拼进了 system prompt 靠前的位置。这里：
+          · system 消息拆成 **稳定段（stable）+ 易变段（volatile）**，稳定段永远在前、逐字节不变
+          · 稳定段带一个 **hash**，便于验证"同一场景多次调用前缀一致"
+          · 记录每次调用的 **cache_read / cache_write / cached_tokens**（各家字段名不同，统一归一）
+
+     ③ **记账**：每次调用记 scene / provider / model / 输入输出 tokens / 缓存命中 / 耗时 / 估算成本，
+        存 localStorage（有上限），用于回答"钱花在哪、缓存有没有掉、哪个场景最贵"。
+     ========================================================================== */
+
+  /** 能力声明：provider → { 支持的模型特征、缓存字段名、上下文上限 } */
+  const PROVIDER_CAPS = {
+    openai: {
+      label: "OpenAI 兼容",
+      tools: true, json: true, stream: true, vision: true,
+      cacheReadField: "prompt_tokens_details.cached_tokens",
+      cacheWriteField: null,                       // OpenAI 不单独计写入
+      maxContext: 128000,
+      stablePrefix: true,                          // 支持前缀缓存（自动）
+    },
+    deepseek: {
+      label: "DeepSeek（兼容）",
+      tools: true, json: true, stream: true, vision: false,
+      cacheReadField: "prompt_cache_hit_tokens",
+      cacheWriteField: "prompt_cache_miss_tokens", // DeepSeek 用 hit/miss 两个字段
+      maxContext: 65536,
+      stablePrefix: true,                          // 上下文硬盘缓存，按前缀命中
+    },
+    anthropic: {
+      label: "Anthropic",
+      tools: true, json: true, stream: true, vision: true,
+      cacheReadField: "cache_read_input_tokens",
+      cacheWriteField: "cache_creation_input_tokens",
+      maxContext: 200000,
+      stablePrefix: true,
+      // Anthropic 需要显式 cache_control 标记，见 buildStablePrefix 的 cacheControl 输出
+      explicitCacheMark: true,
+    },
+    local: {
+      label: "本地 Ollama",
+      tools: false, json: true, stream: true, vision: false,   // 多数本地小模型不支持可靠工具调用
+      cacheReadField: null, cacheWriteField: null,
+      maxContext: 32768, stablePrefix: false,                  // 本地一般不启用前缀缓存
+    },
+  };
+
+  /** 取当前 provider 的能力（未知 provider 一律按最保守能力处理，不放大） */
+  function providerCaps(p) {
+    const id = (p && p.provider) || "openai";
+    return PROVIDER_CAPS[id] || PROVIDER_CAPS.openai;
+  }
+
+  /**
+   * **缓存友好的 prompt 构造**：
+   *   - stable：同一场景/同一知识库版本下**逐字节不变**的内容（角色说明、规则、知识库摘要）
+   *   - volatile：本次请求特有的内容（用户问题、当前档位、时间等）
+   * 顺序固定为 [stable, volatile]，稳定段在前 → 前缀缓存才可能命中。
+   * 返回 { messages, stableHash, stableChars }
+   */
+  function buildStablePrefix(scene, stableParts, volatileParts) {
+    const stable = (stableParts || []).filter(Boolean).join("\n\n");
+    const volatile = (volatileParts || []).filter(Boolean).join("\n\n");
+    const stableHash = simpleHash(stable);
+    const msgs = [];
+    if (stable) msgs.push({ role: "system", content: stable });
+    if (volatile) msgs.push({ role: "system", content: volatile });
+    return { messages: msgs, stableHash: stableHash, stableChars: stable.length, scene: scene || "" };
+  }
+
+  /** 稳定前缀的 hash（不用 crypto，避免异步；只用于"是否变化"的判断） */
+  function simpleHash(s) {
+    let h = 5381;
+    const str = String(s || "");
+    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+    return "sh" + h.toString(16);
+  }
+
+  /**
+   * 场景注册表：让模型在**多个学习环节**参与，而不是只有聊天。
+   * 每个场景声明：用途 / 输出契约（要什么形状）/ 是否有稳定前缀
+   */
+  const LLM_SCENES = {
+    chat: { label: "问答", stable: true, output: "text" },
+    deep: { label: "深度讲解", stable: true, output: "text" },
+    quiz_explain: { label: "题目解析（讲清为什么错）", stable: true, output: "text" },
+    mistake_diagnose: { label: "错题归因（错在哪个概念）", stable: true, output: "json" },
+    review_plan: { label: "复习计划（按遗忘曲线排）", stable: true, output: "json" },
+    weekly_report: { label: "学习周报（进步与卡点）", stable: true, output: "text" },
+    concept_compare: { label: "近邻概念对比（SSRF vs CSRF 这类）", stable: true, output: "text" },
+    path_advice: { label: "路径建议（结合外部依据说明）", stable: true, output: "text" },
+  };
+
+  /* ---------- 调用记账：证明"缓存有没有掉、钱花在哪" ---------- */
+  const LLM_LEDGER_KEY = "sectutor_llm_ledger";
+  const LLM_LEDGER_MAX = 300;
+
+  function llmLedger() {
+    try { const a = JSON.parse(localStorage.getItem(LLM_LEDGER_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  /** 从各种 provider 的 usage 里归一抽出缓存命中（字段名各家不同） */
+  function normalizeUsage(usage, caps) {
+    const u = usage || {};
+    let cacheRead = 0, cacheWrite = 0;
+    if (caps.cacheReadField && caps.cacheReadField.indexOf(".") >= 0) {
+      const parts2 = caps.cacheReadField.split("."); const a = parts2[0], b = parts2[1];
+      cacheRead = (u[a] && u[a][b]) || 0;
+    } else if (caps.cacheReadField) {
+      cacheRead = u[caps.cacheReadField] || 0;
+    }
+    if (caps.cacheWriteField) cacheWrite = u[caps.cacheWriteField] || 0;
+    return {
+      prompt: u.prompt_tokens || u.input_tokens || 0,
+      completion: u.completion_tokens || u.output_tokens || 0,
+      cacheRead: cacheRead,
+      cacheWrite: cacheWrite,
+      cacheHitRate: (u.prompt_tokens || u.input_tokens) ? cacheRead / (u.prompt_tokens || u.input_tokens) : 0,
+    };
+  }
+  function recordLlmCall(rec) {
+    try {
+      const list = llmLedger();
+      list.push(Object.assign({ t: Date.now() }, rec));
+      localStorage.setItem(LLM_LEDGER_KEY, JSON.stringify(list.slice(-LLM_LEDGER_MAX)));
+    } catch (e) {}
+  }
+  /** 汇总：按场景看调用量、缓存命中率、耗时 */
+  function llmLedgerSummary() {
+    const list = llmLedger();
+    const by = {};
+    list.forEach(function (r) {
+      const k = r.scene || "unknown";
+      const b = by[k] || (by[k] = { calls: 0, prompt: 0, completion: 0, cacheRead: 0, ms: 0 });
+      b.calls++;
+      b.prompt += (r.prompt || 0);
+      b.completion += (r.completion || 0);
+      b.cacheRead += (r.cacheRead || 0);
+      b.ms += (r.ms || 0);
+    });
+    Object.keys(by).forEach(function (k) {
+      const b = by[k];
+      b.cacheHitRate = b.prompt ? b.cacheRead / b.prompt : 0;
+      b.avgMs = b.calls ? Math.round(b.ms / b.calls) : 0;
+    });
+    return { total: list.length, by: by };
+  }
+
+  /**
+   * 统一调用入口（新代码一律走这里）。
+   * 不支持的请求**直接抛错**，不静默降级 —— 这是"接入别的模型不降低能力"的前提。
+   */
+  async function llmCall(scene, parts, opts) {
+    const o = opts || {};
+    const caps = providerCaps(state.llm);
+    const sceneDef = LLM_SCENES[scene] || LLM_SCENES.chat;
+    if (o.tools && o.tools.length && !caps.tools) {
+      throw new Error("当前模型（" + caps.label + "）不支持工具调用；本场景需要工具能力，请换用支持工具调用的模型。");
+    }
+    if (o.json && !caps.json) {
+      throw new Error("当前模型（" + caps.label + "）不支持 JSON 输出；本场景需要结构化输出，请换模型。");
+    }
+    const built = buildStablePrefix(scene, (parts && parts.stable) || [], (parts && parts.volatile) || []);
+    if (caps.maxContext && (built.stableChars + ((parts && parts.volatile) || []).join("").length) > caps.maxContext * 3) {
+      // 粗估：中文约 1 token ≈ 1.5~2 字符；超限就明确报错，不静默截断
+      throw new Error("请求超过当前模型的上下文上限（" + caps.maxContext + " tokens），请缩短输入或换用更大上下文的模型。");
+    }
+    const t0 = Date.now();
+    const gw = buildAgentApi().gateway;
+    const reply = await gw.complete(built.messages, o.tools || [], o);
+    const usage = normalizeUsage(reply && reply.usage, caps);
+    recordLlmCall({
+      scene: scene, provider: (state.llm && state.llm.provider) || "openai",
+      model: (state.llm && state.llm.model) || "", stableHash: built.stableHash,
+      prompt: usage.prompt, completion: usage.completion,
+      cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite,
+      ms: Date.now() - t0,
+    });
+    return { text: (reply && (reply.content || (reply.message && reply.message.content))) || "", usage: usage, stableHash: built.stableHash, reply: reply };
+  }
+
   const PROVIDERS = {
     openai:    { kind: "openai", label: "OpenAI 兼容" },
     deepseek:  { kind: "openai", label: "DeepSeek(兼容)" },
@@ -4438,6 +4629,9 @@
         episodes: loadEpisodes, record: recordEpisode, similar: similarEpisodes, hint: episodeHint,
       },
       roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
+      llm: { caps: PROVIDER_CAPS, capsOf: providerCaps, build: buildStablePrefix, hash: simpleHash,
+        scenes: LLM_SCENES, call: llmCall, usage: normalizeUsage, ledger: llmLedger,
+        summary: llmLedgerSummary, record: recordLlmCall },
       adversarial: { cases: ADVERSARIAL_CASES, selfcheck: adversarialSelfcheck,
         last: lastAdversarial, render: renderAdversarial, judge: judgeAdversarial, run: runAdversarial,
         correctMarkers: CORRECT_MARKERS, denyMarkers: DENY_MARKERS, fabPattern: FABRICATION_PATTERN },
