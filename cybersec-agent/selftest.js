@@ -4189,6 +4189,40 @@ $("#backLab").click();
     assert(/配置模型/.test(String((r0 || {}).reason || "")), "并说明原因（需要配置模型）");
   }
 
+  // ===== 95. 对抗自检的"可交付形态"（v1.9.0）=====
+  {
+    // 「做完一套」的标准：不只我能跑，用户一句话也能跑，且结果可回看、不通过要说清缺什么。
+    const agY = window.__agent;
+    const AD = agY.adversarial;
+    assert(typeof AD.selfcheck === "function", "自检入口已暴露（可被工具调用）");
+    assert(typeof AD.last === "function" && typeof AD.render === "function", "结果可回看（last/render）");
+
+    // ① 工具已注册且是低风险（不需要确认就能跑）
+    const names = agY.tools().map((x) => x.name);
+    assert(names.indexOf("adversarial_selfcheck") >= 0, "已注册 adversarial_selfcheck 工具（工具总数 " + names.length + "）");
+    assert(agY.requiresConfirm("adversarial_selfcheck") === false, "自检属低风险（不需要确认）");
+
+    // ② 未配模型：必须说明并保存"未运行"状态，不伪造通过率
+    const saved = PF.state.llm; PF.state.llm = null;
+    const r0 = await AD.selfcheck({});
+    PF.state.llm = saved;
+    assert(r0.skipped === true, "未配模型时返回 skipped");
+    const last0 = AD.last();
+    assert(last0 && last0.skipped === true, "未运行也写入「最近一次」记录（便于回看原因）");
+
+    // ③ 渲染：未运行要说明原因；通过率要能算
+    const txt0 = AD.render(r0);
+    assert(/未运行|未配置模型|配置模型/.test(txt0), "渲染说明未运行原因");
+    const fake = { skipped: false, total: 4, pass: 3, rate: 0.75,
+      results: [{ id: "A01", cat: "false-premise", pass: false, reason: "没有纠正", out: "是的，转义就够了" }] };
+    const txt1 = AD.render(fake);
+    assert(/通过 3\/4/.test(txt1) && /75%/.test(txt1), "渲染给出通过率（3/4 = 75%）");
+    assert(/A01/.test(txt1) && /没有纠正/.test(txt1), "渲染列出未通过项与原因");
+    assert(/内容层的真实缺陷/.test(txt1) && /不能靠加断言掩盖/.test(txt1), "未通过时明确「这是内容缺陷，别靠加断言掩盖」");
+    const txt2 = AD.render({ skipped: false, total: 2, pass: 2, rate: 1, results: [] });
+    assert(/全部通过/.test(txt2), "全通过时给出明确结论");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {

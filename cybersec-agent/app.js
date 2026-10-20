@@ -1939,6 +1939,40 @@
     return { pass: false, reason: "未知期望类型：" + c.expect };
   }
 
+  const ADV_LAST_KEY = "sectutor_adversarial_last";
+
+  /** 跑一轮并保存结果（供工具与界面回看） */
+  async function adversarialSelfcheck(opts) {
+    const r = await runAdversarial(opts || {});
+    try { localStorage.setItem(ADV_LAST_KEY, JSON.stringify(Object.assign({ t: Date.now() }, r))); } catch (e) {}
+    return r;
+  }
+  function lastAdversarial() {
+    try { return JSON.parse(localStorage.getItem(ADV_LAST_KEY) || "null"); } catch (e) { return null; }
+  }
+
+  /** 把对抗结果渲染成人话（通过率 + 未通过项 + 该修什么） */
+  function renderAdversarial(r) {
+    if (!r) return "还没有跑过对抗自检。";
+    if (r.skipped) return "对抗自检未运行：" + r.reason + "（共 " + r.total + " 条用例待跑）";
+    const pct = (r.rate * 100).toFixed(0);
+    const lines = ["对抗自检：通过 " + r.pass + "/" + r.total + "（" + pct + "%）"];
+    const bad = r.results.filter(function (x) { return !x.pass; });
+    if (!bad.length) {
+      lines.push("全部通过 ✓");
+    } else {
+      lines.push("");
+      lines.push("未通过 " + bad.length + " 条：");
+      bad.forEach(function (x) {
+        lines.push("· [" + x.id + "｜" + x.cat + "] " + x.reason);
+        lines.push("   模型实际输出片段：" + String(x.out || "").slice(0, 60).replace(/\s+/g, " "));
+      });
+      lines.push("");
+      lines.push("这些是**内容层的真实缺陷**（不是代码 bug），需要改提示词或补充知识库，不能靠加断言掩盖。");
+    }
+    return lines.join("\n");
+  }
+
   /**
    * 跑一轮对抗测试。
    * 有模型时：逐条真实调用 agent，再用 judgeAdversarial 判定。
@@ -4404,7 +4438,8 @@
         episodes: loadEpisodes, record: recordEpisode, similar: similarEpisodes, hint: episodeHint,
       },
       roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
-      adversarial: { cases: ADVERSARIAL_CASES, judge: judgeAdversarial, run: runAdversarial,
+      adversarial: { cases: ADVERSARIAL_CASES, selfcheck: adversarialSelfcheck,
+        last: lastAdversarial, render: renderAdversarial, judge: judgeAdversarial, run: runAdversarial,
         correctMarkers: CORRECT_MARKERS, denyMarkers: DENY_MARKERS, fabPattern: FABRICATION_PATTERN },
       deepFacts: { claims: extractFactClaims, check: checkFactProvenance, render: renderProvenance,
         max: FABRICATION_MAX, hosts: AUTHORITATIVE_HOSTS },
@@ -7353,6 +7388,10 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     } },
     { name: "kg_audit", description: "体检知识图谱的**外部依据**：统计前置依赖里有多少条能对上公开框架（Security+ 考纲 / MITRE ATT&CK 战术链 / NIST CSF / OWASP ASVS / 密码学教材章节 / 网络分层）的官方顺序，并列出哪些领域其实**没有**可验证的依赖顺序。用于回答「这个学习路径靠谱吗」「顺序有依据吗」这类问题。", parameters: { type: "object", properties: {}, required: [] }, run: () => renderKgSupport(auditKgSupport()) },
     { name: "plan_task", description: "把复合目标拆成多步并**立即逐步执行**（Plan→Act→Verify 闭环）。每步执行后会按工具映射跑可编程验证器；若某步失败，会返回失败原因，请据此修正计划后再次调用（同一 goal 会被识别为重规划，最多 2 次）。适用于需要多步协作的复合诉求，例如「先看我哪里弱→再排学习路径→再出题练」。注意：高风险操作（建靶/扫描/销毁）不允许放进计划，必须回对话中逐次确认。", parameters: { type: "object", properties: { goal: { type: "string", description: "任务目标（一句话）" }, steps: { type: "array", items: { type: "object", properties: { desc: { type: "string", description: "这一步做什么" }, tool: { type: "string", description: "要调用的工具名（必须是已注册工具）" }, args: { type: "object", description: "传给该工具的参数" } }, required: ["desc", "tool"] }, description: "有序步骤列表" } }, required: ["goal", "steps"] }, run: (a) => planAndRunTask(a) },
+    { name: "adversarial_selfcheck", description: "跑一轮**内容对抗自检**：用 16 条用例测它在错误前提、不存在的知识点、提示注入、危险请求、编造诱导下的表现，用可编程规则判定并给出通过率。需要先配置模型（否则会说明无法运行，不伪造结果）。用于回答「你自己经得起对抗测试吗」「有没有做过对抗测试」。", parameters: { type: "object", properties: { only: { type: "array", items: { type: "string" }, description: "只跑指定用例 id（可选）" } }, required: [] }, run: async (a) => {
+        const r = await adversarialSelfcheck(a && a.only ? { only: a.only } : {});
+        return renderAdversarial(r);
+      } },
     { name: "path_from_topic", description: "兴趣入口：用户说「我就想学 X」时，只回答**必须先会什么** —— 只列出有外部依据的硬前置（可递归几层），其余前置一律标为「可跳过」。用于避免把学习路径当编译依赖树强排顺序。", parameters: { type: "object", properties: { topicId: { type: "string", description: "你想学的知识点 id" } }, required: ["topicId"] }, run: (a) => {
         const r = pathFromTopic(a && a.topicId, 0, {});
         if (r.error) return r.error;
@@ -7514,6 +7553,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     plan_task: { level: "low", confirm: false },
     kg_audit: { level: "low", confirm: false },
     path_from_topic: { level: "low", confirm: false },
+    adversarial_selfcheck: { level: "low", confirm: false },
     suggest_next: { level: "low", confirm: false },
     read_mistakes: { level: "low", confirm: false },
     quiz_from_mistakes: { level: "low", confirm: false },
@@ -7552,7 +7592,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -7562,7 +7602,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {
