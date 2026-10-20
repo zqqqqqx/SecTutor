@@ -3690,6 +3690,104 @@
     return { text: (reply && (reply.content || (reply.message && reply.message.content))) || "", usage: usage, stableHash: built.stableHash, reply: reply };
   }
 
+  /* ==========================================================================
+     场景化接入（Scene Runtime）—— v2.0.0
+     目的：让模型**真正进入学习环节**，而不是只在聊天框里等提问。
+     每个场景都必须同时具备三件东西，缺一不可：
+       ① build(ctx)     → 稳定段 + 易变段（稳定段保证缓存命中，见 buildStablePrefix）
+       ② validate(out)  → **输出契约校验**（不通过就明说，不把半成品塞给用户）
+       ③ 一个用户能触发它的入口（按钮/动作）
+     另外所有调用都走 llmCall → 自动进记账（缓存命中率可查）。
+
+     本轮先接两个最能让用户感知的：
+       · quiz_explain     —— 答错时讲清"为什么错"（文本契约：必须解释错因，不能只重复答案）
+       · mistake_diagnose —— 错题归因（JSON 契约：{concept, why, next}，字段必须齐）
+     ========================================================================== */
+
+  /** 场景实现表：build / validate */
+  const SCENE_IMPL = {
+    quiz_explain: {
+      label: "题目解析",
+      build: function (ctx) {
+        const q = ctx.q || {};
+        return {
+          stable: [
+            "你是网络安全讲师。用户在自测中答错了一道题，你的任务是讲清**为什么错**，而不是重复正确答案。",
+            "要求：",
+            "1. 指出他选的这一项**错在哪**（具体到机制，不要只说'不正确'）；",
+            "2. 说明正确项为什么对，以及它依赖的**关键机制**；",
+            "3. 给一个**容易混淆**的近邻概念做对比（如果他很可能把它俩搞混）；",
+            "4. 引用真实事件/CVE 时必须给可核对出处，给不出就别写；不确定要说不确定；",
+            "5. 不要用固定小标题，按这题自身的特点组织；不要写'好的''以下是'这类开场。",
+          ].join("\n"),
+          volatile: [
+            "【题目】" + String(q.q || ""),
+            "【选项】" + (q.options || []).map(function (o, i) { return (i + 1) + ". " + o; }).join("；"),
+            "【正确答案】" + String(q.options ? q.options[q.answer] : q.answer || ""),
+            "【用户选择】" + String(ctx.chosenText || ""),
+            "【题库既有解析】" + String(q.explain || "（无）"),
+          ].join("\n"),
+        };
+      },
+      /** 契约：必须解释错因（出现"错在/问题在于/因为…所以/误以为"这类），且不能只有一句话 */
+      validate: function (out) {
+        const s = String(out || "");
+        const explains = /(错在|问题在于|因为|所以|误|混淆|其实|区分|会导致|后果)/.test(s);
+        const longEnough = s.length >= 80;
+        if (!explains) return { ok: false, reason: "没有解释错因（可能只是重复答案）" };
+        if (!longEnough) return { ok: false, reason: "内容过短（" + s.length + " 字），不足以讲清机制" };
+        return { ok: true, reason: "含错因解释" };
+      },
+    },
+
+    mistake_diagnose: {
+      label: "错题归因",
+      build: function (ctx) {
+        const list = (ctx.mistakes || []).map(function (m) { return "- " + m.name + "（错 " + m.n + " 次）"; }).join("\n");
+        return {
+          stable: [
+            "你是学习诊断助手。根据用户的错题分布，判断他**最可能缺的是哪个底层概念**，并给出下一步。",
+            "只输出 JSON，不要任何解释文字。字段：",
+            '{"concept":"最可能缺的底层概念（一句话）","why":"判断依据（引用错题里的具体知识点/次数）","next":"下一步做什么（一个具体动作）"}',
+            "不确定就在 why 里写「依据不足」，不要编造。",
+          ].join("\n"),
+          volatile: "【错题分布】\n" + (list || "（暂无错题）") +
+            "\n【已掌握数】" + (ctx.mastered || 0) + " / " + (ctx.total || 0),
+        };
+      },
+      /** 契约：必须是可解析 JSON 且三字段齐全 */
+      validate: function (out) {
+        const s = String(out || "").trim();
+        const m = s.match(/\{[\s\S]*\}/);
+        if (!m) return { ok: false, reason: "没有返回 JSON" };
+        let o = null;
+        try { o = JSON.parse(m[0]); } catch (e) { return { ok: false, reason: "JSON 解析失败" }; }
+        const miss = ["concept", "why", "next"].filter(function (k) { return !o[k] || !String(o[k]).trim(); });
+        if (miss.length) return { ok: false, reason: "字段缺失：" + miss.join(","), data: o };
+        return { ok: true, reason: "字段齐全", data: o };
+      },
+    },
+  };
+
+  /**
+   * 跑一个场景。返回 { ok, text, data, usage, ms, reason }
+   * 未配模型 / 能力不足 → 返回 ok:false 并**说明原因**（不静默、不降级）
+   */
+  async function runScene(scene, ctx) {
+    const impl = SCENE_IMPL[scene];
+    if (!impl) return { ok: false, reason: "未知场景：" + scene };
+    if (!(state.llm && state.llm.key)) return { ok: false, reason: "需要先在设置里配置模型（本场景由模型生成，不伪造内容）" };
+    const parts = impl.build(ctx || {});
+    let r = null;
+    try { r = await llmCall(scene, parts, {}); }
+    catch (e) { return { ok: false, reason: String(e && e.message) }; }
+    const v = impl.validate(r.text);
+    return {
+      ok: v.ok, text: r.text, data: v.data, reason: v.reason,
+      usage: r.usage, ms: 0, scene: scene,
+    };
+  }
+
   const PROVIDERS = {
     openai:    { kind: "openai", label: "OpenAI 兼容" },
     deepseek:  { kind: "openai", label: "DeepSeek(兼容)" },
@@ -4632,6 +4730,7 @@
       llm: { caps: PROVIDER_CAPS, capsOf: providerCaps, build: buildStablePrefix, hash: simpleHash,
         scenes: LLM_SCENES, call: llmCall, usage: normalizeUsage, ledger: llmLedger,
         summary: llmLedgerSummary, record: recordLlmCall },
+      scenes: { impl: SCENE_IMPL, run: runScene, keys: Object.keys(SCENE_IMPL) },
       adversarial: { cases: ADVERSARIAL_CASES, selfcheck: adversarialSelfcheck,
         last: lastAdversarial, render: renderAdversarial, judge: judgeAdversarial, run: runAdversarial,
         correctMarkers: CORRECT_MARKERS, denyMarkers: DENY_MARKERS, fabPattern: FABRICATION_PATTERN },
@@ -7244,8 +7343,20 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         if (picked < 0) { $("#quizSubmit").textContent = "请先选择"; return; }
         answered = true; const correct = picked === q.answer; if (correct) score++; else recordMistake(q, q.cat);   // v1.5.9：复习答错同样入错题本
         const fb = $("#quizFeedback"); fb.classList.remove("hidden"); fb.className = "quiz-feedback " + (correct ? "ok" : "fail");
-        fb.innerHTML = `<b>${correct ? "✅ 正确" : "❌ 错误"}</b><p>${escapeHtml(q.explain)}</p><button class="btn small" id="quizNext">${idx + 1 >= items.length ? "完成" : "下一题 →"}</button>`;
+        fb.innerHTML = `<b>${correct ? "✅ 正确" : "❌ 错误"}</b><p>${escapeHtml(q.explain)}</p>`
+          + `<button class="btn small" id="quizNext">${idx + 1 >= items.length ? "完成" : "下一题 →"}</button>`
+          + (correct ? "" : '<button class="btn ghost small" id="quizWhyBtn">🤖 讲讲为什么错</button><div class="quiz-why" id="quizWhy"></div>');
         $("#quizNext").addEventListener("click", () => { idx++; answered = false; picked = -1; render(); });
+        // v2.0.0：模型进入"判题"环节 —— 答错时讲清为什么错（走 llmCall，自动进记账）
+        const whyBtn = $("#quizWhyBtn");
+        if (whyBtn) whyBtn.addEventListener("click", async () => {
+          const box = $("#quizWhy");
+          whyBtn.disabled = true;
+          if (box) box.textContent = "正在讲这道题…";
+          const r = await runScene("quiz_explain", { q: q, chosenText: q.options[picked] });
+          if (!r.ok) { if (box) box.textContent = "未能生成：" + r.reason; whyBtn.disabled = false; return; }
+          if (box) box.textContent = r.text;     // textContent：纯文本渲染，避免注入
+        });
       });
     }
     render();

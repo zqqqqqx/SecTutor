@@ -4297,6 +4297,56 @@ $("#backLab").click();
     });
   }
 
+  // ===== 97. 场景化接入：输出契约必须校验（v2.0.0）=====
+  {
+    // "模型参与学习"不能只是把 prompt 塞进去 —— 每个场景都要有**输出契约**，
+    // 不合格就明说，不把半成品塞给用户。
+    const agS = window.__agent;
+    const S = agS.scenes;
+    assert(S && S.impl && typeof S.run === "function", "场景执行器已暴露");
+    assert(S.keys.length >= 2, "已接场景数 ≥2（实际 " + S.keys.length + "：" + S.keys.join(",") + "）");
+
+    // ① build：稳定段与易变段必须分开；同一题换选项 → 稳定段 hash 不变（缓存可命中）
+    const q = { q: "SQL 注入最有效的根治手段是？", options: ["转义引号", "参数化查询", "加 WAF", "限制长度"], answer: 1, explain: "参数化查询把数据与语句分离。", cat: "web", level: "初级" };
+    const b1 = S.impl.quiz_explain.build({ q: q, chosenText: "转义引号" });
+    const b2 = S.impl.quiz_explain.build({ q: q, chosenText: "加 WAF" });
+    assert(b1.stable && b1.volatile, "build 返回稳定段与易变段");
+    const L = agS.llm;
+    const h1 = L.build("quiz_explain", [b1.stable], [b1.volatile]);
+    const h2 = L.build("quiz_explain", [b2.stable], [b2.volatile]);
+    assert(h1.stableHash === h2.stableHash, "换选项不改稳定段 → 前缀 hash 一致（缓存命中）");
+    assert(b1.volatile.indexOf("转义引号") >= 0 && b2.volatile.indexOf("加 WAF") >= 0, "用户所选进入易变段（不进稳定段）");
+    assert(b1.stable.indexOf("转义引号") < 0, "稳定段**不含**本次具体选项（否则缓存必掉）");
+    console.log("  题目解析场景：稳定段 " + b1.stable.length + " 字，易变段 " + b1.volatile.length + " 字，hash " + h1.stableHash);
+
+    // ② 契约校验：题目解析 —— 只重复答案 / 太短 → 不合格
+    const vShort = S.impl.quiz_explain.validate("正确答案是参数化查询。");
+    assert(vShort.ok === false && /过短|没有解释错因/.test(vShort.reason), "只给答案 → 判不合格（" + vShort.reason + "）");
+    const vGood = S.impl.quiz_explain.validate("你选的「转义引号」错在：它只处理了引号这一种字符，遇到数字型注入、宽字节、堆叠查询就失效；"
+      + "因为拼接仍然把用户输入当成语法的一部分，所以根本问题没解决。参数化查询把语句结构与数据分离，才切断了这条路径。"
+      + "顺带区分一下：WAF 是缓解（可绕过），不是根治。");
+    assert(vGood.ok === true, "有错因、有机制、有对比 → 判合格（" + vGood.reason + "）");
+
+    // ③ 契约校验：错题归因必须是**可解析 JSON 且三字段齐全**
+    const vNoJson = S.impl.mistake_diagnose.validate("你可能缺的是访问控制基础。");
+    assert(vNoJson.ok === false && /JSON/.test(vNoJson.reason), "非 JSON → 判不合格");
+    const vBadJson = S.impl.mistake_diagnose.validate('{"concept":"访问控制"}');
+    assert(vBadJson.ok === false && /字段缺失/.test(vBadJson.reason), "缺字段 → 判不合格（" + vBadJson.reason + "）");
+    const vOkJson = S.impl.mistake_diagnose.validate('{"concept":"访问控制的对象级校验","why":"跨站请求伪造 CSRF 错 3 次","next":"先做 5 道越权判断题"}');
+    assert(vOkJson.ok === true && vOkJson.data && vOkJson.data.concept, "齐全 JSON → 判合格并返回结构化 data");
+
+    // ④ 未配模型：明确说明原因，不伪造内容
+    const saved = PF.state.llm; PF.state.llm = null;
+    const r0 = await S.run("quiz_explain", { q: q, chosenText: "转义引号" });
+    PF.state.llm = saved;
+    assert(r0.ok === false && /配置模型/.test(r0.reason), "未配模型 → ok:false 且说明原因（" + r0.reason.slice(0, 20) + "…）");
+    assert(!r0.text, "未配模型时不返回任何伪造文本");
+
+    // ⑤ 未知场景明确报错
+    const r1 = await S.run("not_a_scene", {});
+    assert(r1.ok === false && /未知场景/.test(r1.reason), "未知场景 → 明确报错");
+  }
+
   console.log("\n==== 自测结果 ====");
   results.forEach((r) => console.log(r));
 if (errors.length) {
