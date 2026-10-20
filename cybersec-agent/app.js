@@ -1285,9 +1285,11 @@
 
   /** 可编程验证器：入参统一是「上一步的工具输出文本」，返回 {ok, note} */
   const VERIFIERS = {
-    path_no_violation: function (out) {
+    path_no_violation: function (out, data) {
+      const v = (data && typeof data.violations === "number") ? data.violations : null;
+      if (v != null) return { ok: v === 0, note: "前置违反 " + v + " 处（结构化）" };
       const r = buildLearningPath("all", 0, { skipMastered: false });
-      return { ok: r.violations === 0, note: "前置违反 " + r.violations + " 处" };
+      return { ok: r.violations === 0, note: "前置违反 " + r.violations + " 处（回退重算）" };
     },
     quiz_topic_valid: function (out) {
       const ids = {};
@@ -1305,11 +1307,11 @@
   };
 
   /** 对一步执行结果跑验证（按工具映射；无映射则跳过并标注） */
-  function verifyStep(step, output) {
+  function verifyStep(step, output, data) {
     const keys = VERIFIER_BY_TOOL[step.tool];
     if (!keys || !keys.length) return { ok: true, skipped: true, note: "该工具暂无验证器" };
     const res = keys.map(function (k) {
-      const v = VERIFIERS[k] ? VERIFIERS[k](output) : { ok: false, note: "未知验证器 " + k };
+      const v = VERIFIERS[k] ? VERIFIERS[k](output, data) : { ok: false, note: "未知验证器 " + k };
       return { key: k, ok: v.ok, note: v.note };
     });
     return { ok: res.every(function (x) { return x.ok; }), detail: res, note: res.map(function (x) { return x.key + ":" + (x.ok ? "ok" : "FAIL") + "(" + x.note + ")"; }).join(" ") };
@@ -1386,7 +1388,9 @@
       step.attempts = 1;
 
       const okCall = out.indexOf("工具执行错误") !== 0;
-      const v = okCall ? verifyStep(step, out) : { ok: false, note: "调用失败" };
+      let stepData = null;
+      try { stepData = okCall && STRUCTURED_ADAPTERS[rs.tool] ? (await STRUCTURED_ADAPTERS[rs.tool](rs.args || {})).data : null; } catch (e) { stepData = null; }
+      const v = okCall ? verifyStep(step, out, stepData) : { ok: false, note: "调用失败" };
       step.verify = v;
       step.status = okCall && v.ok ? "done" : "failed";
       task.artifacts.push({ step: step.id, tool: rs.tool, summary: out.slice(0, 120) });
@@ -3788,6 +3792,100 @@
     };
   }
 
+  /* ==========================================================================
+     工具结果的结构化契约 —— v2.1.0
+     问题：现在所有工具都返回**一段文本**，验证器只能拿正则去猜"这一步成不成"。
+     例如"学习路径有没有违反前置"要靠 `out.indexOf("违反 0")` 这种脆弱的字符串匹配 ——
+     文案一改，验证器就假阳性/假阴性。
+
+     做法（**非破坏性**）：
+       · 工具可以照旧只返回字符串（旧工具一律不动）
+       · 需要被验证的工具，额外提供 `runStructured(args)` → 返回
+           { ok: boolean, data: any, evidence?: {…}, text?: string }
+       · callToolStructured(name, args) 统一归一：
+           - 有 runStructured → 用它的结果（ok/data/evidence 齐全）
+           - 只有 run → 包成 { ok: !出错, text, data: null, evidence: null }
+       · callTool（给模型用的那条路）**仍然返回文本** —— 模型不需要看 JSON 结构，
+         但审计与验证器从此有了结构化数据。
+
+     原则：**结构化失败要显式**（ok:false + reason），不把异常包装成"成功"。
+     ========================================================================== */
+
+
+  /** 结构化适配器：给"需要被验证"的工具补 {ok,data,evidence,text}，工具定义本身不动 */
+  const STRUCTURED_ADAPTERS = {
+    learning_path: function (args) {
+      const A = args || {};
+      const r = buildLearningPath(A.category || "all", A.limit || 5, { skipMastered: !!A.skipMastered });
+      const sup = auditKgSupport();
+      return {
+        ok: true,
+        data: { domain: A.category || "all", pathIds: r.pathIds, violations: r.violations, total: r.total, remaining: r.remaining },
+        evidence: { supportRate: sup.rate, evidencedEdges: sup.yes, totalEdges: sup.total },
+        text: renderLearningPath(r, { inPath: r.pathIds }),
+      };
+    },
+    kg_audit: function () {
+      const A = auditKgSupport();
+      return { ok: true, data: A, evidence: { frameworks: KG_FRAMEWORKS.map(function (f) { return f.id; }) }, text: renderKgSupport(A) };
+    },
+    read_progress: function () {
+      const learned = state.mastery.size, total = allTopics().length;
+      const byDomain = {};
+      CATS.forEach(function (c) {
+        const ids = (c.topics || []).map(function (t) { return t.id; });
+        byDomain[c.name] = { learned: ids.filter(function (id) { return state.mastery.has(id); }).length, total: ids.length };
+      });
+      return { ok: true, data: { learned: learned, total: total, byDomain: byDomain }, evidence: null,
+        text: "已掌握 " + learned + " / " + total + " 个知识点" };
+    },
+  };
+
+  /** 归一化任意工具返回值为契约形状 */
+  function normalizeToolResult(raw) {
+    if (raw && typeof raw === "object") {
+      return {
+        ok: raw.ok !== false,
+        text: raw.text != null ? String(raw.text) : (raw.data != null ? JSON.stringify(raw.data) : ""),
+        data: raw.data !== undefined ? raw.data : null,
+        evidence: raw.evidence || null,
+        reason: raw.reason || "",
+      };
+    }
+    const s = raw == null ? "" : String(raw);
+    const failed = s.indexOf("工具执行错误") === 0;
+    return { ok: !failed, text: s, data: null, evidence: null, reason: failed ? s.slice(0, 80) : "" };
+  }
+
+  /**
+   * 结构化调用：优先 runStructured，回落 run。
+   * **不吞异常**：抛错时返回 ok:false 并带 reason。
+   */
+  async function callToolStructured(name, args) {
+    const t = AGENT_TOOLS.filter(function (x) { return x.name === name; })[0];
+    if (!t) return { ok: false, text: "", data: null, evidence: null, reason: "未知工具：" + name };
+    const t0 = Date.now();
+    try {
+      let raw;
+      if (typeof STRUCTURED_ADAPTERS[name] === "function") raw = await STRUCTURED_ADAPTERS[name](args || {});
+      else if (typeof t.runStructured === "function") raw = await t.runStructured(args || {});
+      else raw = await t.run(args || {});
+      const r = normalizeToolResult(raw);
+      auditTool(name, args, r.ok, Date.now() - t0, r.reason || "structured");
+      return r;
+    } catch (e) {
+      const reason = String(e && e.message || e);
+      auditTool(name, args, false, Date.now() - t0, reason.slice(0, 80));
+      return { ok: false, text: "", data: null, evidence: null, reason: reason };
+    }
+  }
+
+  /** 给"验证器"用的结构化取数（拿不到就 null，绝不猜） */
+  async function toolData(name, args) {
+    const r = await callToolStructured(name, args);
+    return r.ok ? r.data : null;
+  }
+
   const PROVIDERS = {
     openai:    { kind: "openai", label: "OpenAI 兼容" },
     deepseek:  { kind: "openai", label: "DeepSeek(兼容)" },
@@ -4730,6 +4828,8 @@
       llm: { caps: PROVIDER_CAPS, capsOf: providerCaps, build: buildStablePrefix, hash: simpleHash,
         scenes: LLM_SCENES, call: llmCall, usage: normalizeUsage, ledger: llmLedger,
         summary: llmLedgerSummary, record: recordLlmCall },
+      tools2: { structured: callToolStructured, data: toolData, normalize: normalizeToolResult,
+        adapters: Object.keys(STRUCTURED_ADAPTERS) },
       scenes: { impl: SCENE_IMPL, run: runScene, keys: Object.keys(SCENE_IMPL) },
       adversarial: { cases: ADVERSARIAL_CASES, selfcheck: adversarialSelfcheck,
         last: lastAdversarial, render: renderAdversarial, judge: judgeAdversarial, run: runAdversarial,
