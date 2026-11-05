@@ -1,0 +1,1311 @@
+/* SecTutor 自测：用 jsdom 加载页面并模拟交互，捕获运行时异常与逻辑断言 */
+const fs = require("fs");
+const path = require("path");
+// jsdom 可移植加载：优先用本地依赖（npm install 后 / CI 环境），找不到再回退到本机托管运行时路径（离线开发环境）
+function loadJsdom() {
+  try { return require("jsdom"); }
+  catch (e) { return require("C:/Users/ZQX/.workbuddy/binaries/node/workspace/node_modules/jsdom"); }
+}
+const { JSDOM, VirtualConsole } = loadJsdom();
+
+const dir = __dirname;
+let html = fs.readFileSync(path.join(dir, "index.html"), "utf8");
+const dataJs = fs.readFileSync(path.join(dir, "data.js"), "utf8");
+const appJs = fs.readFileSync(path.join(dir, "app.js"), "utf8");
+// 去掉外部 script 标签（由我们手动注入），避免 jsdom 尝试加载
+html = html.replace(/<script src="data\.js"><\/script>/, "").replace(/<script src="app\.js"><\/script>/, "");
+
+const errors = [];
+const vc = new VirtualConsole();
+vc.on("jsdomError", (e) => errors.push("jsdomError: " + (e.stack || e.message)));
+
+const dom = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/", pretendToBeVisual: true, virtualConsole: vc });
+const { window } = dom;
+const doc = window.document;
+window.addEventListener("error", (e) => errors.push("error event: " + (e.error && e.error.stack || e.message)));
+window.onerror = (m, s, l, c, err) => errors.push("onerror: " + m + (err && err.stack ? "\n" + err.stack : ""));
+
+// jsdom 可能缺少以下 Web API；补充以便覆盖函数调用 / 流式 / 连接测试分支
+if (typeof window.AbortController === "undefined") {
+  window.AbortController = global.AbortController || class { constructor() { this.signal = { aborted: false }; } abort() { this.signal.aborted = true; } };
+}
+if (typeof window.TextEncoder === "undefined") window.TextEncoder = TextEncoder;
+if (typeof window.TextDecoder === "undefined") window.TextDecoder = TextDecoder;
+if (typeof window.ReadableStream === "undefined") window.ReadableStream = ReadableStream;
+// 默认 fetch 兜底（避免任何未预期的网络调用直接抛错中断测试）
+if (typeof window.fetch === "undefined") window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); }
+// Web Crypto（AES-GCM）用于密钥保险库自测；jsdom 默认无 crypto.subtle，注入 Node webcrypto 使其跑通真实加解密
+if (!window.crypto || !window.crypto.subtle) {
+  try { Object.defineProperty(window, "crypto", { value: require("crypto").webcrypto, configurable: true }); }
+  catch (e) { try { window.crypto = require("crypto").webcrypto; } catch (e2) {} }
+}
+
+function inject(code) {
+  const s = doc.createElement("script");
+  s.textContent = code;
+  doc.body.appendChild(s);
+}
+
+const results = [];
+let failed = 0;
+function assert(cond, name) {
+  results.push((cond ? "PASS" : "FAIL") + " - " + name);
+  if (!cond) failed++;
+}
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+try {
+  window.__SELFTEST__ = true; // 启用 app.js 内的自测同步钩子（如搜索防抖刷新）
+  inject(dataJs);
+  inject(appJs);
+  doc.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
+} catch (e) {
+  errors.push("inject/init threw: " + e.stack);
+}
+
+const $ = (s) => doc.querySelector(s);
+const $$ = (s) => Array.from(doc.querySelectorAll(s));
+function clickTab(name) { $(`.rail-item[data-tab="${name}"]`).click(); }
+
+// 1. 知识卡片渲染
+const cards = $$("#topicGrid .topic-card");
+assert(cards.length > 0, `知识点卡片渲染 (${cards.length} 张)`);
+
+// 2. 点击知识点 -> 详情
+cards[0].click();
+const detail = $("#topicDetail");
+assert(!detail.classList.contains("hidden"), "点击卡片后详情可见");
+assert(/讲解/.test(detail.innerHTML), "详情含分级讲解");
+
+// 3. 掌握按钮 -> 徽章变化
+const before = $("#masteryBadge").textContent;
+$("#learnBtn").click();
+const after = $("#masteryBadge").textContent;
+assert(before !== after, `掌握徽章更新 (${before} -> ${after})`);
+
+// 4. 切回列表
+$("#backKb").click();
+assert($("#topicGrid").classList.contains("hidden") === false, "返回列表正常");
+
+// ===== 开启界面（Splash）：存在 logo 与预加载步骤，且不阻塞主界面渲染 =====
+assert(!!$("#splash"), "开启界面（Splash）已挂载");
+const spLogo = $("#splash .sp-logo");
+assert(!!spLogo && spLogo.textContent.trim() === "S", "Splash 展示产品 logo");
+assert(($("#spSteps") ? $("#spSteps").children.length : 0) >= 4, "Splash 预加载步骤列表已生成");
+assert($("#topicGrid").innerHTML.length > 0, "预加载不阻塞主界面渲染（知识点网格已填充）");
+
+// ===== 知识页「掌握度 ↓」排序按钮：有真实功能（修复原无绑定点击无反应） =====
+const sortBtn0 = $(".kb-sort");
+if (sortBtn0) {
+  sortBtn0.click();
+  assert(/排序|掌握度/.test(sortBtn0.textContent), "掌握度排序按钮可点击切换且不崩溃");
+  sortBtn0.click(); sortBtn0.click();
+} else { assert(true, "排序按钮不存在（跳过）"); }
+
+// 5. 问答：发送 SQL 注入问题
+clickTab("chat");
+$("#chatInput").value = "什么是 SQL 注入？怎么防御";
+$("#sendBtn").click();
+const rows = $$("#chatLog .msg-row");
+assert(rows.length >= 2, `问答产生消息 (${rows.length} 条)`);
+const botText = $$("#chatLog .msg.bot").map((m) => m.textContent).join(" ");
+assert(/SQL|注入/.test(botText), "机器人正确回答了 SQL 注入");
+
+// 6. 点击相关建议按钮（不应重复发送/崩溃）
+const sugg = $("#chatLog .suggestions button");
+let suggOk = true;
+if (sugg) {
+  const had = $$("#chatLog .msg-row").length;
+  try { sugg.click(); } catch (e) { suggOk = false; errors.push("suggestion click threw: " + e.stack); }
+  assert(suggOk && $$("#chatLog .msg-row").length >= had, "建议按钮点击无崩溃且触发响应");
+} else {
+  assert(true, "无建议按钮（跳过）");
+}
+
+// 7. 靶场：卡片 -> 详情
+clickTab("range");
+const rcards = $$("#rangeList .range-card");
+assert(rcards.length > 0, `靶场卡片渲染 (${rcards.length} 张)`);
+rcards[0].click();
+assert(!$("#rangeDetail").classList.contains("hidden"), "靶场详情可见");
+$("#backRange").click();
+
+// 8. 学习计划生成
+clickTab("plan");
+$("#genPlan").click();
+assert(/周/.test($("#planOutput").innerHTML), "学习计划生成成功");
+const DOMAIN_COUNT = window.eval("SEC_DATA.categories.length");
+assert($$("#progressBoard .pcard").length === DOMAIN_COUNT, `进度看板显示 ${DOMAIN_COUNT} 个领域`);
+
+// 9. 资讯 / 工具渲染
+clickTab("news");
+assert($$("#newsList .news-card").length > 0, "安全资讯渲染");
+clickTab("tools");
+assert($("#toolDetail").innerHTML.length > 0, "工具说明渲染");
+
+// 9b. 在线演练（程序内可交互靶场）
+clickTab("range");
+const labSeg = $$("#panel-range .seg-btn").find((b) => b.dataset.mode === "labs");
+labSeg.click();
+assert(!$("#labsView").classList.contains("hidden"), "在线演练视图可见");
+assert($$("#labList .range-card").length > 0, "演练题目渲染");
+function clickLabByTitle(sub) {
+  const c = $$("#labList .range-card").find((x) => x.textContent.includes(sub));
+  if (c) { c.click(); return true; }
+  return false;
+}
+assert(clickLabByTitle("SQL 注入"), "打开 SQLi 演练");
+$("#li1").value = "admin' --"; $("#li2").value = "x";
+$("#liRun").click();
+assert(/挑战成功/.test($("#labResult").textContent), "SQLi 演练可解（admin' -- 绕过）");
+$("#backLab").click();
+assert(clickLabByTitle("XSS"), "打开 XSS 演练");
+$("#li1").value = "<script>alert(1)</script>";
+$("#liRun").click();
+assert(/挑战成功/.test($("#labResult").textContent), "XSS 演练可解（含沙箱预览）");
+$("#backLab").click();
+assert(clickLabByTitle("Base64"), "打开 Base64 演练");
+$("#li1").value = "SecTutor{base64_decode}";
+$("#liRun").click();
+assert(/挑战成功/.test($("#labResult").textContent), "Base64 解码可解");
+$("#backLab").click();
+assert(clickLabByTitle("栈溢出"), "打开找漏洞演练");
+$$("#quizOpts button").find((b) => b.dataset.i === "1").click();
+assert(/挑战成功/.test($("#labResult").textContent), "找漏洞（栈溢出）可解");
+
+// 9c. 新 lab 类型：路径遍历 / NoSQL / JWT 解码
+$("#backLab").click();
+assert(clickLabByTitle("路径遍历"), "打开路径遍历演练");
+$("#li1").value = "../../../../etc/passwd";
+$("#liRun").click();
+assert(/挑战成功/.test($("#labResult").textContent), "路径遍历演练可解（../ 跳出）");
+$("#backLab").click();
+assert(clickLabByTitle("NoSQL"), "打开 NoSQL 演练");
+$("#li1").value = '{ "$ne": "" }';
+$("#liRun").click();
+assert(/挑战成功/.test($("#labResult").textContent), "NoSQL 演练可解（$ne 绕过）");
+$("#backLab").click();
+assert(clickLabByTitle("JWT"), "打开 JWT 演练");
+$("#li1").value = '{"role":"admin"}';
+$("#liRun").click();
+assert(/挑战成功/.test($("#labResult").textContent), "JWT 解码演练可解");
+$("#backLab").click();
+
+// 9d. 知识库搜索框
+clickTab("knowledge");
+const kbSearch = $("#kbSearch");
+const flushKb = () => { if (window.__kbFlushSearch) window.__kbFlushSearch(); };
+kbSearch.value = "注入";
+kbSearch.dispatchEvent(new window.Event("input"));
+flushKb();
+let sCards = $$("#topicGrid .topic-card");
+assert(sCards.length > 0, `搜索 "注入" 有结果 (${sCards.length} 张)`);
+assert(/注入/.test(sCards.map((c) => c.textContent).join(" ")), "搜索结果显示注入相关知识点");
+assert(/找到/.test($("#kbSearchCount").textContent), "显示结果计数");
+kbSearch.value = "密码";
+kbSearch.dispatchEvent(new window.Event("input"));
+flushKb();
+assert($$("#topicGrid .topic-card").length > 0, "跨领域搜索命中其他领域");
+kbSearch.value = "zzzznotfound";
+kbSearch.dispatchEvent(new window.Event("input"));
+flushKb();
+assert(/未找到/.test($("#topicGrid").textContent), "无匹配时显示空态");
+kbSearch.value = "";
+kbSearch.dispatchEvent(new window.Event("input"));
+flushKb();
+assert($$("#topicGrid .topic-card").length > 0, "清空搜索后恢复列表");
+
+// 9e. 演练逐步提示 + 计划导出 + 随机自测
+// 9e-1. 提示按钮逐条揭示
+clickTab("range");
+const labSeg3 = $$("#panel-range .seg-btn").find((b) => b.dataset.mode === "labs");
+if (labSeg3) labSeg3.click();
+assert(clickLabByTitle("SQL 注入"), "提示测试：打开 SQLi 演练");
+const hintBtn = $("#labHintBtn");
+assert(!!hintBtn, "提示按钮存在");
+const hintsTotal = window.eval("SEC_DATA.labs.find(function(l){return l.id==='lab_sqli';}).hints.length");
+let revealed = 0;
+for (let k = 0; k < (hintsTotal || 5) + 2; k++) {
+  if (!hintBtn || hintBtn.disabled) break;
+  hintBtn.click();
+  revealed = $$("#labHints li").length;
+}
+assert(revealed === hintsTotal, `提示逐条揭示完成 (${revealed}/${hintsTotal})`);
+assert(hintBtn.disabled === true, "提示全部揭示后按钮禁用");
+$("#backLab").click();
+
+// 9e-2. 计划导出（PDF/PNG）不崩溃
+clickTab("plan");
+assert(!!$("#exportPdf"), "导出 PDF 按钮存在");
+window.print = function () { window.__printed = true; };
+$("#exportPdf").click();
+assert(window.__printed === true, "点击导出 PDF 触发打印");
+window.HTMLCanvasElement.prototype.getContext = function () { return null; };
+assert(!!$("#exportPng"), "导出 PNG 按钮存在");
+let pngOk = true;
+try { $("#exportPng").click(); } catch (e) { pngOk = false; errors.push("png export threw: " + e.stack); }
+assert(pngOk, "点击导出 PNG 不崩溃");
+assert(/不支持/.test($("#exportStatus").textContent), "PNG 在不支持环境给出降级提示");
+
+// 9e-3. 随机自测流程
+clickTab("quiz");
+assert(!!$("#quizStart"), "随机自测开始按钮存在");
+$("#quizStart").click();
+assert(/第 \d+ \/ \d+ 题/.test($("#quizMain").textContent), "随机自测抽题并渲染");
+const qText = $("#quizMain .quiz-q").textContent.trim();
+const SD = window.eval("SEC_DATA");
+const qItem = SD.quizzes.find(function (q) { return q.q === qText; });
+assert(!!qItem, "可在题库定位当前题目");
+assert(SD.quizzes.length >= 190, "题库规模足够大（>=190 题）");
+const advHint = SD.quizzes.filter(function(q){ return q.level === "高级" && q.hint; }).length;
+assert(advHint >= 40, "高级(CTF)题均带内置提示（>=40）");
+const ansText = qItem ? qItem.options[qItem.answer] : "";
+// 选项已乱序，必须按"正确答案内容"定位按钮，而非按原始下标
+const optBtn = $$("#quizMain .quiz-opt").find((b) => { const t = b.textContent.replace(/^\d+\.\s*/, "").trim(); return t === ansText || t.indexOf(ansText) === 0; });
+assert(!!optBtn, "正确选项按钮存在（按内容定位，兼容选项乱序）");
+if (optBtn) { optBtn.click(); $("#quizSubmit").click(); }
+// 回归：选项乱序后 answer 下标必须仍指向原正确答案内容（修复"答案总在同一位置"）
+const SO = window.__shuffleOptions;
+let remapOk = true;
+if (SO && SD && SD.quizzes) {
+  for (const q of SD.quizzes) {
+    const out = SO(q);
+    if (out.options[out.answer] !== q.options[q.answer]) { remapOk = false; break; }
+  }
+}
+assert(remapOk, "选项乱序后 answer 重映射正确（不丢失正确答案）");
+assert(($("#quizFeedback") && !$("#quizFeedback").classList.contains("hidden")), "提交后显示解析反馈");
+assert(/回答正确/.test($("#quizFeedback").textContent), "答对后判定正确");
+assert(!!$("#quizAiBtn"), "每题提供 AI 辅助入口");
+$("#quizAiBtn").click();
+assert($("#panel-chat").classList.contains("active"), "点击 AI 辅助跳转到智能问答");
+const chatTxt = ($("#chatLog") ? $("#chatLog").textContent : "");
+assert(chatTxt.indexOf(qText) >= 0, "AI 辅助已将本题上下文带入对话");
+const nxt = $("#quizNext");
+if (nxt) { nxt.click(); assert(/第 \d+ \/ \d+ 题|自测完成/.test($("#quizMain").textContent), "进入下一题或成绩页"); }
+
+// 10. 清空对话
+(async () => {
+clickTab("chat");
+$("#clearChat").click();
+assert(/你好/.test($("#chatLog").innerHTML), "清空对话后恢复欢迎语");
+
+// 11. focusCat 偏置：设为 crypto 后问 RSA
+$("#focusCat").value = "crypto";
+$("#focusCat").dispatchEvent(new window.Event("change"));
+$("#chatInput").value = "RSA 为什么安全";
+$("#sendBtn").click();
+assert($$("#chatLog .msg-row").length >= 2, "focusCat 偏置下问答正常");
+
+// 12. 未匹配路径（RAG 引擎对乱码也会给最佳努力回复，验证不崩溃且有实质内容）
+$("#chatInput").value = "zxcvqwerty 乱码测试";
+$("#sendBtn").click();
+const lastBot = $$("#chatLog .msg.bot").pop().textContent;
+assert(lastBot && lastBot.length > 20, "未匹配路径正常处理（乱码也能给出回复不崩溃）");
+
+// 13. 主题切换（默认暗色，点击后应切到浅色，滑块类同步）
+const themeBefore = doc.documentElement.getAttribute("data-theme");
+$("#themeToggle").click();
+const themeAfter = doc.documentElement.getAttribute("data-theme");
+assert(themeBefore !== themeAfter, `主题切换生效（${themeBefore} -> ${themeAfter}）`);
+const sw = $("#themeToggle");
+if (themeAfter === "light") assert(sw.classList.contains("light"), "浅色模式滑块同步到左侧");
+else assert(!sw.classList.contains("light"), "暗色模式滑块在右侧");
+
+// 14. 持久化：刷新语义（直接读 localStorage）
+const saved = window.localStorage.getItem("sectutor_chat");
+assert(saved && saved.length > 0, "对话已持久化到 localStorage");
+
+// 15. 无运行时错误
+assert(errors.length === 0, `无运行时异常 (${errors.length} 条)`);
+
+// 9f. 靶场「生成临时环境」按钮 + 后端降级/成功渲染
+clickTab("range");
+const labSegF = $$("#panel-range .seg-btn").find((b) => b.dataset.mode === "labs");
+if (labSegF) labSegF.click();
+assert(clickLabByTitle("SQL 注入"), "生成临时环境：打开 SQLi 演练");
+assert(!!$("#genEnvBtn"), "生成临时环境按钮存在（后端对接点）");
+assert(!!$("#envSection"), "临时环境区块存在");
+
+// 9f-A. 降级路径：无后端 / 无 fetch → 优雅回退，不崩溃
+window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); };
+$("#genEnvBtn").click();
+await delay(30);
+assert(/后端不可用|回退/.test($("#envPanel").textContent), "后端不可用时优雅降级（不崩溃）");
+$("#backLab").click();
+
+// 9f-B. 成功路径：注入 fake fetch 返回环境，验证渲染 + 倒计时 + 销毁
+clickLabByTitle("SQL 注入");
+window.fetch = function (url, opts) {
+  return Promise.resolve({
+    ok: true, status: 201,
+    json: async function () {
+      if (opts && opts.method === "DELETE") return { ok: true, message: "destroyed" };
+      return { ok: true, env: { id: "env_test", labId: "lab_sqli", accessUrl: "http://localhost:40000", status: "running", expiresAt: Date.now() + 600000 } };
+    },
+  });
+};
+$("#genEnvBtn").click();
+await delay(40);
+assert(/已就绪/.test($("#envPanel").textContent), "生成临时环境成功渲染（已就绪）");
+assert(/http:\/\/localhost:40000/.test($("#envPanel").textContent), "展示访问地址");
+assert(!!$("#envCountdown"), "倒计时元素存在");
+const destroyBtn = $("#destroyEnvBtn");
+assert(!!destroyBtn, "销毁按钮存在");
+if (destroyBtn) destroyBtn.click();
+await delay(40);
+assert(/已销毁|资源已释放/.test($("#envPanel").textContent), "销毁后显示释放提示");
+window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); };
+$("#backLab").click();
+
+  // ===== 15b. 方向⑩ AI 辅助渗透：实战靶场 + 工具与代码 =====
+  // 15b-1. 靶场题解库 AI 辅助（默认 solutions 视图）
+  const solSeg = $$("#panel-range .seg-btn").find((b) => b.dataset.mode === "solutions");
+  if (solSeg) solSeg.click();
+  const r0 = window.eval("SEC_DATA.ranges[0]");
+  const rangeCard = $$("#rangeList .range-card")[0];
+  assert(!!rangeCard, "题解库列表有卡片");
+  rangeCard.click();
+  assert(!!$("#rangeAiBtn"), "靶场题解提供 AI 辅助入口");
+  $("#rangeAiBtn").click();
+  assert($("#panel-chat").classList.contains("active"), "靶场题解 AI 辅助跳转到智能问答");
+  assert($("#chatLog").textContent.indexOf(r0.title) >= 0, "靶场题解 AI 辅助已带入上下文（" + r0.title + "）");
+  $("#backRange").click();
+
+  // 15b-2. 在线演练（lab）AI 辅助
+  const labSegG = $$("#panel-range .seg-btn").find((b) => b.dataset.mode === "labs");
+  if (labSegG) labSegG.click();
+  assert(clickLabByTitle("SQL 注入"), "AI 辅助：打开 SQLi 演练");
+  assert(!!$("#labAiBtn"), "在线演练提供 AI 辅助入口");
+  const labObj = window.eval("SEC_DATA.labs.find(function(l){return l.id==='lab_sqli';})");
+  $("#labAiBtn").click();
+  assert($("#panel-chat").classList.contains("active"), "在线演练 AI 辅助跳转到智能问答");
+  assert($("#chatLog").textContent.indexOf(labObj.title) >= 0, "在线演练 AI 辅助已带入上下文（" + labObj.title + "）");
+  $("#backLab").click();
+
+  // 15b-3. 工具与代码 AI 辅助
+  clickTab("tools");
+  const toolBtns = $$(".tool-ai-btn");
+  assert(toolBtns.length > 0, `工具与代码提供 AI 辅助入口 (${toolBtns.length} 个)`);
+  const t0 = window.eval("SEC_DATA.tools[0]");
+  toolBtns[0].click();
+  assert($("#panel-chat").classList.contains("active"), "工具 AI 辅助跳转到智能问答");
+  assert($("#chatLog").textContent.indexOf(t0.name) >= 0, "工具 AI 辅助已带入上下文（" + t0.name + "）");
+
+  // 15b-4. 知识体系（topic）AI 辅助
+  clickTab("knowledge");
+  const topicCard0 = $$("#topicGrid .topic-card")[0];
+  assert(!!topicCard0, "知识体系网格渲染出知识点卡片");
+  const topicName0 = topicCard0.querySelector("h4").textContent;
+  topicCard0.click();
+  assert(!!$("#topicAiBtn"), "知识点详情提供 AI 辅助入口");
+  $("#topicAiBtn").click();
+  assert($("#panel-chat").classList.contains("active"), "知识点 AI 辅助跳转到智能问答");
+  assert($("#chatLog").textContent.indexOf("知识点：") >= 0 && $("#chatLog").textContent.indexOf(topicName0) >= 0, "知识点 AI 辅助已带入上下文（" + topicName0 + "）");
+  $("#backKb").click();
+
+  // 15b-5. 安全资讯（news）AI 辅助
+  clickTab("news");
+  const newsBtns = $$(".news-ai-btn");
+  assert(newsBtns.length > 0, `安全资讯提供 AI 辅助入口 (${newsBtns.length} 条)`);
+  const n0 = window.eval("SEC_DATA.news[0]");
+  newsBtns[0].click();
+  assert($("#panel-chat").classList.contains("active"), "安全资讯 AI 辅助跳转到智能问答");
+  assert($("#chatLog").textContent.indexOf(n0.title) >= 0, "安全资讯 AI 辅助已带入上下文（" + n0.title + "）");
+
+  // ===== 16. 方向① 学习中心渲染（plan tab）=====
+  clickTab("plan");
+  assert($("#profileCard").innerHTML.length > 0, "能力画像卡片渲染");
+  assert($("#weeklyCard").innerHTML.length > 0, "本周学习报告卡片渲染");
+  assert($("#reviewCard").innerHTML.length > 0, "复习提醒卡片渲染");
+
+  // ===== 17. 方向① 能力诊断流程 =====
+  const diagStart = $("#diagStart");
+  assert(!!diagStart, "无画像时显示「开始能力诊断」按钮");
+  diagStart.click();
+  assert(/诊断进度/.test($("#diagArea").innerHTML), "诊断问答渲染（显示进度）");
+  // 反复点击第一个选项，答完所有题直到 diagArea 清空
+  let dguard = 0;
+  while (/诊断进度/.test($("#diagArea").innerHTML) && dguard < 40) {
+    const opt = $("#diagArea .diag-opt");
+    if (!opt) break;
+    opt.click();
+    dguard++;
+  }
+  assert(!!window.localStorage.getItem("sectutor_profile"), "诊断完成后写入能力画像到 localStorage");
+  assert(/pbar-track/.test($("#profileCard").innerHTML), "诊断后展示能力评分条");
+  assert(/重新诊断/.test($("#profileCard").innerHTML), "诊断后提供「重新诊断」入口");
+
+  // 17b. 诊断加深：画像含四域细分子类 + 逐题作答记录
+  const profD = JSON.parse(window.localStorage.getItem("sectutor_profile") || "{}");
+  assert(profD.levelBreakdown && Object.keys(profD.levelBreakdown).length === DOMAIN_COUNT, `诊断加深：画像含 ${DOMAIN_COUNT} 域细分子类(入门/初级/中级/高级)`);
+  assert(Array.isArray(profD.answers) && profD.answers.length > 0, "诊断加深：保存逐题作答记录");
+
+  // 17c. 弱项专项自测：点击直接生成针对最弱域的随机自测
+  const weakBtn = $("#weakQuizBtn");
+  assert(!!weakBtn, "能力画像提供「弱项专项自测」入口");
+  weakBtn.click();
+  assert($("#panel-quiz").classList.contains("active"), "弱项专项自测跳转到随机自测页");
+  assert(!!$("#quizMain").querySelector(".quiz-card") || /第 \d+ \/ \d+ 题/.test($("#quizMain").textContent), "弱项专项自测已开始抽题");
+  clickTab("plan");
+
+  // 17d. 复习曲线可视化：复习卡含遗忘曲线 SVG（两条分支都会渲染）
+  assert(!!$("#reviewCard").querySelector("svg.review-curve"), "复习卡含遗忘曲线 SVG（可视化）");
+
+  // ===== 18b. 方向⑩ 函数调用工具化 + 流式输出（mock fetch 验证）=====
+  function setLlmKeyViaHub(k) {
+    $("#apiHubBtn").click();
+    const kk = $("#hubLlmKey"); if (kk) kk.value = k || "";
+    const sb = $("#hubSaveLlm"); if (sb) sb.click();
+    const mc = $("#modalClose"); if (mc) mc.click();
+  }
+  setLlmKeyViaHub("test-key");
+  let toolCallsSeen = 0;
+  // 18b-1 工具调用循环（mock 不含 body → 自动走非流 json 回退路径）
+  window.fetch = function () {
+    toolCallsSeen++;
+    const body = toolCallsSeen === 1
+      ? { choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", "function": { name: "search_knowledge", arguments: JSON.stringify({ query: "SQL 注入" }) } }] } }] }
+      : { choices: [{ message: { content: "根据知识库检索，已命中「SQL 注入」相关条目，其原理是..." } }] };
+    return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(body); } });
+  };
+  clickTab("chat");
+  $("#chatInput").value = "帮我查一下 SQL 注入";
+  $("#sendBtn").click();
+  await delay(80);
+  const botTool = $$("#chatLog .msg.bot").pop().textContent;
+  assert(/SQL 注入/.test(botTool), "函数调用工具化：LLM 调用 search_knowledge 并基于结果作答（" + botTool.slice(0, 36) + "）");
+  assert(toolCallsSeen >= 2, "函数调用工具化：工具循环至少两轮（工具调用 + 最终回答）");
+
+  // 18b-2 真实 SSE 流式输出（mock ReadableStream）
+  toolCallsSeen = 0;
+  window.fetch = function () {
+    const enc = new TextEncoder();
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"逐字"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"流式"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"渲染"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    let i = 0;
+    const stream = new ReadableStream({ start(c) { const push = () => { if (i < chunks.length) { c.enqueue(enc.encode(chunks[i++])); setTimeout(push, 0); } else c.close(); }; push(); } });
+    return Promise.resolve({ ok: true, status: 200, body: stream });
+  };
+  $("#chatInput").value = "讲讲 XSS";
+  $("#sendBtn").click();
+  await delay(160);
+  const botStream = $$("#chatLog .msg.bot").pop().textContent;
+  assert(/逐字流式渲染/.test(botStream), "流式输出：答案经 SSE 逐字渲染（" + botStream.slice(0, 30) + "）");
+  window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); };
+  setLlmKeyViaHub("");   // 复位为离线，避免影响后续断言
+
+  // ===== 18c. 方向⑩ API 接入中心增强：情报源「测试连接」=====
+  window.fetch = function () { return Promise.reject(new Error("network unreachable (test)")); };
+  $("#apiHubBtn").click();
+  const intelChip2 = $$("#modalOverlay .api-tabs .chip").find((b) => b.dataset.atab === "intel");
+  if (intelChip2) intelChip2.click();
+  const iu = $("#hubIntelUrl"); if (iu) iu.value = "https://unreachable.example/api";
+  const itBtn = $("#hubTestIntel");
+  assert(!!itBtn, "威胁情报面板提供「测试连接」按钮");
+  if (itBtn) { itBtn.click(); await delay(60); }
+  const tRes = $("#intelTestRes");
+  assert(tRes && /🔴|测试/.test(tRes.textContent), "测试连接（无网络）优雅失败不崩溃");
+  const mc2 = $("#modalClose"); if (mc2) mc2.click();
+
+  // ===== 18d. 方向⑩ 对话体验：预设提示词 + 导出对话 =====
+  const pp0 = $$("#promptPresets .pp-chip")[0];
+  assert(!!pp0, "对话区提供预设提示词");
+  pp0.click();
+  assert($("#chatInput").value.indexOf("类比") >= 0, "点击预设提示词把模板插入输入框");
+  const expBtn = $("#exportChat");
+  assert(!!expBtn, "提供「导出对话」按钮");
+  let exportOk = true; try { expBtn.click(); } catch (e) { exportOk = false; }
+  assert(exportOk, "导出对话不崩溃");
+
+  // ===== 18. 方向⑩ 工具箱（本地、离线）=====
+  clickTab("tools");
+  assert($("#tbInput") && $("#tbOp") && $("#tbRun"), "工具箱控件渲染");
+  $("#tbInput").value = "U2VjVHV0b3I=";
+  $("#tbOp").value = "b64d";
+  $("#tbRun").click();
+  assert(/SecTutor/.test($("#tbOut").textContent), "Base64 解码（工具箱）正确");
+  $("#tbInput").value = "abc";
+  $("#tbOp").value = "md5";
+  $("#tbRun").click();
+  assert($("#tbOut").textContent === "900150983cd24fb0d6963f7d28e17f72", "MD5 计算（工具箱）正确");
+  $("#tbInput").value = "abc";
+  $("#tbOp").value = "sha256";
+  $("#tbRun").click();
+  assert($("#tbOut").textContent === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA256 计算（工具箱）正确");
+
+  // ===== 19. 方向⑩ API 接入中心（预留所有外部接入界面）=====
+  clickTab("chat");
+  assert(!!$("#apiHubBtn"), "聊天侧存在「API 接入中心」入口");
+  $("#apiHubBtn").click();
+  assert(!$("#modalOverlay").classList.contains("hidden"), "API 接入中心弹窗打开");
+  assert($$("#modalOverlay .api-tabs .chip").length === 5, "含 5 个接入 Tab（LLM/情报/MCP/学习者画像/隐私）");
+  const intelTab = $$("#modalOverlay .api-tabs .chip").find((b) => b.dataset.atab === "intel");
+  if (intelTab) intelTab.click();
+  const intelPane = $("#modalOverlay .api-pane[data-pane='intel']");
+  assert(intelPane && !intelPane.classList.contains("hidden"), "可切换到「威胁情报（预留）」面板");
+  const learnerTab = $$("#modalOverlay .api-tabs .chip").find((b) => b.dataset.atab === "learner");
+  if (learnerTab) learnerTab.click();
+  const learnerPane = $("#modalOverlay .api-pane[data-pane='learner']");
+  assert(learnerPane && !learnerPane.classList.contains("hidden"), "可切换到「学习者画像」面板");
+  assert($("#learnerLevel") && $("#learnerScenario") && $("#learnerPane .learner-domain"), "学习者画像含自报水平/场景/领域控件");
+  $("#modalClose").click();
+  await delay(320);  // 弹窗退场动效 200ms + 兜底定时器 260ms，需等隐藏真正生效
+  assert($("#modalOverlay").classList.contains("hidden"), "模态框可关闭");
+
+  // ===== 20. 方向⑩ 大模型配置保存（仅本机 localStorage）=====
+  $("#apiHubBtn").click();
+  $("#hubLlmBase").value = "https://api.example.com/v1";
+  $("#hubLlmKey").value = "sk-test-123";
+  $("#hubLlmModel").value = "gpt-4o-mini";
+  $("#hubSaveLlm").click();
+  const savedLlm = JSON.parse(window.localStorage.getItem("sectutor_llm") || "{}");
+  assert(savedLlm.key === "sk-test-123", "大模型配置保存到 localStorage（仅本机）");
+  const closeBtn2 = $("#modalClose");
+  if (closeBtn2) closeBtn2.click();
+
+  // ===== 21. 顶栏三按钮：全局搜索 / 复习提醒 / 设置 =====
+  assert(!!$("#btnSearch") && !!$("#btnReview") && !!$("#btnSettings"), "顶栏存在搜索/复习/设置三按钮");
+  $("#btnSearch").click();
+  assert(!!$("#gsInput") && !$("#modalOverlay").classList.contains("hidden"), "全局搜索弹窗打开");
+  $("#gsInput").value = "sql 注入";
+  $("#gsInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+  if (window.__gsFlush) window.__gsFlush();
+  assert($$(".gs-item").length > 0, "全局搜索命中结果（防抖钩子同步刷新）");
+  const firstGs = $$(".gs-item")[0];
+  firstGs.click();
+  await delay(320);  // 弹窗退场动效需等隐藏生效（同 21 组）
+  assert($("#modalOverlay").classList.contains("hidden"), "点击搜索结果关闭弹窗并跳转");
+  $("#btnReview").click();
+  assert(!$("#modalOverlay").classList.contains("hidden"), "复习提醒弹窗打开");
+  assert(!!$("#revStartBtn") || !!$("#modalBody .rev-empty"), "复习提醒含开始按钮或空态提示");
+  $("#modalClose").click();
+  await delay(320);
+  assert($("#modalOverlay").classList.contains("hidden"), "复习提醒弹窗可关闭");
+  $("#btnSettings").click();
+  assert(!!$("#setPdf") && !!$("#setReset"), "设置弹窗含导出计划与重置入口");
+  const themeBeforeSet = doc.documentElement.getAttribute("data-theme");
+  const otherChip = $$("#modalBody .chip[data-th]").find((b) => b.getAttribute("data-th") !== themeBeforeSet);
+  if (otherChip) otherChip.click();
+  assert(doc.documentElement.getAttribute("data-theme") !== themeBeforeSet, "设置弹窗可切换主题");
+  $("#modalClose").click();
+  await delay(320);
+  assert($("#modalOverlay").classList.contains("hidden"), "设置弹窗可关闭");
+
+  // ===== 22. 布局滚动回归：body 固定视口高度，面板内左右独立滚动互不带动 =====
+  const cssSrc = fs.readFileSync(path.join(dir, "styles.css"), "utf8");
+  assert(/body \{ display: flex; height: 100vh; min-height: 100vh; overflow: hidden; \}/.test(cssSrc.replace(/\n\s*/g, " ")), "body 固定为 100vh（内容超高不撑开视口，可滚动）");
+  assert(/main \{ flex: 1; overflow: hidden;/.test(cssSrc), "main 不再作为滚动容器（overflow:hidden），改为面板内左右独立滚动");
+  assert(/overscroll-behavior: contain/.test(cssSrc), "左右栏均带 overscroll-behavior: contain（一侧滚到底不带动另一侧）");
+
+  // ===== 23. 选项长度脱钩：根治「只要选最长的就一定正确」=====
+  const BO = window.__balanceOptions;
+  let structOk = true, longestIsAns = 0, lenTotal = 0;
+  if (BO && SD && SD.quizzes) {
+    for (const q of SD.quizzes) {
+      const out = BO(q);
+      if (!Array.isArray(out.options) || out.options.length !== q.options.length) { structOk = false; break; }
+      if (out.answer !== q.answer) { structOk = false; break; } // answer 下标不得改动，否则判分错乱
+      let maxI = 0;
+      for (let i = 1; i < out.options.length; i++) if (out.options[i].length > out.options[maxI].length) maxI = i;
+      lenTotal++;
+      if (maxI === q.answer) longestIsAns++;
+    }
+  }
+  assert(structOk, "balanceOptions 不破坏选项数量、不改动 answer 下标（判分安全）");
+  const coupledRatio = lenTotal ? longestIsAns / lenTotal : 0;
+  console.log(`  长度耦合度（最长项==正确答案）: ${(coupledRatio * 100).toFixed(1)}%（修复前约 97%，修复目标 <40%）`);
+  assert(lenTotal > 0 && coupledRatio >= 0.12 && coupledRatio <= 0.38, `长度与答案脱钩：选最长的正确率≈${(coupledRatio * 100).toFixed(1)}%（接近随机 25%）`);
+
+  // ===== 24. 索引层与检索质量回归防护（倒排索引 + BM25）=====
+  const PF = window.__perf;
+  assert(!!PF, "索引层已暴露 __perf（检索/索引能力可回归校验）");
+  if (PF) {
+    // 记忆化：原实现每次调用都重建整个数组，优化后应返回同一实例
+    assert(PF.allTopics() === PF.allTopics(), "allTopics() 已记忆化（重复调用返回同一实例，不再重建数组）");
+    assert(PF.allTopics().length > 0, `知识点索引非空（${PF.allTopics().length} 个知识点）`);
+    assert(PF.corpusSize() > 0, `语料索引已构建（${PF.corpusSize()} 篇文档）`);
+
+    // 边界：空查询 / 无命中不得抛错
+    let edgeOk = true;
+    try {
+      const r0 = PF.retrieve("", 4);
+      const r1 = PF.retrieve("zzzz不存在的词zzzz", 4);
+      if (!Array.isArray(r0) || !Array.isArray(r1)) edgeOk = false;
+    } catch (e) { edgeOk = false; }
+    assert(edgeOk, "检索边界安全：空查询与无命中均返回数组且不抛错");
+
+    // 相关推荐不得把自身推荐出来
+    let noSelf = true;
+    const someTopic = PF.allTopics()[0];
+    if (someTopic) {
+      const rel = PF.relatedDocs(someTopic);
+      if (rel.some((d) => d.id === "topic:" + someTopic.id)) noSelf = false;
+    }
+    assert(noSelf, "relatedDocs 不会把知识点自身作为推荐项返回");
+
+    // 检索质量回归防护：改写查询（不含标题原文，真正考验算法）
+    const HARD = [
+      ["攻击者让受害者的浏览器执行恶意脚本从而窃取 cookie", ["xss"]],
+      ["在登录框里拼接数据库查询语句绕过身份验证", ["sqli"]],
+      ["让服务器代为请求内网地址来探测内部服务", ["ssrf"]],
+      ["上传木马文件到服务器进而获取权限", ["upload"]],
+      ["内存块被释放之后指针仍然被继续使用", ["uaf"]],
+      ["用私钥签名、公钥验签的非对称体系", ["asym", "pki"]],
+      ["已经拿到普通用户权限，如何进一步提权到系统管理员", ["privesc", "priv-esc"]],
+      ["拿下内网一台机器后继续扩散控制其他主机", ["lateral", "net-lateral"]],
+      ["容器里的进程突破隔离拿到了宿主机权限", ["container-escape"]],
+      ["文件被加密勒索了应该怎么处理", ["ir"]],
+      ["想摸清目标公司暴露在外的域名和子域名", ["recon", "osint"]],
+      ["篡改域名解析结果把用户引到假冒网站", ["arp-dns"]],
+      ["令牌可以被随意伪造，服务端没有校验签名", ["jwt", "auth"]],
+      ["随机数序列可以被预测导致密钥被推算出来", ["rand"]],
+      ["在没有授权的情况下读取到别人的订单数据", ["idor", "api-sec"]],
+    ];
+    let q1 = 0, q4 = 0;
+    for (const [q, want] of HARD) {
+      const res = PF.retrieve(q, 10);
+      const rank = res.findIndex((d) => want.includes(d.id.replace(/^topic:/, "")));
+      if (rank === 0) q1++;
+      if (rank >= 0 && rank < 4) q4++;
+    }
+    const p1 = (q1 / HARD.length) * 100, p4 = (q4 / HARD.length) * 100;
+    console.log(`  检索质量（改写查询 ${HARD.length} 条）: P@1=${p1.toFixed(1)}%  P@4=${p4.toFixed(1)}%（优化前实测基线 P@1=60.0% P@4=90.0%）`);
+    assert(p4 >= 90, `检索质量防护：改写查询 P@4=${p4.toFixed(1)}%（要求 ≥90%，RAG 取 top-4 必须命中）`);
+    assert(p1 >= 60, `检索质量防护：改写查询 P@1=${p1.toFixed(1)}%（要求 ≥60%）`);
+  }
+
+  // ===== 25. 交互反馈层（P0）：Toast / 忙碌态 =====
+  const UI = window.__ui;
+  assert(!!UI, "交互反馈层已暴露 __ui（Toast / withPending 可回归校验）");
+  if (UI) {
+    const host = doc.getElementById("toastHost");
+    assert(!!host && host.getAttribute("aria-live") === "polite", "Toast 宿主存在且 aria-live 正确（读屏可播报）");
+    const idOk = UI.toast("ok-测试", "ok");
+    const idErr = UI.toast("err-测试", "err");
+    const idInfo = UI.toast("info-测试", "info");
+    assert(!!doc.querySelector(".toast-ok"), "Toast 支持 ok 类型");
+    assert(!!doc.querySelector(".toast-err") && doc.querySelector(".toast-err").getAttribute("role") === "alert", "Toast err 类型带 role=alert（读屏立即播报）");
+    assert(!!doc.querySelector(".toast-info"), "Toast 支持 info 类型");
+    UI.toast("第四条-测试", "info");
+    assert(host.children.length <= 3, `Toast 最多同时堆叠 3 条（当前 ${host.children.length}）`);
+    let undone = false;
+    const idUndo = UI.toast("可撤销-测试", "ok", { actionText: "撤销", onAction: () => { undone = true; } });
+    const actBtn = doc.querySelector('.toast[data-toast-id="' + idUndo + '"] .toast-act');
+    if (actBtn) actBtn.click();
+    assert(undone, "Toast 撤销按钮点击后回调被触发");
+    const idAuto = UI.toast("短时-测试", "info", { duration: 60 });
+    await delay(450);
+    assert(!doc.querySelector('.toast[data-toast-id="' + idAuto + '"]'), "Toast 超时后自动移除");
+    [idOk, idErr, idInfo, idUndo].forEach((i) => UI.closeToast(i, true));
+
+    const probe = doc.createElement("button");
+    probe.innerHTML = "<span>原文案</span>";
+    doc.body.appendChild(probe);
+    const restore = UI.withPending(probe, "处理中…");
+    assert(probe.disabled === true, "withPending 期间按钮被禁用（防重复提交）");
+    assert(/处理中/.test(probe.textContent), "withPending 期间显示忙碌文案");
+    restore();
+    assert(probe.disabled === false && /原文案/.test(probe.textContent), "withPending 恢复后按钮解禁且原文案还原");
+
+    const probe2 = doc.createElement("button");
+    probe2.innerHTML = "<span>二</span>";
+    doc.body.appendChild(probe2);
+    let restoreFn = null;
+    try { restoreFn = UI.withPending(probe2, "忙"); throw new Error("模拟业务异常"); }
+    catch (e) { if (restoreFn) restoreFn(); }
+    assert(probe2.disabled === false, "withPending 在业务异常后仍能恢复按钮（不会永久禁用）");
+  }
+
+  // ===== 26. 键盘导航（P1）：快捷键 / 焦点管理 =====
+  function pressKey(key, opts) {
+    const ev = new window.KeyboardEvent("keydown", Object.assign({ key: key, bubbles: true, cancelable: true }, opts || {}));
+    doc.dispatchEvent(ev);
+    return ev;
+  }
+  pressKey("3");
+  assert($("#panel-range").classList.contains("active"), "数字键 3 切换到「实战靶场」面板");
+  pressKey("1");
+  assert($("#panel-knowledge").classList.contains("active"), "数字键 1 切换到「知识体系」面板");
+  const kbInput = $("#kbSearch");
+  if (kbInput) kbInput.focus();
+  pressKey("5");
+  assert($("#panel-knowledge").classList.contains("active"), "输入框内按数字键不会误切面板（防打字误触）");
+  if (kbInput) kbInput.blur();
+  pressKey("k", { ctrlKey: true });
+  assert(!$("#modalOverlay").classList.contains("hidden"), "Ctrl+K 打开全局搜索");
+  pressKey("Escape");
+  await delay(320);
+  assert($("#modalOverlay").classList.contains("hidden"), "Esc 可关闭弹窗");
+  const settingsTrigger = $("#btnSettings");
+  if (settingsTrigger) { settingsTrigger.focus(); settingsTrigger.click(); }
+  const modalEl = doc.querySelector("#modalOverlay .modal");
+  assert(!!modalEl && modalEl.contains(doc.activeElement), "弹窗打开后焦点已移入弹窗内");
+  assert(!!modalEl && modalEl.getAttribute("role") === "dialog" && modalEl.getAttribute("aria-modal") === "true", "弹窗带 role=dialog 与 aria-modal");
+  pressKey("Escape");
+  await delay(320);
+  assert(doc.activeElement === settingsTrigger, "弹窗关闭后焦点归还触发元素");
+  assert($$(".rail-item .rail-key").length >= 8, "左侧导航显示 1-8 数字角标");
+  pressKey("?");
+  const titleEl = $("#modalTitle");
+  assert(!$("#modalOverlay").classList.contains("hidden") && !!titleEl && /键盘快捷键/.test(titleEl.textContent), "? 打开快捷键帮助面板");
+  pressKey("Escape");
+  await delay(320);
+
+  // ===== 27. 状态安全（P2）：滚动位置记忆 / 撤销 / 输入草稿 =====
+  if (UI) {
+    // 滚动位置记忆：设位置 → 记录 → 重置 → 切回应恢复
+    const kbSide = doc.querySelector("#panel-knowledge .kb-side");
+    if (kbSide) {
+      kbSide.scrollTop = 120;
+      UI.savePanelScroll("knowledge");
+      kbSide.scrollTop = 0;                 // 模拟切走再切回（位置被重置）
+      UI.restorePanelScroll("knowledge");
+      assert(kbSide.scrollTop === 120, `切回面板后滚动位置被恢复（实测 ${kbSide.scrollTop}）`);
+    } else {
+      assert(false, "知识体系侧栏存在（滚动记忆用例前提）");
+    }
+
+    // 撤销机制：验证「快照 → 清空 → 用快照恢复」这一核心链路
+    const realSnap = UI.snapshotMastery();
+    const before = realSnap.mastery.length;
+    const probeSnap = { mastery: ["__undo_test_topic__"], dates: {} };
+    UI.restoreMastery(probeSnap);
+    assert(UI.snapshotMastery().mastery.length === 1, "restoreMastery 能写回掌握进度（撤销的基础）");
+    UI.restoreMastery({ mastery: [], dates: {} });
+    assert(UI.snapshotMastery().mastery.length === 0, "restoreMastery 能清空掌握进度");
+    UI.restoreMastery(realSnap);
+    assert(UI.snapshotMastery().mastery.length === before, `撤销后能完整还原原有掌握进度（${before} 项）`);
+
+    // 输入草稿：保存后能恢复，清空后不残留
+    const chatInp = $("#chatInput");
+    if (chatInp) {
+      UI.saveDraft("草稿内容-测试");
+      chatInp.value = "";
+      UI.restoreDraft();
+      assert(chatInp.value === "草稿内容-测试", "输入草稿可从 localStorage 恢复");
+      UI.clearDraft();
+      let left = "";
+      try { left = window.localStorage.getItem(UI.DRAFT_KEY) || ""; } catch (e) {}
+      assert(left === "", "清空后草稿不残留");
+      chatInp.value = "";
+    }
+  }
+
+  // ===== 28. 无障碍（P3）：语义化标签与对比度 =====
+  const railItems = $$(".rail-item");
+  assert(railItems.length > 0 && railItems.every((r) => r.getAttribute("role") === "tab"), "左侧导航项带 role=tab");
+  assert(railItems.every((r) => !!r.getAttribute("aria-controls")), "导航项用 aria-controls 关联对应面板");
+  assert($$(".panel").every((p) => p.getAttribute("role") === "tabpanel"), "各面板带 role=tabpanel");
+  const activeRail = $$(".rail-item").find((r) => r.classList.contains("active"));
+  assert(!!activeRail && activeRail.getAttribute("aria-selected") === "true", "当前面板的导航项 aria-selected=true");
+  assert($$(".rail-item").filter((r) => r.getAttribute("aria-selected") === "true").length === 1, "同一时刻只有一个导航项为选中态");
+  pressKey("3");
+  const rail3 = $$(".rail-item").find((r) => r.dataset.tab === "range");
+  assert(!!rail3 && rail3.getAttribute("aria-selected") === "true", "切换面板后 aria-selected 同步更新");
+  pressKey("1");
+  assert(!!$("#btnSearch").getAttribute("aria-label") && !!$("#btnSettings").getAttribute("aria-label"), "顶栏图标按钮带 aria-label（读屏可读）");
+  // 浅色主题 muted 对比度（原 #64748b 在页面底色上仅 4.23:1，低于 WCAG AA）
+  const cssNow = fs.readFileSync(path.join(dir, "styles.css"), "utf8");
+  const m = cssNow.match(/--muted:\s*(#[0-9a-fA-F]{6})/);
+  function lum(hex) {
+    const c = hex.replace("#", "");
+    const v = [0, 2, 4].map((i) => parseInt(c.substr(i, 2), 16) / 255);
+    const f = (x) => (x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4));
+    return 0.2126 * f(v[0]) + 0.7152 * f(v[1]) + 0.0722 * f(v[2]);
+  }
+  function ratio(a, b) { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); }
+  if (m) {
+    const rBg = ratio(m[1], "#eef2f7"), rPanel = ratio(m[1], "#ffffff");
+    assert(rBg >= 4.5 && rPanel >= 4.5, `浅色主题 muted 对比度达标（bg ${rBg.toFixed(2)}:1 / panel ${rPanel.toFixed(2)}:1，AA 需 ≥4.5）`);
+  }
+
+  // ===== 29. P3 收尾：筛选语义 / 进度条 / 切换按钮 / 排序键盘 =====
+  const chipsWrap = $("#levelChips");
+  assert(!!chipsWrap && chipsWrap.getAttribute("role") === "radiogroup", "难度筛选容器带 role=radiogroup");
+  const chips = $$("#levelChips .chip");
+  assert(chips.length > 0 && chips.every((c) => c.getAttribute("role") === "radio"), "难度筛选项带 role=radio");
+  assert(chips.filter((c) => c.getAttribute("aria-checked") === "true").length === 1, "难度筛选有且仅有一项 aria-checked=true");
+  const lvChecked = chips.find((c) => c.getAttribute("aria-checked") === "true");
+  const lvOther = chips.find((c) => c.getAttribute("aria-checked") !== "true");
+  if (lvOther && lvChecked) {
+    lvOther.click();
+    assert(lvOther.getAttribute("aria-checked") === "true" && lvChecked.getAttribute("aria-checked") === "false", "切换难度后 aria-checked 同步迁移");
+    lvChecked.click();
+  }
+  const sortBtn = $(".kb-sort");
+  assert(!!sortBtn && sortBtn.getAttribute("role") === "button" && sortBtn.getAttribute("tabindex") === "0", "排序控件可用键盘聚焦（role=button + tabindex=0）");
+  const sortLabelBefore = sortBtn.getAttribute("aria-label");
+  sortBtn.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  assert(sortBtn.getAttribute("aria-label") !== sortLabelBefore, "排序控件支持 Enter 键触发切换（原仅鼠标可用）");
+  assert($$(".dom .ring[role=progressbar]").length > 0, "领域掌握度环带 role=progressbar");
+  const ringBar = $(".dom .ring[role=progressbar]");
+  assert(!!ringBar && ringBar.getAttribute("aria-valuenow") !== null && ringBar.getAttribute("aria-valuemax") === "100", "进度环带 aria-valuenow / aria-valuemax");
+  const firstCardP3 = doc.querySelector("#topicGrid .topic-card");
+  if (firstCardP3) {
+    firstCardP3.click();
+    const lb = $("#learnBtn");
+    assert(!!lb && lb.getAttribute("aria-pressed") !== null, "「我已掌握」按钮带 aria-pressed（切换按钮语义）");
+    const pressedBefore = lb.getAttribute("aria-pressed");
+    lb.click();
+    const lb2 = $("#learnBtn");
+    assert(!!lb2 && lb2.getAttribute("aria-pressed") !== pressedBefore, "点击掌握后 aria-pressed 同步翻转");
+    if (lb2) lb2.click();                     // 还原，避免影响后续用例
+    const backBtn = $("#backKb"); if (backBtn) backBtn.click();
+  }
+
+  // Agent 增强（Phase 0）：LLM 网关 + 适配上下文
+  const ag = window.__agent;
+  assert(!!ag, "window.__agent 测试钩子已暴露");
+  assert(ag && ag.enabled === true, "Agent 默认开启（AGENT_ENABLED=true，填 Key 即走 Agent，页面内可关闭）");
+  assert(ag && typeof ag.gateway.complete === "function", "Agent 网关 complete 为可调函数");
+  assert(ag && typeof ag.adapt === "function" && typeof ag.ask === "function", "Agent 暴露 adapt/ask 接口");
+  if (ag) {
+    const ctx = ag.adapt();
+    assert(ctx && typeof ctx.user_level === "string" && typeof ctx.scenario === "string", "适配上下文含 user_level / scenario");
+    assert(ctx && ctx.device && typeof ctx.device.offline_mode === "boolean", "适配上下文 device.offline_mode 为布尔");
+    assert(ctx && Array.isArray(ctx.domains), "适配上下文 domains 为数组");
+    const llmRaw = window.localStorage.getItem("sectutor_llm");
+    const hasKey = !!(llmRaw && JSON.parse(llmRaw).key);
+    assert(ctx && ctx.device.offline_mode === !hasKey, "离线降级标记与 LLM 密钥存在性一致（离线检测读取 state.llm 生效）");
+    const p = ag.gateway.complete([{ role: "user", content: "x" }]);
+    assert(p && typeof p.then === "function", "网关 complete 返回 Promise（支持异步/流式）");
+  }
+
+  // ===== 29b. Phase 2 适配引擎（AdapterRegistry + 分级 + 场景 + 动态升降级）=====
+  const ae = window.__agent && window.__agent.adaptEngine;
+  assert(!!ae, "Phase2 适配引擎 adaptEngine 已暴露");
+  if (ae) {
+    if (ae.resetAdapt) ae.resetAdapt(); // 隔离：从一个干净的画像开始
+    // 分级阈值（18.1）
+    assert(ae.scoreToLevel(0.2) === "L0" && ae.scoreToLevel(0.4) === "L1" && ae.scoreToLevel(0.7) === "L2" && ae.scoreToLevel(0.9) === "L3", "scoreToLevel 四档阈值正确（0.35/0.6/0.8）");
+    // compose 产出结构
+    const c = ae.compose();
+    assert(c && ae.LEVELS.indexOf(c.user_level) >= 0, "compose 产出 user_level 落在 L0-L3");
+    assert(c && typeof c.scenario === "string", "compose 产出 scenario 为字符串");
+    assert(c && Array.isArray(c.prompt_hints) && c.prompt_hints.some((h) => h.indexOf("[LEVEL:") === 0), "compose 注入 [LEVEL:] 提示模板");
+    // 场景识别（18.2 关键词推断）
+    assert(ae.inferScenario("我想打CTF拿flag") === "ctf", "inferScenario 识别 CTF");
+    assert(ae.inferScenario("准备OSCP考证") === "cert", "inferScenario 识别 考证");
+    assert(ae.inferScenario("明天面试找工作") === "job", "inferScenario 识别 就业");
+    assert(ae.inferScenario("给家人做防诈骗科普") === "popular", "inferScenario 识别 通识科普");
+    assert(ae.inferScenario("hello world") === null, "inferScenario 无关键词返回 null");
+    // 显式场景优先于推断
+    let a = ae.getAdapt(); a.scenario = "cert"; a.scenarioSource = "explicit"; ae.saveAdapt();
+    assert(ae.compose().scenario === "cert", "显式场景覆盖推断（冲突栈 scenario 层）");
+    // 未显式选择时由推断驱动
+    ae.resetAdapt(); a = ae.getAdapt(); a.inferredScenario = "ctf"; ae.saveAdapt();
+    assert(ae.compose().scenario === "ctf", "未显式选择时推断场景生效");
+    // 离线强制覆写（18.4）
+    if (ae.compose().device.offline_mode) {
+      const co = ae.compose();
+      assert(co.cloud_disabled === true, "离线时强制禁用云端讲解（device 层覆写）");
+      assert(co.prompt_hints.some((h) => h.indexOf("[DEVICE:offline]") >= 0), "离线提示含 [DEVICE:offline]");
+    }
+    // 动态升降级（18.1）：连续 3 次某域 ≥0.85 → +1；连续 2 次 <0.5 → -1
+    ae.resetAdapt();
+    ae.recordQuizResult("web", 0.9, 5); ae.recordQuizResult("web", 0.9, 5); ae.recordQuizResult("web", 0.9, 5);
+    assert(ae.getAdapt().domainDelta.web === 1, "连续3次≥0.85 该域动态+1级");
+    assert(Math.abs((ae.getAdapt().quizAccuracy || 0) - 0.9) < 1e-6, "测验正确率滚动值≈0.9");
+    ae.resetAdapt();
+    ae.recordQuizResult("web", 0.3, 5); ae.recordQuizResult("web", 0.3, 5);
+    assert(ae.getAdapt().domainDelta.web === -1, "连续2次<0.5 该域动态-1级（补前置）");
+    // compose 计算的分域水平是合法档位
+    const c2 = ae.compose();
+    assert(c2 && c2.level_by_domain && ae.LEVELS.indexOf(c2.level_by_domain.web) >= 0, "compose 计算 level_by_domain 落在 L0-L3");
+    ae.resetAdapt(); // 还原，避免污染其它测试
+  }
+
+  // ===== 30. 密钥保险库 + Web Crypto（方向①）=====
+  const ag2 = window.__agent;
+  assert(ag2 && ag2.km && typeof ag2.km.encrypt === "function", "密钥加密模块 KM.encrypt 暴露");
+  assert(ag2 && ag2.km && ag2.km.available === true, "Web Crypto(subtle) 在当前环境可用");
+  assert(ag2 && ag2.vault && typeof ag2.vault.isProtected === "function", "密钥保险库 KeyVault 暴露");
+  assert(ag2 && ag2.vault.isProtected() === false, "默认未启用口令保护（行为不变，密钥明文）");
+  assert(ag2 && ag2.vault.isLocked() === false, "默认未保护即未锁定（可直连 LLM）");
+  if (ag2 && ag2.km && ag2.km.available) {
+    const blob = await ag2.km.encrypt("sk-secret-123", "pass1");
+    assert(blob && blob.v === 1 && !!blob.ct && !!blob.salt && !!blob.iv, "KM.encrypt 产出 {v,salt,iv,ct} 密文包");
+    const back = await ag2.km.decrypt(blob, "pass1");
+    assert(back === "sk-secret-123", "KM.decrypt 用正确口令还原明文");
+    let wrongFailed = false;
+    try { await ag2.km.decrypt(blob, "wrong"); } catch (e) { wrongFailed = true; }
+    assert(wrongFailed, "KM.decrypt 用错误口令抛错（防暴力/误解）");
+  }
+
+  // ===== 31. D1 向量检索 + D2 特性开关 =====
+  assert(ag2 && ag2.vectorEnabled === true, "D1 向量检索配置为启用（VECTOR_ENABLED=true）");
+  assert(ag2 && ag2.vectorActive() === false, "无 EMBED_API_KEY 时 vectorActive=false（零成本降级 BM25）");
+  assert(ag2 && ag2.features && ag2.features.voiceInput === false && ag2.features.visionInput === false, "D2 语音/视觉默认关闭");
+  assert(ag2 && typeof ag2.vectorActive === "function", "vectorActive 为可调函数");
+
+  // ===== 32. Phase 1 工具层：风险分级 + 确认流 =====
+  assert(ag2 && typeof ag2.tools === "function", "Agent 暴露 tools() 列出工具");
+  if (ag2 && typeof ag2.tools === "function") {
+    const tl = ag2.tools();
+    assert(Array.isArray(tl) && tl.length >= 10, "tools() 返回工具数组（≥10 项）");
+    const lab = tl.find((t) => t.name === "launch_lab_env");
+    assert(lab && lab.risk_level === "high" && lab.confirm_required === true, "launch_lab_env 标记为 high + 需确认");
+    const sk = tl.find((t) => t.name === "search_knowledge");
+    assert(sk && sk.risk_level === "low" && sk.confirm_required === false, "search_knowledge 标记为 low + 不需确认");
+    assert(tl.every((t) => typeof t.risk_level === "string"), "每个工具均有 risk_level 字段");
+  }
+  assert(ag2 && typeof ag2.requiresConfirm === "function", "Agent 暴露 requiresConfirm()");
+  if (ag2) {
+    assert(ag2.requiresConfirm("launch_lab_env") === true, "requiresConfirm(launch_lab_env)=true");
+    assert(ag2.requiresConfirm("search_knowledge") === false, "requiresConfirm(search_knowledge)=false");
+    assert(ag2.requiresConfirm("related_topics") === false, "requiresConfirm(related_topics)=false");
+  }
+  // 低风险工具可执行且返回字符串（验证 run 路径不崩、无效参数优雅处理）
+  if (ag2 && typeof ag2.callTool === "function") {
+    const r1 = await ag2.callTool("search_knowledge", { query: "sql 注入" });
+    assert(typeof r1 === "string" && r1.length > 0, "search_knowledge 执行返回非空字符串");
+    const r2 = await ag2.callTool("related_topics", { topicId: "__nope__" });
+    assert(typeof r2 === "string", "related_topics 对无效 id 优雅返回字符串（不抛错）");
+  }
+
+  // ===== 32b. P1/P2 优化回归：结果截断 / 领域加权检索 / schema 缓存 =====
+  if (ag2 && ag2.toolUtil) {
+    const tu = ag2.toolUtil;
+    assert(typeof tu.truncateToolResult === "function" && tu.RESULT_LIMIT > 0, "工具结果截断助手已暴露");
+    const long = "x".repeat(tu.RESULT_LIMIT + 500);
+    const cut = tu.truncateToolResult(long);
+    assert(cut.length < long.length && cut.indexOf("已截断") >= 0, "超长工具结果被截断且带截断说明");
+    assert(tu.truncateToolResult("short") === "short", "短结果原样返回（不误伤）");
+    // 领域加权检索：偏好 web 时，含 web 命中的结果应被提前（仅加不减）
+    const plain = (window.__perf && window.__perf.retrieve) ? window.__perf.retrieve("注入 攻击 防御", 5) : [];
+    const weighted = tu.retrieveWeighted("注入 攻击 防御", 5, ["web"]);
+    assert(Array.isArray(weighted) && weighted.length > 0, "retrieveWeighted 返回非空结果");
+    const hasWebPlain = plain.some((d) => d.cat === "web");
+    if (hasWebPlain) {
+      assert(weighted[0].cat === "web" || weighted.filter((d) => d.cat === "web").length >= plain.filter((d) => d.cat === "web").length, "偏好领域命中在加权后未后移（加权生效）");
+    }
+    assert(tu.retrieveWeighted("注入", 5, []).length > 0, "空偏好领域时退化为普通检索（不崩）");
+  }
+
+  // ===== 33. run_scan 工具：授权靶场自检（路线 A）=====
+  if (ag2 && typeof ag2.callTool === "function") {
+    assert(ag2.riskOf("run_scan") === "high", "run_scan 风险等级为 high");
+    assert(ag2.requiresConfirm("run_scan") === true, "run_scan 需用户确认");
+    const sc = (ag2.tools() || []).find((t) => t.name === "run_scan");
+    assert(sc && sc.risk_level === "high" && sc.confirm_required === true, "tools() 含 run_scan 且标记 high+需确认");
+    // 无活动靶场 → 同步引导分支（先强制清零，隔离前置测试副作用；生产环境初始即为 null）
+    ag2.setActiveEnv(null);
+    const noEnv = await ag2.callTool("run_scan", {});
+    assert(typeof noEnv === "string" && /未检测到活动靶场/.test(noEnv), "无活动靶场时 run_scan 返回引导提示（不发包）");
+    // 有活动靶场但无后端（jsdom fetch 兜底 reject）→ 返回合规 JSON（catch 分支）
+    ag2.setActiveEnv({ id: "lab_xss", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    const withEnv = await ag2.callTool("run_scan", {});
+    assert(typeof withEnv === "string", "run_scan 有 env 时返回字符串");
+    let parsed = null; try { parsed = JSON.parse(withEnv); } catch (e) {}
+    assert(parsed && typeof parsed.ok === "boolean", "run_scan 返回合法 JSON 且含 ok 字段");
+    assert(parsed && typeof parsed.compliance === "string" && parsed.compliance.length > 0, "run_scan 返回含合规声明字段");
+    ag2.setActiveEnv(null);
+  }
+
+  // ===== 34. 端到端闭环：模型调用 run_scan → 确认流 → 执行/拒绝（mock 网关，免真实 LLM/网络）=====
+  if (ag2 && typeof ag2.ask === "function") {
+    // 确保聊天容器存在（避免 jsdom 缺 #chatLog 时答案无法落盘）
+    if (!doc.getElementById("chatLog")) {
+      const d = doc.createElement("div"); d.id = "chatLog"; doc.body.appendChild(d);
+    }
+    const lastBotText = () => {
+      const els = doc.querySelectorAll("#chatLog .msg.bot");
+      const el = els[els.length - 1];
+      return el ? el.textContent : "";
+    };
+    const resetHooks = () => { if (ag2._resetHooks) ag2._resetHooks(); };
+    const runScanTC = { id: "t1", function: { name: "run_scan", arguments: "{}" } };
+    const toolCallReply = { toolCalls: [runScanTC], message: { role: "assistant", content: null, tool_calls: [runScanTC] }, content: null, offline: false };
+
+    // T-A：真实确认弹窗连线（确认→true，取消→false），证明 UI 确认流而非静默执行
+    if (typeof ag2.confirmToolCall === "function") {
+      const pYes = ag2.confirmToolCall({ name: "run_scan" }, {});
+      assert(!!doc.getElementById("toolConfirmYes"), "confirmToolCall 真正弹出确认框（#toolConfirmYes 存在）");
+      const yesBtn = doc.getElementById("toolConfirmYes");
+      if (yesBtn) yesBtn.click();
+      const yesRes = await pYes;
+      assert(yesRes === true, "点击「确认执行」→ confirmToolCall 解析为 true");
+      const pNo = ag2.confirmToolCall({ name: "run_scan" }, {});
+      const noBtn = doc.getElementById("toolConfirmNo");
+      if (noBtn) noBtn.click();
+      const noRes = await pNo;
+      assert(noRes === false, "点击「取消」→ confirmToolCall 解析为 false");
+    }
+
+    // T-B：完整闭环（接受）——mock 网关第一轮回 run_scan 工具调用，第二轮回显工具结果标记
+    resetHooks();
+    ag2.setActiveEnv({ id: "lab_xss", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    let calls = 0;
+    ag2._setGateway(async (messages, tools, opts) => {
+      calls++;
+      if (calls === 1) return toolCallReply;
+      const lastTool = Array.from(messages).reverse().find((m) => m.role === "tool");
+      const sawReport = !!(lastTool && /脆弱点|env_id|compliance/.test(lastTool.content));
+      return { content: "自检完成标记=" + (sawReport ? "YES" : "NO") + "；报告已生成。", message: { role: "assistant", content: "自检完成标记=" + (sawReport ? "YES" : "NO") + "；报告已生成。" }, toolCalls: [] };
+    });
+    ag2._setConfirm(async () => true); // 自动确认
+    const before = doc.querySelectorAll("#chatLog .msg.bot").length;
+    await ag2.ask("请对我的靶场做一次授权安全自检");
+    const after = doc.querySelectorAll("#chatLog .msg.bot").length;
+    assert(after === before + 1, "完整闭环为本次问答新增一条 bot 回答");
+    const txtB = lastBotText();
+    assert(/自检完成标记=YES/.test(txtB), "闭环接受路径：run_scan 已执行且模型收到自检报告（工具结果回传）");
+    ag2.setActiveEnv(null);
+    resetHooks();
+
+    // T-C：完整闭环（拒绝）——确认返回 false，模型被告知拒绝、run_scan 不执行
+    ag2.setActiveEnv({ id: "lab_xss", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    calls = 0;
+    ag2._setGateway(async (messages, tools, opts) => {
+      calls++;
+      if (calls === 1) return toolCallReply;
+      const lastTool = Array.from(messages).reverse().find((m) => m.role === "tool");
+      const rejected = !!(lastTool && /用户拒绝执行/.test(lastTool.content));
+      return { content: "拒绝标记=" + (rejected ? "YES" : "NO") + "；已改为文字说明。", message: { role: "assistant", content: "拒绝标记=" + (rejected ? "YES" : "NO") + "；已改为文字说明。" }, toolCalls: [] };
+    });
+    ag2._setConfirm(async () => false); // 自动拒绝
+    await ag2.ask("请对我的靶场做一次授权安全自检");
+    const txtC = lastBotText();
+    assert(/拒绝标记=YES/.test(txtC), "闭环拒绝路径：run_scan 未执行，模型被告知用户拒绝");
+    ag2.setActiveEnv(null);
+    resetHooks();
+  }
+
+  // ===== 35. Phase 3 多 Agent 编排：角色注册表 / 路由 / 工具过滤 / 黑板 / 角色工具 =====
+  if (ag2) {
+    assert(ag2.roles && typeof ag2.roles === "object", "Agent 暴露 roles 角色注册表");
+    const expectedRoles = ["auto", "tutor", "planner", "examiner", "coach", "lab"];
+    const roleIds = Object.keys(ag2.roles || {});
+    expectedRoles.forEach((r) => assert(roleIds.indexOf(r) >= 0, "角色注册表含 " + r));
+    assert(typeof ag2.routeRole === "function", "Agent 暴露 routeRole 意图路由");
+    if (typeof ag2.routeRole === "function") {
+      assert(ag2.routeRole("帮我做个两周学习计划", "auto") === "planner", "routeRole(计划类)→planner");
+      assert(ag2.routeRole("出几道题考考我", "auto") === "examiner", "routeRole(出题类)→examiner");
+      assert(ag2.routeRole("复盘一下我的错题", "auto") === "coach", "routeRole(复盘类)→coach");
+      assert(ag2.routeRole("我想练下靶场", "auto") === "lab", "routeRole(靶场类)→lab");
+      assert(ag2.routeRole("什么是 XSS", "auto") === "tutor", "routeRole(讲解类)→tutor");
+      assert(ag2.routeRole("随便问", "examiner") === "examiner", "routeRole 显式模式优先于意图");
+    }
+    assert(typeof ag2.toolSchemasForRole === "function", "Agent 暴露 toolSchemasForRole 角色工具过滤");
+    if (typeof ag2.toolSchemasForRole === "function") {
+      const tutorTools = (ag2.toolSchemasForRole("tutor") || []).map((s) => s.function.name);
+      assert(tutorTools.indexOf("launch_lab_env") < 0 && tutorTools.indexOf("run_scan") < 0, "讲师角色看不到高风险的靶场/自检工具");
+      assert(tutorTools.indexOf("generate_plan") < 0, "讲师角色看不到规划工具");
+      const labTools = (ag2.toolSchemasForRole("lab") || []).map((s) => s.function.name);
+      assert(labTools.indexOf("launch_lab_env") >= 0 && labTools.indexOf("run_scan") >= 0, "靶场员角色含 launch_lab_env/run_scan");
+      const examTools = (ag2.toolSchemasForRole("examiner") || []).map((s) => s.function.name);
+      assert(examTools.indexOf("generate_quiz") >= 0, "考官角色含 generate_quiz");
+      const allTools = (ag2.toolSchemasForRole("auto") || []).map((s) => s.function.name);
+      assert(allTools.indexOf("launch_lab_env") >= 0 && allTools.indexOf("generate_quiz") >= 0, "自动模式含全部工具");
+    }
+    assert(ag2.blackboard && typeof ag2.blackboard.get === "function", "Agent 暴露 blackboard 黑板读写");
+    if (ag2.blackboard) {
+      const d = ag2.blackboard.default();
+      assert(d && d.last_role === "auto" && Array.isArray(d.weak_points), "默认黑板含 last_role/weak_points 等字段");
+      ag2.blackboard.save({ weak_points: ["XSS"], last_quiz: { domain: "web", count: 3 }, last_role: "tutor" });
+      const g = ag2.blackboard.get();
+      assert(g.weak_points && g.weak_points[0] === "XSS" && g.last_quiz.count === 3, "黑板 save→get 往返持久正确");
+    }
+    assert(typeof ag2.setAgentRole === "function", "Agent 暴露 setAgentRole");
+    if (typeof ag2.setAgentRole === "function") {
+      ag2.setAgentRole("tutor"); assert(ag2.getAgentRole() === "tutor", "setAgentRole('tutor')→getAgentRole='tutor'");
+      ag2.setAgentRole("__bad__"); assert(ag2.getAgentRole() === "auto", "setAgentRole 非法值回退 auto");
+    }
+    if (typeof ag2.callTool === "function") {
+      const qz = await ag2.callTool("generate_quiz", { domain: "web", count: 2 });
+      assert(typeof qz === "string" && qz.length > 0, "generate_quiz 调用返回非空字符串（只读抽样出题）");
+      const rp = await ag2.callTool("read_progress", {});
+      assert(typeof rp === "string" && rp.indexOf("学情快照") >= 0, "read_progress 返回学情快照字符串");
+    }
+    // 复位角色选择，避免影响其他用例/UI 默认态
+    if (typeof ag2.setAgentRole === "function") ag2.setAgentRole("auto");
+  }
+
+  // ===== 36. Phase 4 模态管线（ASR 语音 / VLM 视觉）=====
+  {
+    const ag2 = window.__agent;
+    // 在 jsdom 下无 SpeechRecognition / getUserMedia，且无大模型 Key → asr/vlm 均不可用
+    assert(ag2 && typeof ag2.asr === "object", "window.__agent.asr 对象存在");
+    assert(ag2 && typeof ag2.vlm === "object", "window.__agent.vlm 对象存在");
+    assert(ag2.asr.available() === false, "jsdom 下 asr.available()===false（无语音环境/未开开关/无 Key）");
+    assert(ag2.vlm.available() === false, "jsdom 下 vlm.available()===false（无 Key 或未开开关）");
+    assert(ag2.asr.speechSupported() === false, "speechSupported() 在 jsdom 下为 false");
+    assert(ag2.asr.micSupported() === false, "micSupported() 在 jsdom 下为 false");
+    // 逐轮输入模态 getter/setter
+    assert(typeof ag2.setLastInputModality === "function" && typeof ag2.getLastInputModality === "function", "set/getLastInputModality 存在");
+    ag2.setLastInputModality("voice"); assert(ag2.getLastInputModality() === "voice", "setLastInputModality('voice') 往返正确");
+    ag2.setLastInputModality("vision"); assert(ag2.getLastInputModality() === "vision", "setLastInputModality('vision') 往返正确");
+    ag2.setLastInputModality("bogus"); assert(ag2.getLastInputModality() === "text", "非法模态回退为 text");
+    ag2.setLastInputModality("text");
+    // 无 Key 时 transcribeAudio / describeImage 优雅拒绝（返回 rejected Promise，不崩溃）
+    let asrRej = false; try { await ag2.asr.transcribe(null); } catch (e) { asrRej = true; }
+    assert(asrRej, "transcribeAudio 无 Key 时抛错被捕获（不崩溃）");
+    let vlmRej = false; try { await ag2.vlm.describe("data:image/png;base64,xx", "描述"); } catch (e) { vlmRej = true; }
+    assert(vlmRej, "describeImage 无 Key 时抛错被捕获（不崩溃）");
+    // downscale 对短 dataURL 直接透传
+    const passthrough = await ag2.vlm.downscale("data:image/png;base64,AAAA", 1280);
+    assert(passthrough === "data:image/png;base64,AAAA", "downscale 对短 dataURL 透传");
+    // askAgent 带模态参数不崩溃（jsdom 无 Key → 走内置或提示分支）
+    try { await ag2.ask("测试语音", { modality: "voice" }); await ag2.ask("测试视觉", { image: "data:image/png;base64,AAAA", modality: "vision" }); assert(true, "askAgent 接收 {modality/image} 参数不抛未捕获异常"); }
+    catch (e) { assert(false, "askAgent 模态参数不应抛异常：" + e.message); }
+    // UI 按钮存在（受开关约束，默认 disabled，但元素在 DOM）
+    assert($("#btnVoice") != null, "聊天输入区存在 🎤 语音按钮");
+    assert($("#btnVision") != null, "聊天输入区存在 📷 视觉按钮");
+    assert($("#fileImage") != null, "存在隐藏图片文件输入");
+  }
+
+  // ===== 37. P3/P4 优化：schema 缓存 / auto 角色徽标 / 多模态消息构造 =====
+  {
+    const ag2 = window.__agent;
+    // schema 按角色缓存：同角色两次调用返回同一数组引用；不同角色集合长度不同
+    const t1 = ag2.toolSchemasForRole("tutor"), t2 = ag2.toolSchemasForRole("tutor");
+    assert(t1 === t2, "toolSchemasForRole 同角色复用缓存（同一引用）");
+    const aAll = ag2.toolSchemasForRole("auto"), eEx = ag2.toolSchemasForRole("examiner");
+    assert(Array.isArray(aAll) && aAll.length >= eEx.length, "auto 全量工具 ≥ examiner 白名单数量");
+    assert(eEx.every((s) => ["search_knowledge", "generate_quiz"].indexOf(s.function.name) >= 0), "examiner schema 仅含白名单工具");
+
+    // auto 角色徽标：mock 网关，auto 模式提问 → 回答末尾应带「自动编排 → 由「…」角色应答」
+    const lastBotText = () => {
+      const els = doc.querySelectorAll("#chatLog .msg.bot");
+      const el = els[els.length - 1];
+      return el ? el.textContent : "";
+    };
+    const resetHooks = () => { if (ag2._resetHooks) ag2._resetHooks(); };
+    ag2.setAgentRole("auto");
+    ag2._setGateway(async () => ({ content: "SQL 注入是……（测试回答）", message: { role: "assistant", content: "SQL 注入是……（测试回答）" }, toolCalls: [] }));
+    await ag2.ask("什么是 SQL 注入");
+    assert(/自动编排 → 由「.+」角色应答/.test(lastBotText()), "auto 模式回答带角色徽标（路由可观测）");
+
+    // 显式角色模式：无徽标
+    ag2.setAgentRole("tutor");
+    await ag2.ask("什么是 XSS");
+    assert(!/自动编排 → 由/.test(lastBotText()), "显式角色模式不显示 auto 徽标");
+    ag2.setAgentRole("auto");
+    resetHooks();
+
+    // 多模态消息构造：带 image 时本轮用户消息为 content 数组（text + image_url）
+    let sawArray = false, sawImg = false;
+    ag2._setGateway(async (messages) => {
+      const lastUser = Array.from(messages).reverse().find((m) => m.role === "user");
+      if (lastUser && Array.isArray(lastUser.content)) {
+        sawArray = true;
+        sawImg = lastUser.content.some((c) => c.type === "image_url" && c.image_url && typeof c.image_url.url === "string");
+      }
+      return { content: "已收到图片（测试）", message: { role: "assistant", content: "已收到图片（测试）" }, toolCalls: [] };
+    });
+    await ag2.ask("请分析这张图片", { image: "data:image/png;base64,AAAA", modality: "vision" });
+    assert(sawArray, "视觉轮用户消息为多模态 content 数组");
+    assert(sawImg, "视觉轮包含 image_url（图像随本轮发送）");
+    resetHooks();
+  }
+
+  // ===== 38. P5 靶场深度联动：自动建靶 / 收靶 / 报告归档 =====
+  {
+    const ag2 = window.__agent;
+    // 新工具注册与风险映射
+    const tl = ag2.tools();
+    const td = tl.find((x) => x.name === "teardown_lab_env"), rr = tl.find((x) => x.name === "read_scan_reports");
+    assert(!!td && td.risk_level === "high" && td.confirm_required === true, "teardown_lab_env 已注册且为 high 风险需确认");
+    assert(!!rr && rr.risk_level === "low" && rr.confirm_required === false, "read_scan_reports 已注册且为 low 风险免确认");
+    // lab 角色白名单包含新工具
+    const labNames = ag2.toolSchemasForRole("lab").map((s) => s.function.name);
+    assert(labNames.indexOf("teardown_lab_env") >= 0 && labNames.indexOf("read_scan_reports") >= 0, "lab 角色白名单含收靶与报告工具");
+    // 空归档优雅返回
+    window.localStorage.removeItem("sectutor_scan_reports");
+    const emptyMsg = await ag2.callTool("read_scan_reports", {});
+    assert(/暂无自检报告归档/.test(emptyMsg), "read_scan_reports 空归档时优雅提示");
+    // run_scan（mock 后端 fetch → live 路径）自动归档
+    window.fetch = function (url, opts) {
+      const u = String(url || "");
+      if (u.indexOf("/api/envs/env_t1") >= 0 && (!opts || opts.method !== "DELETE")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, env: { id: "env_t1", labId: "lab_xss", title: "XSS 靶场", status: "running", accessUrl: "http://127.0.0.1:8787/proxy/env_t1" } }) });
+      }
+      return Promise.reject(new Error("no fetch in test harness"));
+    };
+    ag2.setActiveEnv({ id: "env_t1", labId: "lab_xss", title: "XSS 靶场", status: "running" });
+    const scanOut = await ag2.callTool("run_scan", {});
+    let rep = null; try { rep = JSON.parse(scanOut); } catch (e) {}
+    assert(rep && rep.ok === true && rep.archived === true && rep.report_id, "run_scan 自检完成且报告自动归档（含 report_id）");
+    const stored = JSON.parse(window.localStorage.getItem("sectutor_scan_reports") || "[]");
+    assert(Array.isArray(stored) && stored.length === 1 && stored[0].id === rep.report_id, "归档已写入 localStorage（sectutor_scan_reports）");
+    const listMsg = await ag2.callTool("read_scan_reports", {});
+    assert(listMsg.indexOf(rep.report_id) >= 0 && /XSS 靶场/.test(listMsg), "read_scan_reports 列表含刚归档的报告");
+    const fullMsg = await ag2.callTool("read_scan_reports", { report_id: rep.report_id });
+    assert(/compliance/.test(fullMsg), "按 report_id 可取回完整报告");
+    // 收靶：本地清理 activeEnv + 远端尽力销毁（mock 对 DELETE 落入 catch → TTL 兜底文案）
+    const tdMsg = await ag2.callTool("teardown_lab_env", {});
+    assert(/清理|销毁|回收/.test(tdMsg), "teardown_lab_env 返回收靶结果字符串");
+    // 恢复默认 reject fetch；无环境后验证 labId 分支与引导语
+    window.fetch = function () { return Promise.reject(new Error("no fetch in test harness")); };
+    const badLab = await ag2.callTool("run_scan", { labId: "lab_nope" });
+    assert(/未找到该实验/.test(badLab), "run_scan 未知 labId 返回友好报错");
+    const afterTd = await ag2.callTool("run_scan", {});
+    assert(/未检测到活动靶场/.test(afterTd), "收靶后 activeEnv 已清理（run_scan 回到无环境引导）");
+    // 无环境且无 labId 的 run_scan 引导语包含自动建靶说明
+    assert(/labId.*自动建靶|自动建靶/.test(afterTd), "无环境引导语说明可指定 labId 自动建靶");
+    ag2.setActiveEnv(null);
+  }
+
+  // ===== 39. Phase 5 / v1.1.0 自主流 Flow 引擎：启动/推进/hitl/持久化/续跑 =====
+  {
+    const ag2 = window.__agent;
+    assert(!!window.document.getElementById("flowBar"), "flowBar 进度条容器存在");
+    assert(ag2.flow && typeof ag2.flow.start === "function", "window.__agent.flow 已暴露");
+    const libKeys = Object.keys(ag2.flow.library);
+    assert(libKeys.length >= 3 && libKeys.indexOf("diagnose_web") >= 0, "FLOW_LIBRARY 内置 ≥3 个流程（含 diagnose_web）");
+    // 工具注册与风险映射
+    const tl = ag2.tools();
+    const sf = tl.find((x) => x.name === "start_flow"), fs = tl.find((x) => x.name === "flow_status");
+    const af = tl.find((x) => x.name === "advance_flow"), xf = tl.find((x) => x.name === "stop_flow");
+    assert(!!sf && !!fs && !!af && !!xf, "四个 Flow 工具均已注册");
+    assert(ag2.riskOf("start_flow") === "low" && ag2.riskOf("advance_flow") === "low", "Flow 工具为 low 风险免确认");
+    // planner 角色白名单可见 Flow 工具
+    const pl = ag2.toolSchemasForRole("planner").map((s) => s.function.name);
+    assert(pl.indexOf("start_flow") >= 0 && pl.indexOf("advance_flow") >= 0, "planner 角色白名单含 Flow 工具");
+    // 启动 + 持久化
+    const s1 = await ag2.callTool("start_flow", { flow_id: "exam_sprint" });
+    assert(/已启动流程/.test(s1), "start_flow 启动成功");
+    const persisted = ag2.flow.load();
+    assert(persisted && persisted.flow_id === "exam_sprint" && persisted.status === "ready" && persisted.step_index === 0, "Flow 状态已持久化（ready/第 0 步）");
+    // 进行中不可重复启动
+    const s1b = await ag2.callTool("start_flow", { flow_id: "diagnose_web" });
+    assert(/已有进行中的流程/.test(s1b), "进行中时拒绝启动新流程");
+    // 推进第 1 步（read_progress，免确认）
+    const s2 = await ag2.callTool("advance_flow", {});
+    assert(/步骤「学情速览」完成/.test(s2), "advance_flow 执行当前步骤并前进");
+    // 状态查询
+    const s3 = await ag2.callTool("flow_status", {});
+    assert(/考前冲刺刷题流/.test(s3) && /✅ 学情速览/.test(s3), "flow_status 报告流程与步骤进度");
+    // 终止 + 状态清除
+    const s4 = await ag2.callTool("stop_flow", {});
+    assert(/已结束流程/.test(s4), "stop_flow 终止流程");
+    assert(!ag2.flow.load(), "终止后持久化状态已清除");
+    // hitl 拒绝 → 暂停；确认 → 恢复执行
+    ag2._setConfirm(async () => false);
+    await ag2.callTool("start_flow", { flow_id: "lab_practice" });
+    await ag2.callTool("advance_flow", {});                       // 第 1 步 目标讲解（免确认）
+    const d2 = await ag2.callTool("advance_flow", {});            // 第 2 步 建靶自检 → 确认被拒
+    assert(/已暂停.*拒绝/.test(d2), "hitl 拒绝后流程暂停");
+    const paused = ag2.flow.load();
+    assert(paused && paused.status === "paused" && paused.step_index === 1, "暂停状态持久化（停在待确认步）");
+    ag2._setConfirm(async () => true);
+    const d3 = await ag2.callTool("advance_flow", {});            // 重试建靶自检（无后端 → 建靶失败仍记结果前进）
+    assert(/步骤「建靶自检」完成/.test(d3), "确认后步骤恢复执行");
+    await ag2.callTool("stop_flow", {});
+    ag2._resetHooks();
+  }
+
+  console.log("\n==== 自测结果 ====");
+  results.forEach((r) => console.log(r));
+if (errors.length) {
+  console.log("\n---- 捕获的异常 ----");
+  errors.forEach((e) => console.log(e));
+}
+console.log(`\n总计：通过 ${results.length - failed}/${results.length}，异常 ${errors.length} 条`);
+process.exit(failed === 0 && errors.length === 0 ? 0 : 1);
+})();

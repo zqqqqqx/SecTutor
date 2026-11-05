@@ -4297,6 +4297,76 @@ $("#backLab").click();
     });
   }
 
+  // ===== 96b. 成本预算与熔断（v2.3.0）=====
+  {
+    const agB = window.__agent;
+    const L = agB.llm;
+    assert(typeof L.estCost === "function" && typeof L.check === "function" &&
+      typeof L.breakerState === "function" && typeof L.economy === "function",
+      "成本估算 + 预算闸 + 熔断器 + 经济性总览均已暴露");
+
+    // ① 成本估算：按 provider 费率卡折算；缓存命中部分不计费；本地 0 元
+    const cDs = L.estCost({ prompt: 2000, completion: 1000, cacheRead: 0 }, "deepseek");
+    const cDsHit = L.estCost({ prompt: 2000, completion: 1000, cacheRead: 1000 }, "deepseek");
+    assert(cDs === 0.003, "DeepSeek 估算正确（2k in + 1k out = 0.003）实际 " + cDs);
+    assert(cDsHit === 0.0025, "命中 1000 后 billable prompt 1000 → 0.0025（命中部分不计费）实际 " + cDsHit);
+    assert(L.estCost({ prompt: 5000, completion: 1000 }, "local") === 0, "本地模型成本为 0（不花钱）");
+    const cOpenai = L.estCost({ prompt: 1000, completion: 1000, cacheRead: 0 }, "openai");
+    assert(cOpenai === 0.0385, "OpenAI 估算（1100/1000*0.011 + 1000/1000*0.0275）正确");
+    // 未知 provider 保守按 openai 估（防低估烧钱）
+    assert(L.estCost({ prompt: 1000, completion: 1000 }, "mystery") === L.estCost({ prompt: 1000, completion: 1000 }, "openai"),
+      "未知 provider 成本按 openai 保守估算");
+
+    // ② 预算闸：超线要"拒绝并说明"，不是静默继续烧钱
+    const budget = L.setBudget({ maxTokensPerSession: 10, maxCostPerSession: 0.001, maxFailStreak: 3, cooldownMs: 60000 });
+    L.clearSpend();
+    L.record({ scene: "deep", provider: "deepseek", prompt: 5000, completion: 100, cacheRead: 0, ms: 100 });
+    const chk = L.check();
+    assert(chk.blocked === true && /预算上限/.test(chk.reason), "超 token 上限时明确拒绝（" + chk.reason.slice(0, 24) + "…）");
+    // 预算设足后应放行
+    L.setBudget({ maxTokensPerSession: 100000, maxCostPerSession: 50 });
+    assert(L.check().blocked === false, "预算设足后放行");
+
+    // ③ 熔断器：连续失败 maxFailStreak 次 → 跳闸（open）；open 期间 llmCall 拒绝
+    L.resetBreaker();
+    L.recordResult(true);  // 一次成功先闭合
+    assert(L.breakerState().state === "closed", "成功后熔断为 closed");
+    L.setBudget({ maxFailStreak: 2, cooldownMs: 60000 });
+    L.recordResult(false);
+    assert(L.breakerState().state === "closed" && L.breakerState().fails === 1, "失败 1 次尚未跳闸（累计计数）");
+    L.recordResult(false);
+    const openSt = L.breakerState();
+    assert(openSt.state === "open" && openSt.open === true, "连续 2 次失败 → 跳闸（open）");
+    assert(typeof openSt.reason === "string" && openSt.reason.indexOf("熔断") >= 0, "open 状态给出可直接展示的拒绝文案");
+    assert(typeof openSt.retryInMs === "number" && openSt.retryInMs > 0, "跳闸后有剩余冷却时间（秒级可提示）");
+    // open 期间调用必须被拦
+    const savedLLM = PF.state.llm;
+    PF.state.llm = { provider: "openai", key: "k", model: "gpt" };
+    let openErr = "";
+    try { await L.call("deep", { stable: ["s"], volatile: ["v"] }, {}); } catch (e) { openErr = String(e && e.message); }
+    assert(openErr.indexOf("熔断") >= 0, "熔断 open 期间 llmCall 被拦截（" + openErr.slice(0, 20) + "…）");
+
+    // ④ 半开探活：冷却到期后放行一次探测；探测失败重新跳闸
+    L.setBudget({ maxFailStreak: 2, cooldownMs: 30 });
+    L.resetBreaker();
+    L.recordResult(false); L.recordResult(false);   // 跳闸
+    L.breakerState(); // 此刻仍是 open（冷却中）
+    await new Promise((r) => setTimeout(r, 40));     // 冷却到期
+    const half = L.breakerState();
+    assert(half.state === "half-open" && half.probe === true, "冷却到期 → half-open，允许一次探测调用");
+    L.recordResult(false);                            // 探测失败 → 重新跳闸
+    assert(L.breakerState().state === "open", "半开探测失败 → 重新跳闸（不静默恢复）");
+
+    // ⑤ 经济性总览：把花费/余量/命中/熔断串成一张卡
+    const eco = L.economy();
+    assert(typeof eco.cost === "number" && typeof eco.tokens === "number", "economy 汇总了成本与 token");
+    assert(typeof eco.cacheHitRate === "number", "economy 含缓存命中率");
+    assert(eco.breaker && (eco.breaker.state === "open" || eco.breaker.state === "closed"), "economy 带熔断状态");
+    assert(typeof eco.tokenLeft === "number" && typeof eco.costLeft === "number", "economy 给出预算余量");
+    PF.state.llm = savedLLM;
+    console.log("  预算/熔断：估算✓ 预算闸✓ 跳闸/半开✓ 经济性✓（cooldown 半开探活）");
+  }
+
   // ===== 97. 场景化接入：输出契约必须校验（v2.0.0）=====
   {
     // "模型参与学习"不能只是把 prompt 塞进去 —— 每个场景都要有**输出契约**，

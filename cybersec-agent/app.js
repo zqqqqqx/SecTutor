@@ -3661,12 +3661,162 @@
     return { total: list.length, by: by };
   }
 
+  /* ==========================================================================
+     成本预算与熔断（v2.3.0）—— 有了 ledger 只是"记账"，加预算+熔断才闭环：
+     ① 成本估算   各 provider 一张费率卡，把 usage 折算成人民币，回答"这一轮花了多少"
+     ② 会话预算闸  滚动统计（以 ledger 为记账窗口）token 总量 / 估算成本，超线**拒绝并说明原因**，
+                    不静默继续烧钱 —— 与任务层预算同一原则
+     ③ 熔断器     连续失败 N 次 → 跳闸（open）停止调用；冷却到期 → 半开放一次探活；
+                    探活成功 → 闭合，探活失败 → 重新跳闸。避免对已故障的 API 反复打脸。
+     全部状态落 localStorage，崩溃/重启后仍在。
+     ========================================================================== */
+
+  /** 费率卡（人民币 / 1K tokens，近似值；只用于估算与预算，不用于计费） */
+  const LLM_COST_RATES = {
+    openai:     { prompt: 0.011, completion: 0.0275 },  // 对标 gpt-4o-mini 量级
+    deepseek:   { prompt: 0.0005, completion: 0.002 },  // DeepSeek 显著更便宜
+    anthropic:  { prompt: 0.021, completion: 0.105 },    // 对标 claude 量级
+    local:      { prompt: 0, completion: 0 },            // 本地不花钱
+  };
+
+  /** 会话预算闸 + 熔断阈值（可被 setLlmBudget 覆盖；默认给足、但超线要喊话） */
+  const LLM_BUDGET = {
+    maxTokensPerSession: 400000,   // 单会话（记账窗口）累计 token 上限
+    maxCostPerSession: 20,         // 单会话估算成本（人民币）上限
+    maxFailStreak: 3,             // 连续失败几次触发跳闸
+    cooldownMs: 60000,            // 跳闸后冷却多久放一次探活
+  };
+
+  const LLM_BUDGET_KEY = "sectutor_llm_budget";
+  const LLM_BREAKER_KEY = "sectutor_llm_breaker";
+
+  /** 读用户自定义预算（没有就用默认） */
+  function getLlmBudget() {
+    try {
+      const raw = localStorage.getItem(LLM_BUDGET_KEY);
+      if (raw) { const o = JSON.parse(raw); return Object.assign({}, LLM_BUDGET, o); }
+    } catch (e) {}
+    return Object.assign({}, LLM_BUDGET);
+  }
+  function setLlmBudget(patch) {
+    const merged = Object.assign(getLlmBudget(), patch || {});
+    try { localStorage.setItem(LLM_BUDGET_KEY, JSON.stringify(merged)); } catch (e) {}
+    return merged;
+  }
+
+  /** 估算一次 usage 的成本（人民币），未知 provider 按 openai 估算（保守偏高，防低估烧钱） */
+  function estimateCost(usage, provider) {
+    const u = usage || {};
+    const r = LLM_COST_RATES[provider] || LLM_COST_RATES.openai;
+    const promptTok = u.prompt || 0, completionTok = u.completion || 0;
+    // 缓存命中的部分不计费（近似：按未缓存的 prompt 计）
+    const billablePrompt = Math.max(0, promptTok - (u.cacheRead || 0));
+    return +( (billablePrompt / 1000) * r.prompt + (completionTok / 1000) * r.completion ).toFixed(4);
+  }
+
+  /** 熔断器状态：{ fails, trippedAt } */
+  function getBreaker() {
+    try { const raw = localStorage.getItem(LLM_BREAKER_KEY); if (raw) return JSON.parse(raw); } catch (e) {}
+    return { fails: 0, trippedAt: null };
+  }
+  function setBreaker(b) {
+    try { localStorage.setItem(LLM_BREAKER_KEY, JSON.stringify(b)); } catch (e) {}
+    return b;
+  }
+
+  /**
+   * 记账窗口（当前 ledger 里）的累计花费。
+   * ledger 上限 300 条，视为"会话/近期"窗口 —— 用它做预算闸既简单又有界。
+   */
+  function llmSpend() {
+    const list = llmLedger();
+    let tokens = 0, cost = 0;
+    list.forEach(function (r) {
+      tokens += (r.prompt || 0) + (r.completion || 0);
+      cost += estimateCost({ prompt: r.prompt, completion: r.completion, cacheRead: r.cacheRead }, r.provider);
+    });
+    return { tokens: tokens, cost: +cost.toFixed(4) };
+  }
+
+  /** 预算闸判定：调用前查。blocked=true 时 reason 是可直接给用户的文案 */
+  function checkLlmBudget() {
+    const b = getLlmBudget();
+    const s = llmSpend();
+    if (s.tokens >= b.maxTokensPerSession) {
+      return { blocked: true, reason: "本会话 token 用量已达预算上限（" + s.tokens + " / " + b.maxTokensPerSession + "），为控制成本已暂停模型调用。可清除用量或调高预算后继续。" };
+    }
+    if (s.cost >= b.maxCostPerSession) {
+      return { blocked: true, reason: "本会话估算成本已达预算上限（约 ¥" + s.cost + " / ¥" + b.maxCostPerSession + "），为控制成本已暂停模型调用。" };
+    }
+    return { blocked: false, spend: s, budget: b };
+  }
+
+  /** 熔断器判定：调用前查。返回 { open, reason } */
+  function breakerState() {
+    const b = getLlmBudget();
+    const br = getBreaker();
+    if (!br.trippedAt) return { open: false, state: "closed", fails: br.fails };
+    const now = Date.now();
+    if (now - br.trippedAt >= b.cooldownMs) {
+      return { open: false, state: "half-open", fails: br.fails, probe: true };
+    }
+    const remainMs = b.cooldownMs - (now - br.trippedAt);
+    return { open: true, state: "open", fails: br.fails, retryInMs: remainMs,
+      reason: "模型调用已连续失败 " + br.fails + " 次并触发熔断，" + Math.ceil(remainMs / 1000) + " 秒后自动探测恢复，暂停期间不发起新调用。" };
+  }
+
+  /** 记录一次调用结果：成功→闭合；失败→累计，连续 maxFailStreak 次→跳闸 */
+  function recordLlmResult(ok) {
+    const b = getLlmBudget();
+    const br = getBreaker();
+    if (ok) {
+      setBreaker({ fails: 0, trippedAt: null });
+      return { state: "closed" };
+    }
+    br.fails = (br.fails || 0) + 1;
+    // 半开探活失败也维持跳闸（重置冷却起点）
+    if (br.fails >= b.maxFailStreak) br.trippedAt = Date.now();
+    setBreaker(br);
+    return { state: br.trippedAt ? "open" : "closed", fails: br.fails };
+  }
+
+  /** 一键复位（手动"再来一次"用）：清空熔断并可选清用量 */
+  function resetBreaker() { setBreaker({ fails: 0, trippedAt: null }); return getBreaker(); }
+  function clearLlmSpend() { try { localStorage.removeItem(LLM_LEDGER_KEY); } catch (e) {} return llmSpend(); }
+
+  /** 给用户的"模型经济性"总览：花了多少、缓存命中、预算余量、熔断状态 */
+  function llmEconomy() {
+    const sum = llmLedgerSummary();
+    const spend = llmSpend();
+    const b = getLlmBudget();
+    const br = breakerState();
+    const totalPrompt = Object.keys(sum.by).reduce(function (a, k) { return a + sum.by[k].prompt; }, 0);
+    const totalRead = Object.keys(sum.by).reduce(function (a, k) { return a + sum.by[k].cacheRead; }, 0);
+    return {
+      calls: sum.total, tokens: spend.tokens, cost: spend.cost,
+      budget: { maxTokens: b.maxTokensPerSession, maxCost: b.maxCostPerSession },
+      tokenLeft: Math.max(0, b.maxTokensPerSession - spend.tokens),
+      costLeft: Math.max(0, +(b.maxCostPerSession - spend.cost).toFixed(4)),
+      cacheHitRate: totalPrompt ? totalRead / totalPrompt : 0,
+      breaker: { state: br.state, fails: br.fails },
+    };
+  }
+
   /**
    * 统一调用入口（新代码一律走这里）。
    * 不支持的请求**直接抛错**，不静默降级 —— 这是"接入别的模型不降低能力"的前提。
+   * v2.3.0：调用前先过【熔断器】与【预算闸】，成功后闭合熔断、失败累计，并记成本进账。
    */
   async function llmCall(scene, parts, opts) {
     const o = opts || {};
+    // —— 熔断：open 期间不放行（half-open 的探测调用放行）——
+    const brk = breakerState();
+    if (brk.open) throw new Error(brk.reason);
+    // —— 预算闸：超线拒绝并说明原因（不静默烧钱）——
+    if (!o.allowOverBudget) {
+      const bchk = checkLlmBudget();
+      if (bchk.blocked) throw new Error(bchk.reason);
+    }
     const caps = providerCaps(state.llm);
     const sceneDef = LLM_SCENES[scene] || LLM_SCENES.chat;
     if (o.tools && o.tools.length && !caps.tools) {
@@ -3684,14 +3834,21 @@
     const gw = buildAgentApi().gateway;
     const reply = await gw.complete(built.messages, o.tools || [], o);
     const usage = normalizeUsage(reply && reply.usage, caps);
+    const provider = (state.llm && state.llm.provider) || "openai";
     recordLlmCall({
-      scene: scene, provider: (state.llm && state.llm.provider) || "openai",
+      scene: scene, provider: provider,
       model: (state.llm && state.llm.model) || "", stableHash: built.stableHash,
       prompt: usage.prompt, completion: usage.completion,
       cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite,
-      ms: Date.now() - t0,
+      ms: Date.now() - t0, cost: estimateCost(usage, provider),
     });
-    return { text: (reply && (reply.content || (reply.message && reply.message.content))) || "", usage: usage, stableHash: built.stableHash, reply: reply };
+    // —— 熔断记账：网关返回 offline（= 失败）→ 累计失败；成功 → 闭合 ——
+    const failed = !reply || reply.offline;
+    recordLlmResult(!failed);
+    if (failed) {
+      throw new Error((reply && reply.error) || "模型调用失败（网关无响应或鉴权失效），已计入熔断计数；连续失败将自动暂停调用。");
+    }
+    return { text: (reply && (reply.content || (reply.message && reply.message.content))) || "", usage: usage, stableHash: built.stableHash, reply: reply, cost: estimateCost(usage, provider) };
   }
 
   /* ==========================================================================
@@ -4963,7 +5120,11 @@
       roleGuard: { whitelist: roleToolWhitelist, check: checkStepRole },
       llm: { caps: PROVIDER_CAPS, capsOf: providerCaps, build: buildStablePrefix, hash: simpleHash,
         scenes: LLM_SCENES, call: llmCall, usage: normalizeUsage, ledger: llmLedger,
-        summary: llmLedgerSummary, record: recordLlmCall },
+        summary: llmLedgerSummary, record: recordLlmCall,
+        rates: LLM_COST_RATES, estCost: estimateCost,
+        budgetOf: getLlmBudget, setBudget: setLlmBudget, check: checkLlmBudget, spend: llmSpend,
+        breakerState: breakerState, recordResult: recordLlmResult, resetBreaker: resetBreaker, clearSpend: clearLlmSpend,
+        economy: llmEconomy, thresholds: LLM_BUDGET },
       tools2: { structured: callToolStructured, data: toolData, normalize: normalizeToolResult,
         adapters: Object.keys(STRUCTURED_ADAPTERS) },
       scenes2: { impl: SCENE_IMPL2, realTopics: realTopicIds },
