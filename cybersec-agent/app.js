@@ -3802,6 +3802,117 @@
     };
   }
 
+  /* ==========================================================================
+     上下文压缩（v2.4.0）—— 解决"长对话只做截断"的短板。
+     现状：state.history 被 trimHistory 硬砍到 12 条后**全量**塞进 messages，
+          既不压缩、也不管 provider 的 maxContext —— 长会话要么撑爆上下文，要么把旧信息整段丢掉。
+
+     做法（**确定性为主、模型为辅**）：
+     ① estimateTokens   粗估 token（中文≈1字1token，保守略高估，宁多勿少防撑爆）
+     ② foldHistory      确定性折叠：最近 keepRecent 轮**原样保留**；更早的：
+                         - 用户消息保留（截断到前 200 字，意图是信号不能丢）
+                         - 助手长回答折叠成占位（省 token，关键结论靠后续轮次）
+                         - 头部加一行【前情提要】，列出被折叠的用户问题，保住"聊过什么"
+     ③ buildContextWindow 按 provider 的 maxContext 决定要不要折叠、折叠到几轮；
+                         仍装不下 → 明确报"上下文不足"并给裁剪建议，**不静默截断**。
+
+     留一个 model-driven 升级口（history_compress 场景）：把确定性"前情提要"交给模型
+     重写成 ≤100 字、**不引入新事实**的摘要；校验不过就回退确定性版（不静默降级质量）。
+     ========================================================================== */
+
+  /** 上下文窗口策略（可被测试覆盖） */
+  const CONTEXT_POLICY = { keepRecent: 6, userKeepChars: 200, summaryMax: 100 };
+
+  /** 粗估 token：中文 1 字 1 token，英文 4 字符 1 token */
+  function estimateTokens(str) {
+    if (!str) return 0;
+    const s = String(str);
+    const cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+    return cjk + Math.ceil((s.length - cjk) / 4);
+  }
+  /** 一组 messages 的 token 总量（视觉消息的 content 是数组，按 text 子项累加） */
+  function estimateMsgTokens(msgs) {
+    return (msgs || []).reduce(function (acc, m) {
+      let c = m.content;
+      if (Array.isArray(c)) c = c.map(function (p) { return p && p.type === "text" ? p.text : ""; }).join("");
+      return acc + estimateTokens(c);
+    }, 0);
+  }
+
+  /**
+   * 确定性折叠：旧对话 → "前情提要 + 最近 keepRecent 轮原文"。
+   * 返回 { messages, folded, recapList }
+   */
+  function foldHistory(history, keepRecent) {
+    const keep = keepRecent != null ? keepRecent : CONTEXT_POLICY.keepRecent;
+    const msgs = (history || []).map(function (m) { return m; });
+    if (msgs.length <= keep) return { messages: msgs, folded: false, recapList: [] };
+    const older = msgs.slice(0, msgs.length - keep);
+    const recent = msgs.slice(msgs.length - keep);
+    const userTopics = older.filter(function (m) { return m.role === "user"; })
+      .map(function (m) { return String(m.content || "").replace(/^\[图片\]\s*/, "").slice(0, CONTEXT_POLICY.userKeepChars); });
+    const foldedOlder = older.map(function (m) {
+      if (m.role === "user") {
+        const c = String(m.content || "");
+        return { role: "user", content: c.length > CONTEXT_POLICY.userKeepChars ? c.slice(0, CONTEXT_POLICY.userKeepChars) + "…" : c };
+      }
+      return { role: "assistant", content: "（该回答已折叠以节省上下文；如需要可让我重讲。）" };
+    });
+    const recap = userTopics.length
+      ? { role: "system", content: "【前情提要】较早 " + userTopics.length + " 轮用户提问已折叠，主题为：\n" +
+          userTopics.map(function (t) { return "- " + t; }).join("\n") +
+          "\n（更早的助手回答已省略，以下为最近 " + keep + " 轮原文）" }
+      : { role: "system", content: "【前情提要】较早轮次已折叠，以下为最近 " + keep + " 轮原文。" };
+    return { messages: [recap].concat(foldedOlder, recent), folded: true, recapList: userTopics };
+  }
+
+  /**
+   * 上下文窗口组装：按 provider 的 maxContext 决定折叠与否、折到几轮。
+   * 预留 40% 给系统提示与本轮资料（粗略）。
+   * 返回 { messages, folded, overBudget, reason }
+   */
+  function buildContextWindow(history, caps) {
+    const c = caps || {};
+    const budget = c.maxContext ? Math.floor(c.maxContext * 0.6) : Infinity;
+    let keep = CONTEXT_POLICY.keepRecent;
+    let res = foldHistory(history, keep);
+    while (res.folded && estimateMsgTokens(res.messages) > budget && keep > 0) {
+      keep = Math.max(0, keep - 2);
+      res = foldHistory(history, keep);
+    }
+    const used = estimateMsgTokens(res.messages);
+    if (used > budget) {
+      return { messages: res.messages, folded: res.folded, overBudget: true,
+        reason: "上下文仍超限（估 " + used + " > 预算 " + budget + " tokens，当前模型上限 " + (c.maxContext || "未知") + "）。请缩短单条内容、清空旧对话，或换用更大上下文的模型。" };
+    }
+    return { messages: res.messages, folded: res.folded, overBudget: false };
+  }
+
+  /**
+   * model-driven 升级：把确定性"前情提要"交给模型重写成紧凑摘要。
+   * 契约：**不引入新事实、≤summaryMax 字**；校验不过 → 回退确定性版（ok:false + reason，不静默）。
+   * 返回 { ok, summary, reason }
+   */
+  async function compressHistoryModel(topics, caps) {
+    const limit = CONTEXT_POLICY.summaryMax;
+    const parts = {
+      stable: [
+        "你是对话历史摘要器。把给定的用户提问列表改写为一段不超过 " + limit + " 字的回顾。",
+        "只概括这些提问涉及的主题，**不得引入列表之外的任何事实**；不写『好的』这类开场。",
+      ].join("\n"),
+      volatile: "【用户历史提问】\n" + (topics || []).map(function (t) { return "- " + t; }).join("\n"),
+    };
+    let r = null;
+    try { r = await llmCall("history_compress", parts, {}); }
+    catch (e) { return { ok: false, reason: "摘要生成失败（" + String(e && e.message) + "），已回退确定性前情提要。" }; }
+    const s = String(r.text || "").trim();
+    if (!s || s.length > limit) return { ok: false, reason: "摘要超长或为空，已回退确定性前情提要。" };
+    return { ok: true, summary: s };
+  }
+
+  // 注册场景（供模型驱动调用；确定性折叠始终可用，模型摘要只是增强）
+  LLM_SCENES.history_compress = { label: "对话回顾（把折叠摘要重写得更紧凑）", stable: true, output: "text" };
+
   /**
    * 统一调用入口（新代码一律走这里）。
    * 不支持的请求**直接抛错**，不静默降级 —— 这是"接入别的模型不降低能力"的前提。
@@ -4460,7 +4571,15 @@
         ];
       }
     }
-    const messages = [{ role: "system", content: sys }, ...historyMsgs];
+    // —— 上下文压缩（v2.4.0）：按 provider maxContext 决定折叠；装不下就明说，不静默截断 ——
+    const win = buildContextWindow(historyMsgs, providerCaps(state.llm));
+    if (win.overBudget) {
+      state.history.pop();                 // 本轮已 push 的用户消息撤掉，避免污染下轮
+      removeTyping();
+      addMsg("bot", "⚠️ " + escapeHtml(win.reason));
+      return;
+    }
+    const messages = [{ role: "system", content: sys }, ...win.messages];
     // 自动编排模式下，回答末尾标注实际应答角色（可观测性）
     const roleBadgeHtml = (AGENT_ROLE === "auto" && roleId !== "auto")
       ? `<p class="role-badge">🤖 自动编排 → 由「${escapeHtml(role.label)}」角色应答</p>` : "";
@@ -5124,7 +5243,9 @@
         rates: LLM_COST_RATES, estCost: estimateCost,
         budgetOf: getLlmBudget, setBudget: setLlmBudget, check: checkLlmBudget, spend: llmSpend,
         breakerState: breakerState, recordResult: recordLlmResult, resetBreaker: resetBreaker, clearSpend: clearLlmSpend,
-        economy: llmEconomy, thresholds: LLM_BUDGET },
+        economy: llmEconomy, thresholds: LLM_BUDGET,
+        ctx: { policy: CONTEXT_POLICY, est: estimateTokens, estMsgs: estimateMsgTokens,
+          fold: foldHistory, window: buildContextWindow, compressModel: compressHistoryModel } },
       tools2: { structured: callToolStructured, data: toolData, normalize: normalizeToolResult,
         adapters: Object.keys(STRUCTURED_ADAPTERS) },
       scenes2: { impl: SCENE_IMPL2, realTopics: realTopicIds },
@@ -8128,6 +8249,18 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
         const r = await adversarialSelfcheck(a && a.only ? { only: a.only } : {});
         return renderAdversarial(r);
       } },
+    { name: "llm_economy", description: "查看**模型经济性**：累计调用数 / token / 估算成本（按 provider 费率卡）/ 缓存命中率 / 预算余量 / 熔断器状态（closed=open 正常·open=已跳闸·half-open=冷却探活中）。只读，用于回答「钱花在哪、缓存有没有掉、现在还能不能继续调模型」。", parameters: { type: "object", properties: {}, required: [] }, run: (a) => {
+        const e = llmEconomy();
+        const cap = providerCaps(state.llm);
+        const lines = [
+          "模型经济性（" + cap.label + "）",
+          "· 调用 " + e.calls + " 次｜token " + e.tokens + "｜估算成本 ¥" + e.cost,
+          "· 缓存命中率 " + Math.round(e.cacheHitRate * 100) + "%（越高越省）",
+          "· 预算余量：token " + e.tokenLeft + " / 成本 ¥" + e.costLeft,
+          "· 熔断器：" + e.breaker.state + (e.breaker.state === "open" ? "（连续失败 " + e.breaker.fails + " 次已跳闸，冷却中，暂停调用）" : e.breaker.fails ? "（近期失败 " + e.breaker.fails + " 次，未跳闸）" : "（正常）"),
+        ];
+        return lines.join("\n");
+      } },
     { name: "path_from_topic", description: "兴趣入口：用户说「我就想学 X」时，只回答**必须先会什么** —— 只列出有外部依据的硬前置（可递归几层），其余前置一律标为「可跳过」。用于避免把学习路径当编译依赖树强排顺序。", parameters: { type: "object", properties: { topicId: { type: "string", description: "你想学的知识点 id" } }, required: ["topicId"] }, run: (a) => {
         const r = pathFromTopic(a && a.topicId, 0, {});
         if (r.error) return r.error;
@@ -8290,6 +8423,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     kg_audit: { level: "low", confirm: false },
     path_from_topic: { level: "low", confirm: false },
     adversarial_selfcheck: { level: "low", confirm: false },
+    llm_economy: { level: "low", confirm: false },
     review_plan_advice: { level: "low", confirm: false },
     weekly_report_advice: { level: "low", confirm: false },
     concept_compare: { level: "low", confirm: false },
@@ -8332,7 +8466,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     planner: {
       id: "planner", label: "规划师 Planner", emoji: "🗺️",
-      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck", "review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice"],
+      tools: ["search_knowledge", "generate_plan", "start_flow", "flow_status", "advance_flow", "stop_flow", "prereq_check", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck", "review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice", "llm_economy"],
       persona: "你是 SecTutor 的规划师(Planner)。依据学情与诊断产出分阶段、可执行的学习计划（调用 generate_plan 写入计划面板）。计划需结合用户水平/场景/可用时长，排期合理、循序渐进。排期前可调 prereq_check 查知识图谱依赖边，保证「先补前置再学进阶」；对「想系统学 / 完整走一遍 / 集中备考」类诉求，可调用 start_flow 启动对应的自主流引导用户，并用 flow_status / advance_flow 跟进进度。",
     },
     examiner: {
@@ -8342,7 +8476,7 @@ ${ctx || "（知识库未检索到直接相关条目，可基于通用网络安�
     },
     coach: {
       id: "coach", label: "教练 Coach", emoji: "🧭",
-      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck", "review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice"],
+      tools: ["search_knowledge", "related_topics", "read_progress", "prereq_check", "read_metrics", "read_mistakes", "quiz_from_mistakes", "suggest_next", "learning_path", "plan_task", "kg_audit", "path_from_topic", "adversarial_selfcheck", "review_plan_advice", "weekly_report_advice", "concept_compare", "path_advice", "llm_economy"],
       persona: "你是 SecTutor 的教练(Coach)。复盘本次/近期学习：巩固了什么、哪些仍薄弱（对照学情黑板），给出具体、鼓励的下一步建议（补哪条前置概念/加练哪个靶场）。可用 prereq_check 查知识图谱依赖边，把「先补什么」说得有据可依；read_metrics 可查 Agent 自身质量指标。",
     },
     lab: {

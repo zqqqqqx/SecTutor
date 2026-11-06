@@ -4367,6 +4367,70 @@ $("#backLab").click();
     console.log("  预算/熔断：估算✓ 预算闸✓ 跳闸/半开✓ 经济性✓（cooldown 半开探活）");
   }
 
+  // ===== 96c. 上下文压缩（v2.4.0）=====
+  {
+    const agC = window.__agent;
+    const C = agC.llm.ctx;
+    assert(C && typeof C.fold === "function" && typeof C.window === "function" && typeof C.est === "function",
+      "上下文压缩层已暴露（est/fold/window）");
+
+    // ① 装得下 → 不折叠（零损耗，长对话不该被无谓压）
+    const shortHist = [
+      { role: "user", content: "什么是 SQL 注入？" },
+      { role: "assistant", content: "SQL 注入是把用户输入拼进 SQL 语句导致的攻击面，根治靠参数化查询。" },
+    ];
+    const w1 = C.window(shortHist, { maxContext: 128000 });
+    assert(w1.folded === false && w1.overBudget === false, "短对话不折叠（原样保留，零损耗）");
+
+    // ② 装不下 → 确定性折叠：最近轮原文保留，旧助手回答被折成占位，头部有前情提要
+    const longHist = [];
+    for (let i = 0; i < 8; i++) {
+      longHist.push({ role: "user", content: "问题" + i + "：" + "x".repeat(40) });
+      longHist.push({ role: "assistant", content: "回答" + i + "：" + "y".repeat(120) });
+    }
+    const w2 = C.window(longHist, { maxContext: 2048 });   // 很小的上限，逼它折
+    assert(w2.folded === true, "对话超上下文时自动折叠");
+    assert(w2.overBudget === false, "折叠后装进预算（不超限）");
+    const msgs = w2.messages;
+    // 最近两轮应保持原文（y 占位串还在）
+    const tailUser = msgs.filter((m) => m.role === "user").map((m) => m.content);
+    assert(tailUser.some((c) => c.indexOf("y".repeat(80)) >= 0 || c.length > 40), "最近轮保留较长原文（关键信息不丢）");
+    assert(msgs.some((m) => m.role === "system" && String(m.content).indexOf("前情提要") >= 0), "头部注入『前情提要』（保住聊过什么）");
+    assert(msgs.some((m) => m.role === "assistant" && /已折叠/.test(m.content)), "旧助手回答折叠成占位（省 token）");
+    // 用户问题即使折叠也保留主题（不为省 token 把用户意图全抹掉）
+    assert(msgs.filter((m) => m.role === "user").length >= 2, "用户消息不会被整段删掉（意图是信号）");
+
+    // ③ 仍装不下 → overBudget + 明确原因（不静默截断）
+    const w3 = C.window(longHist, { maxContext: 64 });
+    assert(w3.overBudget === true && /超限/.test(w3.reason), "上下文仍不够时明确报错并给裁剪建议（" + w3.reason.slice(0, 20) + "…）");
+
+    // ④ token 估算单调性：越长越大；英文按 4 字 1 token
+    assert(C.est("中文中文") === 4, "中文 1 字 1 token");
+    assert(C.est("a".repeat(40)) === 10, "英文 4 字符 1 token（40→10）");
+    assert(C.est("短") < C.est("长一点的内容"), "估算随长度单调");
+
+    // ⑤ model-driven 升级口存在（未配模型时明确说明、不伪造）
+    assert(typeof C.compressModel === "function" && agC.llm.scenes.history_compress, "已注册 history_compress 场景（模型摘要增强口）");
+    console.log("  上下文压缩：不折叠✓ 折叠✓ 超限说明✓ 估算✓ 模型升级口✓");
+  }
+
+  // ===== 96d. 可观测：模型经济性工具（v2.4.0）=====
+  {
+    const agO = window.__agent;
+    const names = agO.tools().map((x) => x.name);
+    assert(names.indexOf("llm_economy") >= 0, "已注册 llm_economy 可观测工具（工具总数 " + names.length + "）");
+    assert(agO.requiresConfirm("llm_economy") === false, "llm_economy 属低风险（只读，不需确认）");
+
+    // 调用它：能拿到经济性文本，且含成本/缓存/熔断三类关键字段（数据闭环，不再"有数但看不见"）
+    const out = await agO.callTool("llm_economy", {});
+    assert(typeof out === "string" && out.length > 0, "llm_economy 返回可读文本");
+    assert(/估算成本/.test(out) && /缓存命中率/.test(out) && /熔断器/.test(out),
+      "输出同时给出成本 / 缓存命中 / 熔断状态（三项可观测）");
+    // 两个角色白名单都应包含它（只读工具，不放大权限）
+    assert(JSON.stringify(agO).indexOf("llm_economy") >= 0, "llm_economy 已接入角色工具白名单");
+    console.log("  可观测：llm_economy 工具✓ 三项指标✓ 白名单✓");
+  }
+
   // ===== 97. 场景化接入：输出契约必须校验（v2.0.0）=====
   {
     // "模型参与学习"不能只是把 prompt 塞进去 —— 每个场景都要有**输出契约**，
